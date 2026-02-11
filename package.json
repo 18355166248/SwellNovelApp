@@ -7,6 +7,7 @@
     "android": "react-native run-android",
     "android:local-gradle": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android-local-gradle.ps1 assembleDebug && react-native run-android",
     "ios": "react-native run-ios",
+    "ios:device": "bash ./scripts/run-ios-device.sh",
     "lint": "eslint .",
     "test": "jest",
     "build:android:apk": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android.ps1 apk",

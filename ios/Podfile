@@ -30,5 +30,28 @@ target 'SwellNovalApp' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # 解决 RCTSwiftUI.modulemap not found：禁用 Swift 显式模块编译
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['SWIFT_EXPLICIT_MODULE_COMPILATION'] = 'NO'
+      end
+    end
+
+    # 主 App target 也需禁用
+    project_path = "#{Pod::Config.instance.installation_root}/SwellNovalApp.xcodeproj"
+    if File.exist?(project_path)
+      require 'xcodeproj'
+      project = Xcodeproj::Project.open(project_path)
+      project.targets.each do |target|
+        if target.name == 'SwellNovalApp'
+          target.build_configurations.each do |config|
+            config.build_settings['SWIFT_EXPLICIT_MODULE_COMPILATION'] = 'NO'
+          end
+          break
+        end
+      end
+      project.save
+    end
   end
 end

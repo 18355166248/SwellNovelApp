@@ -1,8 +1,14 @@
 #!/bin/bash
 # iOS 打包脚本 (macOS)
 # 使用方法: ./scripts/build-ios.sh
+# 可选: ./scripts/build-ios.sh --deep-clean  # 深度清理（解决 modulemap not found 等顽固错误）
 
 set -e
+
+DEEP_CLEAN=false
+if [ "$1" = "--deep-clean" ]; then
+    DEEP_CLEAN=true
+fi
 
 echo "========================================="
 echo "   iOS 打包脚本"
@@ -27,6 +33,25 @@ if ! command -v xcodebuild &> /dev/null; then
     exit 1
 fi
 
+if [ "$DEEP_CLEAN" = true ]; then
+    echo "0. 深度清理（解决 modulemap not found 等错误）..."
+    cd ios
+    echo "   - 执行 pod deintegrate..."
+    pod deintegrate 2>/dev/null || true
+    echo "   - 移除 Pods 和 Podfile.lock..."
+    rm -rf Pods Podfile.lock
+    cd ..
+    DERIVED_DATA_PATH="$HOME/Library/Developer/Xcode/DerivedData"
+    for dir in ${DERIVED_DATA_PATH}/SwellNovalApp-*; do
+        if [ -d "$dir" ]; then
+            echo "   - 清理 DerivedData: $dir"
+            rm -rf "$dir"
+        fi
+    done
+    echo "   深度清理完成"
+    echo ""
+fi
+
 echo "1. 安装 CocoaPods 依赖..."
 cd ios
 if [ -f "Podfile" ]; then
@@ -42,6 +67,13 @@ cd ..
 
 echo ""
 echo "2. 清理之前的构建..."
+# 清理 DerivedData 中本项目的缓存（解决 RCTSwiftUI.modulemap 等 modulemap not found 错误）
+DERIVED_DATA_PATH="$HOME/Library/Developer/Xcode/DerivedData"
+PROJECT_DERIVED=$(ls -d ${DERIVED_DATA_PATH}/SwellNovalApp-* 2>/dev/null | head -1)
+if [ -n "$PROJECT_DERIVED" ] && [ -d "$PROJECT_DERIVED" ]; then
+    echo "   清理 DerivedData: $PROJECT_DERIVED"
+    rm -rf "$PROJECT_DERIVED"
+fi
 cd ios
 xcodebuild clean -workspace SwellNovalApp.xcworkspace -scheme SwellNovalApp
 cd ..
@@ -62,25 +94,32 @@ echo "是否尝试使用命令行构建? (需要先配置好签名) [y/N]"
 read -r response
 if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     cd ios
+    ARCHIVE_DIR="$HOME/Library/Developer/Xcode/Archives/$(date +%Y-%m-%d)"
+    mkdir -p "$ARCHIVE_DIR"
+    ARCHIVE_PATH="$ARCHIVE_DIR/SwellNovalApp.xcarchive"
+
     xcodebuild archive \
         -workspace SwellNovalApp.xcworkspace \
         -scheme SwellNovalApp \
         -configuration Release \
-        -archivePath build/SwellNovalApp.xcarchive \
+        -archivePath "$ARCHIVE_PATH" \
         -allowProvisioningUpdates
-    
+
     if [ $? -eq 0 ]; then
         echo ""
         echo "========================================="
         echo "   Archive 构建成功!"
         echo "========================================="
         echo ""
-        echo "Archive 位置: ios/build/SwellNovalApp.xcarchive"
+        echo "Archive 位置: $ARCHIVE_PATH"
         echo ""
         echo "接下来请在 Xcode 中:"
-        echo "1. 打开 Window > Organizer"
-        echo "2. 选择刚才构建的 Archive"
+        echo "1. 打开 Window > Organizer（或按 Cmd+Shift+O）"
+        echo "2. 在 Archives 列表中选择刚才构建的 SwellNovalApp"
         echo "3. 点击 Distribute App 导出 IPA"
+        echo ""
+        echo "若 Organizer 中仍未显示，可双击此文件在 Finder 中打开:"
+        echo "   $ARCHIVE_PATH"
     else
         echo "错误: Archive 构建失败"
         exit 1
