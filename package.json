@@ -5,13 +5,13 @@
   "scripts": {
     "start": "react-native start",
     "android": "react-native run-android",
-    "android:local-gradle": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android-local-gradle.ps1 assembleDebug && react-native run-android",
     "ios": "react-native run-ios",
     "ios:device": "bash ./scripts/run-ios-device.sh",
     "lint": "eslint .",
     "test": "jest",
-    "build:android:apk": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android.ps1 apk",
-    "build:android:aab": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android.ps1 aab",
+    "build:android:apk": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-android.ps1 apk",
+    "build:android:aab": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-android.ps1 aab",
+    "build:android:debug": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-android.ps1 debug",
     "build:ios": "bash ./scripts/build-ios.sh"
   },
   "dependencies": {

@@ -3,7 +3,7 @@
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("apk", "aab")]
+    [ValidateSet("apk", "aab", "debug")]
     [string]$BuildType = "apk"
 )
 
@@ -28,10 +28,7 @@ if (Test-Path $gradleProps) {
         Write-Host "首次打包前，请先运行以下命令生成签名密钥:" -ForegroundColor Yellow
         Write-Host "keytool -genkeypair -v -storetype PKCS12 -keystore android\app\my-release-key.keystore -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000" -ForegroundColor Yellow
         Write-Host ""
-        $continue = Read-Host "是否继续使用debug签名打包? (y/n)"
-        if ($continue -ne "y" -and $continue -ne "Y") {
-            exit 0
-        }
+        Write-Host "将继续进行打包" -ForegroundColor Yellow
     }
 }
 
@@ -43,77 +40,21 @@ if (-not (Test-Path $keystorePath)) {
     Write-Host ""
 }
 
-# 配置本地 Gradle
-# 注意: 项目需要 Gradle 8.13+，如果本地 Gradle 版本不够，将使用 Gradle Wrapper
+## 使用本地 Gradle（强制）
 $localGradlePath = "D:\ruanjian\gradle-8.14"
 $useLocalGradle = $false
-$minGradleVersion = [version]"8.13"
-if (Test-Path $localGradlePath) {
-    $gradleExe = Join-Path $localGradlePath "bin\gradle.bat"
-    if (Test-Path $gradleExe) {
-        # 检查 Gradle 版本
-        try {
-            $gradleVersionOutput = & $gradleExe --version 2>&1 | Select-String "Gradle"
-            if ($gradleVersionOutput -match "Gradle (\d+\.\d+)") {
-                $localGradleVersion = [version]$matches[1]
-                if ($localGradleVersion -ge $minGradleVersion) {
-                    # 检查 Java 版本兼容性（仅在 JAVA_HOME 已设置时检查）
-                    if ($env:JAVA_HOME) {
-                        $javaExePath = Join-Path $env:JAVA_HOME "bin\java.exe"
-                        if (Test-Path $javaExePath) {
-                            $javaVersion = & $javaExePath -version 2>&1 | Select-String "version"
-                            if ($javaVersion -match "25") {
-                                Write-Host "警告: 检测到 Java 25，但本地 Gradle $localGradleVersion 可能不支持 Java 25" -ForegroundColor Yellow
-                                Write-Host "将使用 Gradle Wrapper 下载支持 Java 25 的 Gradle 版本 (9.1+)" -ForegroundColor Yellow
-                                Write-Host ""
-                                $useLocalGradle = $false
-                            } else {
-                                Write-Host "检测到本地 Gradle: $localGradlePath (版本 $localGradleVersion)" -ForegroundColor Green
-                                $env:GRADLE_HOME = $localGradlePath
-                                $env:PATH = "$localGradlePath\bin;$env:PATH"
-                                $useLocalGradle = $true
-                                Write-Host "已配置使用本地 Gradle" -ForegroundColor Green
-                                Write-Host ""
-                            }
-                        } else {
-                            Write-Host "检测到本地 Gradle: $localGradlePath (版本 $localGradleVersion)" -ForegroundColor Green
-                            $env:GRADLE_HOME = $localGradlePath
-                            $env:PATH = "$localGradlePath\bin;$env:PATH"
-                            $useLocalGradle = $true
-                            Write-Host "已配置使用本地 Gradle" -ForegroundColor Green
-                            Write-Host ""
-                        }
-                    } else {
-                        Write-Host "检测到本地 Gradle: $localGradlePath (版本 $localGradleVersion)" -ForegroundColor Green
-                        $env:GRADLE_HOME = $localGradlePath
-                        $env:PATH = "$localGradlePath\bin;$env:PATH"
-                        $useLocalGradle = $true
-                        Write-Host "已配置使用本地 Gradle" -ForegroundColor Green
-                        Write-Host ""
-                    }
-                } else {
-                    Write-Host "警告: 本地 Gradle 版本 $localGradleVersion 低于要求的最低版本 $minGradleVersion" -ForegroundColor Yellow
-                    Write-Host "将使用 Gradle Wrapper 下载合适的版本" -ForegroundColor Yellow
-                    Write-Host ""
-                    $useLocalGradle = $false
-                }
-            } else {
-                Write-Host "警告: 无法检测本地 Gradle 版本，将使用 Gradle Wrapper" -ForegroundColor Yellow
-                Write-Host ""
-                $useLocalGradle = $false
-            }
-        } catch {
-            Write-Host "警告: 检查本地 Gradle 版本时出错，将使用 Gradle Wrapper" -ForegroundColor Yellow
-            Write-Host ""
-            $useLocalGradle = $false
-        }
-    } else {
-        Write-Host "警告: 本地 Gradle 目录存在但未找到 gradle.bat，将使用 Gradle Wrapper" -ForegroundColor Yellow
-        Write-Host ""
+$gradleExe = Join-Path $localGradlePath "bin\gradle.bat"
+if (Test-Path $gradleExe) {
+    $env:GRADLE_HOME = $localGradlePath
+    if ($env:PATH -notlike "*$localGradlePath\\bin*") {
+        $env:PATH = "$localGradlePath\bin;$env:PATH"
     }
+    $useLocalGradle = $true
+    Write-Host "使用本地 Gradle: $localGradlePath" -ForegroundColor Green
 } else {
-    Write-Host "警告: 未找到本地 Gradle 目录 $localGradlePath，将使用 Gradle Wrapper" -ForegroundColor Yellow
-    Write-Host ""
+    Write-Host "错误: 未找到本地 Gradle: $gradleExe" -ForegroundColor Red
+    Write-Host "请确保已安装 Gradle 8.14 并更新脚本中的路径" -ForegroundColor Yellow
+    exit 1
 }
 
 # 检测和配置 Java
@@ -262,7 +203,7 @@ $sdkDirConfigured = $false
 # 检查 local.properties 文件
 if (Test-Path $localPropsPath) {
     $localPropsContent = Get-Content $localPropsPath -Raw
-    if ($localPropsContent -match 'sdk\.dir=(.+)') {
+    if ($localPropsContent -match "sdk\.dir=(.+)") {
         $sdkPath = $matches[1].Trim()
         if (Test-Path $sdkPath) {
             Write-Host "检测到 Android SDK (来自 local.properties): $sdkPath" -ForegroundColor Green
@@ -295,13 +236,13 @@ if (-not $sdkDirConfigured) {
         "D:\ruanjian\Android\Sdk",
         "C:\Users\$env:USERNAME\AppData\Local\Android\Sdk"
     )
-    
+
     foreach ($sdkPath in $commonSdkPaths) {
         if (Test-Path $sdkPath) {
             Write-Host "检测到 Android SDK: $sdkPath" -ForegroundColor Green
             $env:ANDROID_HOME = $sdkPath
             $env:ANDROID_SDK_ROOT = $sdkPath
-            
+
             # 更新或创建 local.properties
             $localPropsContent = "sdk.dir=$sdkPath`n"
             Set-Content -Path $localPropsPath -Value $localPropsContent -Force
@@ -316,7 +257,7 @@ if (-not $sdkDirConfigured) {
 if (-not $sdkDirConfigured) {
     Write-Host "警告: 未找到 Android SDK" -ForegroundColor Yellow
     Write-Host ""
-    
+
     # 尝试使用最常见的默认路径
     $defaultSdkPath = "$env:LOCALAPPDATA\Android\Sdk"
     if (Test-Path $defaultSdkPath) {
@@ -349,7 +290,7 @@ if (-not $sdkDirConfigured) {
                 $sdkDirConfigured = $true
             }
         }
-        
+
         if (-not $sdkDirConfigured) {
             Write-Host "错误: Android SDK 路径无效或未提供" -ForegroundColor Red
             Write-Host "请设置系统环境变量 ANDROID_HOME 或在 android\local.properties 中配置 sdk.dir" -ForegroundColor Red
@@ -404,6 +345,41 @@ try {
                 Write-Host "文件大小: $([math]::Round($fileSize, 2)) MB" -ForegroundColor Cyan
             } else {
                 Write-Host "错误: 未找到生成的APK文件" -ForegroundColor Red
+                exit 1
+            }
+        } else {
+            Write-Host "错误: 构建失败" -ForegroundColor Red
+            exit 1
+        }
+    } elseif ($BuildType -eq "debug") {
+        Write-Host ""
+        Write-Host "开始构建 Debug APK..." -ForegroundColor Green
+        Write-Host ""
+
+        if ($useLocalGradle) {
+            $gradleCmd = Join-Path $localGradlePath "bin\gradle.bat"
+            & $gradleCmd assembleDebug
+        } elseif ($IsWindows -or $env:OS -match "Windows") {
+            .\gradlew.bat assembleDebug
+        } else {
+            ./gradlew assembleDebug
+        }
+
+        if ($LASTEXITCODE -eq 0) {
+            $apkPath = "app\build\outputs\apk\debug\app-debug.apk"
+            if (Test-Path $apkPath) {
+                Write-Host ""
+                Write-Host "=========================================" -ForegroundColor Green
+                Write-Host "   构建成功!" -ForegroundColor Green
+                Write-Host "=========================================" -ForegroundColor Green
+                Write-Host ""
+                Write-Host "APK 位置: $((Get-Item $apkPath).FullName)" -ForegroundColor Cyan
+                Write-Host ""
+
+                $fileSize = (Get-Item $apkPath).Length / 1MB
+                Write-Host "文件大小: $([math]::Round($fileSize, 2)) MB" -ForegroundColor Cyan
+            } else {
+                Write-Host "错误: 未找到生成的 Debug APK 文件" -ForegroundColor Red
                 exit 1
             }
         } else {
