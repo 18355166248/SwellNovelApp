@@ -16,12 +16,6 @@ const defaultReaderSettings: ReaderSettings = {
   brightness: 1.0,
 };
 
-// 深色模式默认阅读设置
-const darkReaderSettings: ReaderSettings = {
-  ...defaultReaderSettings,
-  backgroundColor: '#000000',
-  textColor: '#FFFFFF',
-};
 
 // 阅读设置
 export const readerSettingsAtom = atom<ReaderSettings>(defaultReaderSettings);

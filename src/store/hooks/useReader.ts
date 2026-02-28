@@ -2,7 +2,7 @@
  * 阅读器相关的自定义 Hooks
  */
 
-import { useAtom, useAtomValue, useSetAtom } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import {
   readerSettingsAtom,
   readerStateAtom,

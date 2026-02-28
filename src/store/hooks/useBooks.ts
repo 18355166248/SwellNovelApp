@@ -12,7 +12,7 @@ import {
   chaptersAtom,
   readingHistoryAtom,
 } from '../atoms';
-import { Book, Chapter, ReadingHistory } from '../types/book';
+import { Book, Chapter } from '../types/book';
 
 /**
  * 获取所有书籍

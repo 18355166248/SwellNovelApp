@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext } from 'react';
 import { useColorScheme } from 'react-native';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { Theme, lightTheme, darkTheme } from './themes';
-import { appSettingsAtom, isDarkModeAtom } from '../store/atoms';
+import { appSettingsAtom } from '../store/atoms';
 
 interface ThemeContextType {
   theme: Theme;

@@ -9,3 +9,5 @@ set GEMINI_API_KEY="YOUR_API_KEY"
 
 $env:HTTP_PROXY = "http://127.0.0.1:33210"
 $env:HTTPS_PROXY = "http://127.0.0.1:33210"
+
+全局配置 C:\Users\lang

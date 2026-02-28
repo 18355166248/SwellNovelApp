@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, StyleSheet, ViewStyle, TouchableOpacity } from 'react-native';
+import React, { useRef } from 'react';
+import { View, StyleSheet, ViewStyle, Pressable, Animated } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 
 interface CardProps {
@@ -16,6 +16,7 @@ export const Card: React.FC<CardProps> = ({
   variant = 'default',
 }) => {
   const { theme } = useTheme();
+  const scale = useRef(new Animated.Value(1)).current;
 
   const cardStyle = [
     styles.card,
@@ -30,12 +31,27 @@ export const Card: React.FC<CardProps> = ({
 
   if (onPress) {
     return (
-      <TouchableOpacity
-        style={cardStyle}
-        onPress={onPress}
-        activeOpacity={0.7}>
-        {children}
-      </TouchableOpacity>
+      <Pressable onPress={onPress}>
+        <Animated.View
+          style={[
+            cardStyle,
+            { transform: [{ scale }] },
+          ]}
+          onTouchStart={() => {
+            Animated.spring(scale, {
+              toValue: 0.98,
+              useNativeDriver: true,
+            }).start();
+          }}
+          onTouchEnd={() => {
+            Animated.spring(scale, {
+              toValue: 1,
+              useNativeDriver: true,
+            }).start();
+          }}>
+          {children}
+        </Animated.View>
+      </Pressable>
     );
   }
 

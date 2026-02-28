@@ -1,28 +1,24 @@
 import React from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Text } from '../components';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { Text, Icon } from '../components';
+import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../types/navigation';
 import {
   useCurrentBook,
   useCurrentChapterContent,
   useReaderSettings,
-  useUpdateReaderState,
   useSetToolbarVisible,
 } from '../store';
 
-type ReaderScreenRouteProp = RouteProp<RootStackParamList, 'Reader'>;
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function ReaderScreen() {
   const { theme } = useTheme();
-  const route = useRoute<ReaderScreenRouteProp>();
   const navigation = useNavigation<NavigationProp>();
-  const { bookId } = route.params;
-  
+
+
   // 使用 Jotai 状态管理
   const currentBook = useCurrentBook();
   const chapterContent = useCurrentChapterContent();
@@ -95,19 +91,16 @@ export default function ReaderScreen() {
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.toolbarButton}>
-          <Text variant="body" color="primary">
-            返回
-          </Text>
+          <Icon name="arrow-back" color="primary" size="md" style={{ marginRight: 6 }} />
+          <Text variant="body" color="primary">返回</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.toolbarButton}>
-          <Text variant="body" color="primary">
-            目录
-          </Text>
+          <Icon name="list" color="primary" size="md" style={{ marginRight: 6 }} />
+          <Text variant="body" color="primary">目录</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.toolbarButton}>
-          <Text variant="body" color="primary">
-            设置
-          </Text>
+          <Icon name="tune" color="primary" size="md" style={{ marginRight: 6 }} />
+          <Text variant="body" color="primary">设置</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -136,7 +129,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   readerText: {
-    textAlign: 'justify',
+    textAlign: "justify",
   },
   footer: {
     alignItems: 'center',

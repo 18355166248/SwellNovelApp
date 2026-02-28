@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
-  TouchableOpacity,
+  Pressable,
   Text,
-  StyleSheet,
   ActivityIndicator,
   ViewStyle,
   TextStyle,
+  Animated,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 
@@ -31,6 +31,7 @@ export const Button: React.FC<ButtonProps> = ({
   textStyle,
 }) => {
   const { theme } = useTheme();
+  const scale = useRef(new Animated.Value(1)).current;
 
   const getButtonStyle = (): ViewStyle => {
     const baseStyle: ViewStyle = {
@@ -38,6 +39,8 @@ export const Button: React.FC<ButtonProps> = ({
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
     };
 
     if (size === 'small') {
@@ -46,15 +49,14 @@ export const Button: React.FC<ButtonProps> = ({
     } else if (size === 'large') {
       baseStyle.paddingVertical = theme.spacing.lg;
       baseStyle.paddingHorizontal = theme.spacing.xl;
-    } else {
-      baseStyle.paddingVertical = theme.spacing.md;
-      baseStyle.paddingHorizontal = theme.spacing.lg;
     }
 
     if (variant === 'primary') {
       baseStyle.backgroundColor = theme.colors.primary;
+      Object.assign(baseStyle, theme.shadows.md);
     } else if (variant === 'secondary') {
       baseStyle.backgroundColor = theme.colors.secondary;
+      Object.assign(baseStyle, theme.shadows.sm);
     } else {
       baseStyle.backgroundColor = 'transparent';
       baseStyle.borderWidth = 1;
@@ -91,19 +93,42 @@ export const Button: React.FC<ButtonProps> = ({
   };
 
   return (
-    <TouchableOpacity
-      style={[getButtonStyle(), style]}
+    <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      activeOpacity={0.7}>
-      {loading && (
-        <ActivityIndicator
-          size="small"
-          color={variant === 'outline' ? theme.colors.primary : '#FFFFFF'}
-          style={{ marginRight: theme.spacing.sm }}
-        />
-      )}
-      <Text style={[getTextStyle(), textStyle]}>{title}</Text>
-    </TouchableOpacity>
+      android_ripple={{ color: theme.colors.primary }}>
+      <Animated.View
+        style={[
+          getButtonStyle(),
+          { transform: [{ scale }] },
+          style,
+        ]}
+        onTouchStart={() => {
+          if (disabled || loading) return;
+          Animated.spring(scale, {
+            toValue: 0.98,
+            useNativeDriver: true,
+            friction: 6,
+            tension: 120,
+          }).start();
+        }}
+        onTouchEnd={() => {
+          Animated.spring(scale, {
+            toValue: 1,
+            useNativeDriver: true,
+            friction: 6,
+            tension: 120,
+          }).start();
+        }}>
+        {loading && (
+          <ActivityIndicator
+            size="small"
+            color={variant === 'outline' ? theme.colors.primary : '#FFFFFF'}
+            style={{ marginRight: theme.spacing.sm }}
+          />
+        )}
+        <Text style={[getTextStyle(), textStyle]}>{title}</Text>
+      </Animated.View>
+    </Pressable>
   );
 };

@@ -42,7 +42,7 @@ export default function BookshelfScreen() {
         navigation.navigate('Reader', { bookId: item.id });
       }}>
       <View style={styles.bookInfo}>
-        <View style={[styles.bookCover, { backgroundColor: theme.colors.primary }]}>
+        <View style={[styles.bookCover, { backgroundColor: theme.colors.primary }, theme.shadows.sm]}>
           <Text variant="h3" style={{ color: '#FFFFFF' }}>
             {item.title.charAt(0)}
           </Text>

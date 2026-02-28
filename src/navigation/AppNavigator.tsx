@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { RootStackParamList, MainTabParamList } from '../types/navigation';
 import { useTheme } from '../theme/ThemeContext';
 import { darkTheme } from '../theme/themes';
+import { Icon } from '../components';
 
 // Screens
 import BookshelfScreen from '../screens/BookshelfScreen';
@@ -31,6 +32,10 @@ function MainTabs() {
           backgroundColor: theme.colors.surface,
           borderTopColor: theme.colors.border,
         },
+        tabBarLabelStyle: {
+          fontSize: theme.fontSize.sm,
+          fontWeight: '600',
+        },
       }}>
       <Tab.Screen
         name="Bookshelf"
@@ -38,6 +43,9 @@ function MainTabs() {
         options={{
           title: '书架',
           tabBarLabel: '书架',
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="book" color={color as string} size={size} />
+          ),
         }}
       />
       <Tab.Screen
@@ -46,6 +54,9 @@ function MainTabs() {
         options={{
           title: '搜索',
           tabBarLabel: '搜索',
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="search" color={color as string} size={size} />
+          ),
         }}
       />
       <Tab.Screen
@@ -54,6 +65,9 @@ function MainTabs() {
         options={{
           title: '设置',
           tabBarLabel: '设置',
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="settings" color={color as string} size={size} />
+          ),
         }}
       />
     </Tab.Navigator>
