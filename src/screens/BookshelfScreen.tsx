@@ -11,8 +11,11 @@ import { Text, Card, Button } from '../components';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
-import { useBooks, useSelectBook, useAddBook } from '../store';
+import { useBooks, useSelectBook, useAddBook, useSetChapters, useSetChapterContent } from '../store';
 import type { Book } from '../store/types/book';
+import DocPicker, { types as DocTypes, isCancel as isDocCancel } from '@react-native-documents/picker';
+import RNFS from 'react-native-fs';
+import { parseTxtChapters } from '../utils/txt';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -20,11 +23,13 @@ export default function BookshelfScreen() {
   const { theme } = useTheme();
   const navigation = useNavigation<NavigationProp>();
   const [refreshing, setRefreshing] = React.useState(false);
-  
+
   // 使用 Jotai 状态管理
   const books = useBooks();
   const selectBook = useSelectBook();
   const addBook = useAddBook();
+  const setChapters = useSetChapters();
+  const setChapterContent = useSetChapterContent();
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
@@ -33,6 +38,44 @@ export default function BookshelfScreen() {
       setRefreshing(false);
     }, 1000);
   }, []);
+
+  const handleImportTxt = React.useCallback(async () => {
+    try {
+      const results = await (DocPicker as any)({
+        allowMultiSelection: false,
+        types: [DocTypes?.plainText || 'public.plain-text'],
+        copyTo: 'cachesDirectory',
+      });
+      const picked = Array.isArray(results) ? results[0] : results;
+      if (!picked) return;
+      const path = picked.fileCopyUri || picked.uri;
+      if (!path) return;
+      const filePath = path.startsWith('file://') ? path : path;
+      const content = await RNFS.readFile(filePath.replace('file://', ''), 'utf8');
+      const bookId = Date.now().toString();
+      const title = (picked.name || '本地TXT').replace(/\.txt$/i, '');
+      const newBook: Book = {
+        id: bookId,
+        title,
+        author: '本地导入',
+        filePath: filePath,
+        fileFormat: 'txt',
+        addedAt: Date.now(),
+        updatedAt: Date.now(),
+        progress: 0,
+      };
+      const chapters = parseTxtChapters(bookId, content);
+      addBook(newBook);
+      setChapters(bookId, chapters);
+      selectBook(bookId);
+      if (chapters.length > 0) {
+        setChapterContent(chapters[0].content);
+      }
+      navigation.navigate('Reader', { bookId });
+    } catch (e: any) {
+      if (typeof isDocCancel === 'function' && isDocCancel(e)) return;
+    }
+  }, [addBook, navigation, selectBook, setChapters, setChapterContent]);
 
   const renderBookItem = ({ item }: { item: Book }) => (
     <Card
@@ -83,19 +126,8 @@ export default function BookshelfScreen() {
             点击下方按钮添加书籍
           </Text>
           <Button
-            title="添加书籍"
-            onPress={() => {
-              // 临时添加示例书籍，后续实现真实的添加功能
-              const newBook: Book = {
-                id: Date.now().toString(),
-                title: `示例书籍 ${books.length + 1}`,
-                author: '示例作者',
-                addedAt: Date.now(),
-                updatedAt: Date.now(),
-                progress: 0,
-              };
-              addBook(newBook);
-            }}
+            title="导入本地TXT"
+            onPress={handleImportTxt}
             style={styles.addButton}
           />
         </ScrollView>
@@ -105,6 +137,11 @@ export default function BookshelfScreen() {
           renderItem={renderBookItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContainer}
+          ListHeaderComponent={
+            <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+              <Button title="导入本地TXT" onPress={handleImportTxt} variant="outline" />
+            </View>
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
