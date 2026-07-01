@@ -13,9 +13,8 @@ import {
   useBookChapters,
 } from '../store';
 import type { Book } from '../store/types/book';
-import DocPicker, { types as DocTypes, isCancel as isDocCancel } from '@react-native-documents/picker';
-import RNFS from 'react-native-fs';
 import { parseTxtChapters } from '../utils/txt';
+import { pickTxtFile } from '../utils/importBook';
 import { resumeChapterIndex } from '../utils/chapters';
 import { paletteForId } from '../theme/readerThemes';
 
@@ -57,37 +56,22 @@ export default function BookshelfScreen() {
   const continueChapters = useBookChapters(continueBook?.id || null);
 
   const handleImportTxt = React.useCallback(async () => {
-    try {
-      const results = await (DocPicker as any)({
-        allowMultiSelection: false,
-        types: [DocTypes?.plainText || 'public.plain-text'],
-        copyTo: 'cachesDirectory',
-      });
-      const picked = Array.isArray(results) ? results[0] : results;
-      if (!picked) return;
-      const path = picked.fileCopyUri || picked.uri;
-      if (!path) return;
-      const filePath = path.startsWith('file://') ? path : path;
-      const content = await RNFS.readFile(filePath.replace('file://', ''), 'utf8');
-      const bookId = Date.now().toString();
-      const title = (picked.name || '本地TXT').replace(/\.txt$/i, '');
-      const newBook: Book = {
-        id: bookId,
-        title,
-        author: '本地导入',
-        filePath: filePath,
-        fileFormat: 'txt',
-        addedAt: Date.now(),
-        updatedAt: Date.now(),
-        progress: 0,
-      };
-      const chapters = parseTxtChapters(bookId, content);
-      addBook(newBook);
-      setChapters(bookId, chapters);
-      navigation.navigate('BookDetail', { bookId });
-    } catch (e: any) {
-      if (typeof isDocCancel === 'function' && isDocCancel(e)) return;
-    }
+    const picked = await pickTxtFile();
+    if (!picked) return;
+    const bookId = Date.now().toString();
+    const newBook: Book = {
+      id: bookId,
+      title: picked.name,
+      author: '本地导入',
+      fileFormat: 'txt',
+      addedAt: Date.now(),
+      updatedAt: Date.now(),
+      progress: 0,
+    };
+    const chapters = parseTxtChapters(bookId, picked.content);
+    addBook(newBook);
+    setChapters(bookId, chapters);
+    navigation.navigate('BookDetail', { bookId });
   }, [addBook, navigation, setChapters]);
 
   const continuing = books.filter((b) => b.progress < 100).length;
