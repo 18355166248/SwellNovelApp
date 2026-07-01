@@ -2,15 +2,13 @@
  * 阅读器相关类型定义
  */
 
+import { ReaderThemeKey } from '../../theme/readerThemes';
+
 export interface ReaderSettings {
-  fontSize: number; // 字体大小
-  lineHeight: number; // 行高倍数
-  paragraphSpacing: number; // 段间距
-  backgroundColor: string; // 背景颜色
-  textColor: string; // 文字颜色
-  fontFamily?: string; // 字体类型
-  pageTurnAnimation: 'slide' | 'scroll' | 'none'; // 翻页动画
-  brightness: number; // 屏幕亮度 0-1
+  theme: ReaderThemeKey; // 阅读背景主题：米白/浅灰/护眼/夜间
+  fontSizeIndex: number; // 字号档位，索引对应 theme/readerThemes.ts 中的 FONT_SIZES
+  lineHeightIndex: number; // 行间距档位：紧凑/适中/宽松
+  pageMode: 'scroll' | 'page'; // 翻页方式：上下滚动 / 左右翻页
 }
 
 export interface ReaderState {

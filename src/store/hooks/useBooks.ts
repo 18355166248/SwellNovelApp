@@ -11,6 +11,7 @@ import {
   bookSearchQueryAtom,
   chaptersAtom,
   readingHistoryAtom,
+  bookmarksAtom,
 } from '../atoms';
 import { Book, Chapter } from '../types/book';
 
@@ -154,6 +155,39 @@ export const useBookChapters = (bookId: string | null) => {
   const chapters = useAtomValue(chaptersAtom);
   if (!bookId) return [];
   return chapters[bookId] || [];
+};
+
+/**
+ * 获取某本书的书签列表
+ */
+export const useBookmarks = (bookId: string | null) => {
+  const bookmarks = useAtomValue(bookmarksAtom);
+  if (!bookId) return [];
+  return bookmarks[bookId] || [];
+};
+
+/**
+ * 在当前章节位置添加/移除书签
+ */
+export const useToggleBookmark = () => {
+  const setBookmarks = useSetAtom(bookmarksAtom);
+
+  return (bookId: string, chapterId: string) => {
+    setBookmarks((prev) => {
+      const list = prev[bookId] || [];
+      const existing = list.find((b) => b.chapterId === chapterId);
+      if (existing) {
+        return { ...prev, [bookId]: list.filter((b) => b.chapterId !== chapterId) };
+      }
+      return {
+        ...prev,
+        [bookId]: [
+          ...list,
+          { id: `${bookId}-${chapterId}-${Date.now()}`, bookId, chapterId, position: 0, createdAt: Date.now() },
+        ],
+      };
+    });
+  };
 };
 
 /**

@@ -15,13 +15,18 @@ export {
   useSetChapters,
   useBookChapters,
   useBookSearch,
+  useBookmarks,
+  useToggleBookmark,
 } from './useBooks';
 
 // 阅读器相关
 export {
   useReaderSettings,
-  useUpdateReaderSettings,
-  useResetReaderSettings,
+  useReaderDisplay,
+  useSetReaderTheme,
+  useAdjustFontSize,
+  useSetLineHeightIndex,
+  useSetPageMode,
   useReaderState,
   useUpdateReaderState,
   useToggleToolbar,
@@ -33,6 +38,8 @@ export {
   useIsLoadingChapter,
   useSetLoadingChapter,
 } from './useReader';
+
+export { useOpenChapter } from './useOpenChapter';
 
 // 设置相关
 export {

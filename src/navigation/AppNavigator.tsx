@@ -9,9 +9,11 @@ import { Icon } from '../components';
 
 // Screens
 import BookshelfScreen from '../screens/BookshelfScreen';
+import DiscoverScreen from '../screens/DiscoverScreen';
 import SearchScreen from '../screens/SearchScreen';
-import SettingsScreen from '../screens/SettingsScreen';
+import MeScreen from '../screens/MeScreen';
 import ReaderScreen from '../screens/ReaderScreen';
+import BookDetailScreen from '../screens/BookDetailScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -22,18 +24,15 @@ function MainTabs() {
   return (
     <Tab.Navigator
       screenOptions={{
-        headerStyle: {
-          backgroundColor: theme.colors.background,
-        },
-        headerTintColor: theme.colors.text,
-        tabBarActiveTintColor: theme.colors.primary,
+        headerShown: false,
+        tabBarActiveTintColor: theme.colors.accentDark,
         tabBarInactiveTintColor: theme.colors.textSecondary,
         tabBarStyle: {
-          backgroundColor: theme.colors.surface,
+          backgroundColor: theme.colors.tabBar,
           borderTopColor: theme.colors.border,
         },
         tabBarLabelStyle: {
-          fontSize: theme.fontSize.sm,
+          fontSize: 10.5,
           fontWeight: '600',
         },
       }}>
@@ -41,10 +40,19 @@ function MainTabs() {
         name="Bookshelf"
         component={BookshelfScreen}
         options={{
-          title: '书架',
           tabBarLabel: '书架',
           tabBarIcon: ({ color, size }) => (
-            <Icon name="book" color={color as string} size={size} />
+            <Icon name="menu-book" color={color as string} size={size} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Discover"
+        component={DiscoverScreen}
+        options={{
+          tabBarLabel: '发现',
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="explore" color={color as string} size={size} />
           ),
         }}
       />
@@ -52,7 +60,6 @@ function MainTabs() {
         name="Search"
         component={SearchScreen}
         options={{
-          title: '搜索',
           tabBarLabel: '搜索',
           tabBarIcon: ({ color, size }) => (
             <Icon name="search" color={color as string} size={size} />
@@ -60,13 +67,12 @@ function MainTabs() {
         }}
       />
       <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
+        name="Me"
+        component={MeScreen}
         options={{
-          title: '设置',
-          tabBarLabel: '设置',
+          tabBarLabel: '我的',
           tabBarIcon: ({ color, size }) => (
-            <Icon name="settings" color={color as string} size={size} />
+            <Icon name="person-outline" color={color as string} size={size} />
           ),
         }}
       />
@@ -94,27 +100,14 @@ export default function AppNavigator() {
       }}>
       <Stack.Navigator
         screenOptions={{
-          headerStyle: {
-            backgroundColor: theme.colors.background,
-          },
-          headerTintColor: theme.colors.text,
+          headerShown: false,
           contentStyle: {
             backgroundColor: theme.colors.background,
           },
         }}>
-        <Stack.Screen
-          name="MainTabs"
-          component={MainTabs}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="Reader"
-          component={ReaderScreen}
-          options={{
-            title: '阅读',
-            headerShown: true,
-          }}
-        />
+        <Stack.Screen name="MainTabs" component={MainTabs} />
+        <Stack.Screen name="BookDetail" component={BookDetailScreen} />
+        <Stack.Screen name="Reader" component={ReaderScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

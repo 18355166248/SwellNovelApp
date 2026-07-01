@@ -1,12 +1,14 @@
-export type RootStackParamList = {
-  MainTabs: undefined;
-  Reader: { bookId: string; chapterId?: string };
-  Settings: undefined;
-  BookDetail: { bookId: string };
-};
+import type { NavigatorScreenParams } from '@react-navigation/native';
 
 export type MainTabParamList = {
   Bookshelf: undefined;
+  Discover: undefined;
   Search: undefined;
-  Settings: undefined;
+  Me: undefined;
+};
+
+export type RootStackParamList = {
+  MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
+  Reader: { bookId: string; chapterId?: string; openDrawer?: boolean };
+  BookDetail: { bookId: string };
 };

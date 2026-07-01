@@ -2,26 +2,39 @@ import React from 'react';
 import { View, StyleSheet, ScrollView, Switch } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Card } from '../components';
-import { useAppSettings, useToggleNotifications } from '../store';
+import { useAppSettings, useToggleNotifications, useAllBooks } from '../store';
 
-export default function SettingsScreen() {
+export default function MeScreen() {
   const { theme, isDarkMode, toggleTheme } = useTheme();
   const appSettings = useAppSettings();
   const toggleNotifications = useToggleNotifications();
+  const books = useAllBooks();
 
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: theme.colors.background }]}
       contentContainerStyle={styles.contentContainer}>
+      <View style={styles.header}>
+        <View style={[styles.avatar, { backgroundColor: theme.colors.accentDark }]}>
+          <Text variant="h2" style={{ color: '#fff' }}>读</Text>
+        </View>
+        <View style={{ marginLeft: 14 }}>
+          <Text variant="h3">书友</Text>
+          <Text variant="caption" color="textSecondary" style={{ marginTop: 3 }}>
+            书架 {books.length} 本
+          </Text>
+        </View>
+      </View>
+
       <Card style={styles.section}>
-        <Text variant="h3" style={styles.sectionTitle}>
+        <Text variant="label" style={styles.sectionTitle}>
           外观设置
         </Text>
         <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
           <View style={styles.settingInfo}>
             <Text variant="body">深色模式</Text>
             <Text variant="caption" color="textSecondary">
-              切换应用主题
+              切换应用整体主题（阅读页主题在阅读设置中单独调整）
             </Text>
           </View>
           <Switch
@@ -29,52 +42,22 @@ export default function SettingsScreen() {
             onValueChange={toggleTheme}
             trackColor={{
               false: theme.colors.border,
-              true: theme.colors.primary,
+              true: theme.colors.accentDark,
             }}
-            thumbColor={isDarkMode ? '#FFFFFF' : '#FFFFFF'}
+            thumbColor="#FFFFFF"
           />
         </View>
       </Card>
 
       <Card style={styles.section}>
-        <Text variant="h3" style={styles.sectionTitle}>
-          阅读设置
-        </Text>
-        <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
-          <View style={styles.settingInfo}>
-            <Text variant="body">默认字体大小</Text>
-            <Text variant="caption" color="textSecondary">
-              16px
-            </Text>
-          </View>
-        </View>
-        <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
-          <View style={styles.settingInfo}>
-            <Text variant="body">默认背景色</Text>
-            <Text variant="caption" color="textSecondary">
-              白色
-            </Text>
-          </View>
-        </View>
-        <View style={styles.settingItem}>
-          <View style={styles.settingInfo}>
-            <Text variant="body">翻页动画</Text>
-            <Text variant="caption" color="textSecondary">
-              滑动翻页
-            </Text>
-          </View>
-        </View>
-      </Card>
-
-      <Card style={styles.section}>
-        <Text variant="h3" style={styles.sectionTitle}>
+        <Text variant="label" style={styles.sectionTitle}>
           通知设置
         </Text>
-        <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
+        <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <Text variant="body">启用通知</Text>
             <Text variant="caption" color="textSecondary">
-              接收阅读提醒
+              接收更新提醒
             </Text>
           </View>
           <Switch
@@ -82,30 +65,22 @@ export default function SettingsScreen() {
             onValueChange={toggleNotifications}
             trackColor={{
               false: theme.colors.border,
-              true: theme.colors.primary,
+              true: theme.colors.accentDark,
             }}
-            thumbColor={appSettings.notificationsEnabled ? '#FFFFFF' : '#FFFFFF'}
+            thumbColor="#FFFFFF"
           />
         </View>
       </Card>
 
       <Card style={styles.section}>
-        <Text variant="h3" style={styles.sectionTitle}>
+        <Text variant="label" style={styles.sectionTitle}>
           关于
         </Text>
-        <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
+        <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <Text variant="body">版本</Text>
             <Text variant="caption" color="textSecondary">
               1.0.0
-            </Text>
-          </View>
-        </View>
-        <View style={styles.settingItem}>
-          <View style={styles.settingInfo}>
-            <Text variant="body">缓存管理</Text>
-            <Text variant="caption" color="textSecondary">
-              清理缓存数据
             </Text>
           </View>
         </View>
@@ -119,13 +94,26 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    padding: 16,
+    padding: 20,
+    paddingTop: 28,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   section: {
     marginBottom: 16,
   },
   sectionTitle: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   settingItem: {
     flexDirection: 'row',

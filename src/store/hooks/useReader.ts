@@ -6,11 +6,13 @@ import { useAtomValue, useSetAtom } from 'jotai';
 import {
   readerSettingsAtom,
   readerStateAtom,
+  readerDisplayAtom,
   currentChapterContentAtom,
   currentChapterIndexAtom,
   isLoadingChapterAtom,
 } from '../atoms';
-import { ReaderSettings, ReaderState } from '../types/reader';
+import { ReaderState } from '../types/reader';
+import { ReaderThemeKey, FONT_SIZES, LINE_HEIGHTS } from '../../theme/readerThemes';
 
 /**
  * 获取阅读设置
@@ -20,32 +22,61 @@ export const useReaderSettings = () => {
 };
 
 /**
- * 更新阅读设置
+ * 获取派生的阅读展示 token（配色、字号、行高）
  */
-export const useUpdateReaderSettings = () => {
+export const useReaderDisplay = () => {
+  return useAtomValue(readerDisplayAtom);
+};
+
+/**
+ * 切换阅读背景主题（米白/浅灰/护眼/夜间）
+ */
+export const useSetReaderTheme = () => {
   const setSettings = useSetAtom(readerSettingsAtom);
-  
-  return (updates: Partial<ReaderSettings>) => {
-    setSettings((prev) => ({ ...prev, ...updates }));
+  return (theme: ReaderThemeKey) => {
+    setSettings((prev) => ({ ...prev, theme }));
   };
 };
 
 /**
- * 重置阅读设置为默认值
+ * 增大 / 减小字号
  */
-export const useResetReaderSettings = () => {
+export const useAdjustFontSize = () => {
   const setSettings = useSetAtom(readerSettingsAtom);
-  
-  return () => {
-    setSettings({
-      fontSize: 16,
-      lineHeight: 1.8,
-      paragraphSpacing: 8,
-      backgroundColor: '#FFFFFF',
-      textColor: '#000000',
-      pageTurnAnimation: 'slide',
-      brightness: 1.0,
-    });
+  return {
+    inc: () =>
+      setSettings((prev) => ({
+        ...prev,
+        fontSizeIndex: Math.min(FONT_SIZES.length - 1, prev.fontSizeIndex + 1),
+      })),
+    dec: () =>
+      setSettings((prev) => ({
+        ...prev,
+        fontSizeIndex: Math.max(0, prev.fontSizeIndex - 1),
+      })),
+  };
+};
+
+/**
+ * 设置行间距档位
+ */
+export const useSetLineHeightIndex = () => {
+  const setSettings = useSetAtom(readerSettingsAtom);
+  return (index: number) => {
+    setSettings((prev) => ({
+      ...prev,
+      lineHeightIndex: Math.max(0, Math.min(LINE_HEIGHTS.length - 1, index)),
+    }));
+  };
+};
+
+/**
+ * 设置翻页方式
+ */
+export const useSetPageMode = () => {
+  const setSettings = useSetAtom(readerSettingsAtom);
+  return (pageMode: 'scroll' | 'page') => {
+    setSettings((prev) => ({ ...prev, pageMode }));
   };
 };
 
@@ -61,7 +92,7 @@ export const useReaderState = () => {
  */
 export const useUpdateReaderState = () => {
   const setState = useSetAtom(readerStateAtom);
-  
+
   return (updates: Partial<ReaderState>) => {
     setState((prev) => ({ ...prev, ...updates }));
   };
@@ -72,7 +103,7 @@ export const useUpdateReaderState = () => {
  */
 export const useToggleToolbar = () => {
   const setState = useSetAtom(readerStateAtom);
-  
+
   return () => {
     setState((prev) => ({
       ...prev,
@@ -86,7 +117,7 @@ export const useToggleToolbar = () => {
  */
 export const useSetToolbarVisible = () => {
   const setState = useSetAtom(readerStateAtom);
-  
+
   return (visible: boolean) => {
     setState((prev) => ({ ...prev, isToolbarVisible: visible }));
   };
@@ -104,7 +135,7 @@ export const useCurrentChapterContent = () => {
  */
 export const useSetChapterContent = () => {
   const setContent = useSetAtom(currentChapterContentAtom);
-  
+
   return (content: string) => {
     setContent(content);
   };
@@ -122,7 +153,7 @@ export const useCurrentChapterIndex = () => {
  */
 export const useSetChapterIndex = () => {
   const setIndex = useSetAtom(currentChapterIndexAtom);
-  
+
   return (index: number | null) => {
     setIndex(index);
   };
@@ -140,7 +171,7 @@ export const useIsLoadingChapter = () => {
  */
 export const useSetLoadingChapter = () => {
   const setIsLoading = useSetAtom(isLoadingChapterAtom);
-  
+
   return (loading: boolean) => {
     setIsLoading(loading);
   };

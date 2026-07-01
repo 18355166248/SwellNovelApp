@@ -21,6 +21,7 @@ export {
 export {
   readerSettingsAtom,
   readerStateAtom,
+  readerDisplayAtom,
   currentChapterContentAtom,
   currentChapterIndexAtom,
   isLoadingChapterAtom,
