@@ -4,10 +4,12 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  FlatList,
   Pressable,
   TextInput,
   Alert,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -40,16 +42,50 @@ import {
   ReaderThemeKey,
 } from '../theme/readerThemes';
 import { SERIF_FONT } from '../theme/fonts';
+import {
+  breakLines,
+  buildPages,
+  findPageByOffset,
+  INDENT,
+  linesFromTextLayout,
+  ReaderLine,
+  ReaderPageData,
+} from '../utils/paginate';
+import { getCharWidthMeasurer } from '../utils/charWidth';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
 
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
 const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
+const PAGE_HORIZONTAL_PADDING = 24;
+const PAGE_TOP_PADDING = 56;
+const PAGE_BOTTOM_PADDING = 90;
+/** 章节边界越界回弹翻章的位移阈值 */
+const CHAPTER_TURN_THRESHOLD = 40;
+
+// react-native-web 透传 CSS scroll-snap，横向列表在 web 获得整页吸附。
+const WEB_SNAP_CONTAINER =
+  Platform.OS === 'web' ? ({ scrollSnapType: 'x mandatory' } as any) : null;
+const WEB_SNAP_ITEM =
+  Platform.OS === 'web' ? ({ scrollSnapAlign: 'start' } as any) : null;
+
+// onTextLayout 真实排版结果缓存：同章同排版参数只测一次。
+const measuredLinesCache = new Map<string, ReaderLine[]>();
+const MEASURED_CACHE_LIMIT = 16;
+function cacheMeasuredLines(key: string, lines: ReaderLine[]) {
+  if (measuredLinesCache.size >= MEASURED_CACHE_LIMIT) {
+    const oldest = measuredLinesCache.keys().next().value;
+    if (oldest != null) measuredLinesCache.delete(oldest);
+  }
+  measuredLinesCache.set(key, lines);
+}
 
 export default function ReaderScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ReaderRoute>();
+  const { width: viewportWidth, height: viewportHeight } =
+    useWindowDimensions();
   const { bookId, openDrawer } = route.params;
 
   const books = useAllBooks();
@@ -81,6 +117,7 @@ export default function ReaderScreen() {
   const [status, setStatus] = React.useState<'ready' | 'loading' | 'error'>(
     'ready',
   );
+  const [pageIndex, setPageIndex] = React.useState(0);
   const transitionRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -107,8 +144,6 @@ export default function ReaderScreen() {
     return list;
   }, [chapters, drawerOrder, drawerQuery]);
 
-  if (!book) return null;
-
   const chapter = chapters[chapterIndex];
   const isNight = settings.theme === 'night';
   const hasBookmark = chapter
@@ -116,9 +151,188 @@ export default function ReaderScreen() {
     : false;
   const progressPct =
     total > 0 ? Math.round(((chapterIndex + 1) / total) * 100) : 0;
-  const paragraphs = (content || chapter?.content || '')
-    .split(/\n+/)
-    .filter(p => p.trim().length > 0);
+  const paragraphs = React.useMemo(
+    () =>
+      (content || chapter?.content || '')
+        .split(/\n+/)
+        .filter(p => p.trim().length > 0),
+    [chapter?.content, content],
+  );
+
+  // 左右翻页先按真实字符宽度断行、组页，再交给 FlatList 虚拟渲染，避免大章节一次性挂载所有页面。
+  const pageMetrics = React.useMemo(() => {
+    const maxWidth = Math.max(1, viewportWidth - PAGE_HORIZONTAL_PADDING * 2);
+    const readableHeight = Math.max(
+      1,
+      viewportHeight - PAGE_TOP_PADDING - PAGE_BOTTOM_PADDING,
+    );
+    const lineHeight = display.fontSize * display.lineHeight;
+    const linesPerPage = Math.max(1, Math.floor(readableHeight / lineHeight));
+    // 首页扣除标题区（章节名 + meta + 间距）真实占用的行数，消除首页尾部留白。
+    const headerLines = Math.ceil(
+      (display.titleSize * 1.4 + 12 + 24) / lineHeight,
+    );
+    const firstPageLines = Math.max(1, linesPerPage - headerLines);
+
+    return { maxWidth, linesPerPage, firstPageLines };
+  }, [
+    display.fontSize,
+    display.lineHeight,
+    display.titleSize,
+    viewportHeight,
+    viewportWidth,
+  ]);
+  const pages = React.useMemo<ReaderPageData[]>(() => {
+    const chapterId = chapter?.id || bookId;
+    const measure = getCharWidthMeasurer(SERIF_FONT, display.fontSize);
+    const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}`;
+    const lines =
+      measuredLinesCache.get(cacheKey) ??
+      breakLines(paragraphs, pageMetrics.maxWidth, measure);
+    return buildPages({
+      chapterId,
+      lines,
+      linesPerPage: pageMetrics.linesPerPage,
+      firstPageLines: pageMetrics.firstPageLines,
+    });
+  }, [
+    bookId,
+    chapter?.id,
+    display.fontSize,
+    display.lineHeight,
+    pageMetrics.firstPageLines,
+    pageMetrics.linesPerPage,
+    pageMetrics.maxWidth,
+    paragraphs,
+  ]);
+
+  React.useEffect(() => {
+    setPageIndex(0);
+  }, [chapter?.id, pages.length, settings.pageMode]);
+
+  const pageProgressPct =
+    total > 0 && pages.length > 0
+      ? Math.round(((chapterIndex + pageIndex / pages.length) / total) * 100)
+      : progressPct;
+  const progressLabel =
+    settings.pageMode === 'page'
+      ? `本章 ${Math.min(pageIndex + 1, pages.length)} / ${
+          pages.length
+        } 页 · ${pageProgressPct}%`
+      : `${chapterIndex + 1} / ${total} · ${progressPct}%`;
+
+  const renderPage = React.useCallback(
+    ({ item, index }: { item: ReaderPageData; index: number }) => {
+      const isLastPage = index === pages.length - 1;
+
+      return (
+        <Pressable
+          onPress={toggleToolbar}
+          style={[
+            styles.pagePanel,
+            {
+              width: viewportWidth,
+              paddingTop: PAGE_TOP_PADDING,
+              paddingBottom: PAGE_BOTTOM_PADDING,
+            },
+          ]}
+        >
+          {item.showHeader && (
+            <>
+              <Text
+                style={[
+                  styles.chapterTitle,
+                  {
+                    fontSize: display.titleSize,
+                    color: display.theme.text,
+                  },
+                ]}
+              >
+                {chapter?.title || book?.title}
+              </Text>
+              <Text style={[styles.chapterMeta, { color: display.theme.sub }]}>
+                {book?.title} · {book?.author}
+              </Text>
+            </>
+          )}
+          <Text
+            style={{
+              fontFamily: SERIF_FONT,
+              fontSize: display.fontSize,
+              lineHeight: display.fontSize * display.lineHeight,
+              color: display.theme.text,
+              textAlign: 'justify',
+            }}
+          >
+            {item.text || '本章暂无内容'}
+          </Text>
+          {isLastPage && (
+            <Text style={[styles.pageEndText, { color: display.theme.sub }]}>
+              本章完
+            </Text>
+          )}
+        </Pressable>
+      );
+    },
+    [
+      book?.author,
+      book?.title,
+      chapter?.title,
+      display.fontSize,
+      display.lineHeight,
+      display.theme.sub,
+      display.theme.text,
+      display.titleSize,
+      pages.length,
+      toggleToolbar,
+      viewportWidth,
+    ],
+  );
+
+  const getPageLayout = React.useCallback(
+    (_: ArrayLike<ReaderPageData> | null | undefined, index: number) => ({
+      length: viewportWidth,
+      offset: viewportWidth * index,
+      index,
+    }),
+    [viewportWidth],
+  );
+
+  const handlePageMomentumEnd = React.useCallback(
+    (event: { nativeEvent: { contentOffset: { x: number } } }) => {
+      const nextPage = Math.round(
+        event.nativeEvent.contentOffset.x / viewportWidth,
+      );
+      setPageIndex(Math.max(0, Math.min(pages.length - 1, nextPage)));
+    },
+    [pages.length, viewportWidth],
+  );
+
+  const paragraphNodes = React.useMemo(
+    () =>
+      paragraphs.map((p, i) => (
+        <Text
+          key={i}
+          style={{
+            fontFamily: SERIF_FONT,
+            fontSize: display.fontSize,
+            lineHeight: display.fontSize * display.lineHeight,
+            marginBottom: display.paraGap,
+            color: display.theme.text,
+            textAlign: 'justify',
+          }}
+        >
+          {'　　' + p}
+        </Text>
+      )),
+    [
+      display.fontSize,
+      display.lineHeight,
+      display.paraGap,
+      display.theme.text,
+      paragraphs,
+    ],
+  );
 
   const goToChapter = (idx: number) => {
     if (idx < 0 || idx >= total) return;
@@ -142,84 +356,94 @@ export default function ReaderScreen() {
     navigation.navigate('BookDetail', { bookId });
   };
 
+  if (!book) return null;
+
   return (
     <View style={[styles.container, { backgroundColor: display.theme.bg }]}>
-      {status === 'ready' && (
-        <ScrollView
-          style={StyleSheet.absoluteFill}
-          contentContainerStyle={{
-            padding: 24,
-            paddingTop: 56,
-            paddingBottom: 90,
-          }}
-          onScrollBeginDrag={() => setToolbarVisible(false)}
-        >
-          <Pressable onPress={toggleToolbar}>
-            <Text
-              style={[
-                styles.chapterTitle,
-                { fontSize: display.titleSize, color: display.theme.text },
-              ]}
-            >
-              {chapter?.title || book.title}
-            </Text>
-            <Text style={[styles.chapterMeta, { color: display.theme.sub }]}>
-              {book.title} · {book.author}
-            </Text>
-            {paragraphs.length === 0 ? (
-              <Text style={{ color: display.theme.sub, fontSize: 14 }}>
-                本章暂无内容
-              </Text>
-            ) : (
-              paragraphs.map((p, i) => (
-                <Text
-                  key={i}
-                  style={{
-                    fontFamily: SERIF_FONT,
-                    fontSize: display.fontSize,
-                    lineHeight: display.fontSize * display.lineHeight,
-                    marginBottom: display.paraGap,
-                    color: display.theme.text,
-                    textAlign: 'justify',
-                  }}
-                >
-                  {'　　' + p}
-                </Text>
-              ))
-            )}
-            <View
-              style={[styles.endBlock, { borderTopColor: display.theme.hair }]}
-            >
-              <Text style={{ color: display.theme.sub, fontSize: 12 }}>
-                本章完
-              </Text>
-              <Pressable
-                onPress={() => goToChapter(chapterIndex + 1)}
-                disabled={chapterIndex >= total - 1}
+      {status === 'ready' &&
+        (settings.pageMode === 'page' ? (
+          <FlatList
+            testID="reader-page-list"
+            data={pages}
+            renderItem={renderPage}
+            keyExtractor={item => item.key}
+            horizontal
+            pagingEnabled
+            style={StyleSheet.absoluteFill}
+            showsHorizontalScrollIndicator={false}
+            initialNumToRender={2}
+            maxToRenderPerBatch={2}
+            windowSize={3}
+            removeClippedSubviews
+            getItemLayout={getPageLayout}
+            onScrollBeginDrag={() => setToolbarVisible(false)}
+            onMomentumScrollEnd={handlePageMomentumEnd}
+          />
+        ) : (
+          <ScrollView
+            style={StyleSheet.absoluteFill}
+            contentContainerStyle={{
+              padding: PAGE_HORIZONTAL_PADDING,
+              paddingTop: PAGE_TOP_PADDING,
+              paddingBottom: PAGE_BOTTOM_PADDING,
+            }}
+            onScrollBeginDrag={() => setToolbarVisible(false)}
+          >
+            <Pressable onPress={toggleToolbar}>
+              <Text
                 style={[
-                  styles.nextBtn,
-                  {
-                    borderColor: display.theme.text,
-                    opacity: chapterIndex >= total - 1 ? 0.4 : 1,
-                  },
+                  styles.chapterTitle,
+                  { fontSize: display.titleSize, color: display.theme.text },
                 ]}
               >
-                <Text
-                  style={{
-                    color: display.theme.text,
-                    fontSize: 14,
-                    fontFamily: SERIF_FONT,
-                  }}
-                >
-                  {chapterIndex >= total - 1
-                    ? '已是最新章节'
-                    : `下一章 · ${chapters[chapterIndex + 1]?.title}`}
+                {chapter?.title || book.title}
+              </Text>
+              <Text style={[styles.chapterMeta, { color: display.theme.sub }]}>
+                {book.title} · {book.author}
+              </Text>
+              {paragraphs.length === 0 ? (
+                <Text style={{ color: display.theme.sub, fontSize: 14 }}>
+                  本章暂无内容
                 </Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        </ScrollView>
-      )}
+              ) : (
+                paragraphNodes
+              )}
+              <View
+                style={[
+                  styles.endBlock,
+                  { borderTopColor: display.theme.hair },
+                ]}
+              >
+                <Text style={{ color: display.theme.sub, fontSize: 12 }}>
+                  本章完
+                </Text>
+                <Pressable
+                  onPress={() => goToChapter(chapterIndex + 1)}
+                  disabled={chapterIndex >= total - 1}
+                  style={[
+                    styles.nextBtn,
+                    {
+                      borderColor: display.theme.text,
+                      opacity: chapterIndex >= total - 1 ? 0.4 : 1,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: display.theme.text,
+                      fontSize: 14,
+                      fontFamily: SERIF_FONT,
+                    }}
+                  >
+                    {chapterIndex >= total - 1
+                      ? '已是最新章节'
+                      : `下一章 · ${chapters[chapterIndex + 1]?.title}`}
+                  </Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          </ScrollView>
+        ))}
 
       {status === 'loading' && (
         <View style={styles.centerFill}>
@@ -294,7 +518,7 @@ export default function ReaderScreen() {
 
       <View style={styles.progressHint} pointerEvents="none">
         <Text style={{ color: display.theme.sub, fontSize: 10.5 }}>
-          {chapterIndex + 1} / {total} · {progressPct}%
+          {progressLabel}
         </Text>
       </View>
 
@@ -308,10 +532,7 @@ export default function ReaderScreen() {
             },
           ]}
         >
-          <Pressable
-            onPress={handleBack}
-            style={styles.barBtn}
-          >
+          <Pressable onPress={handleBack} style={styles.barBtn}>
             <Icon name="arrow-back" size={20} color={display.chrome.ink} />
           </Pressable>
           <View style={{ flex: 1, alignItems: 'center' }}>
@@ -557,7 +778,9 @@ export default function ReaderScreen() {
                           styles.swatch,
                           {
                             backgroundColor: t.bg,
-                            borderColor: on ? NOVEL_ACCENT : display.chrome.hair,
+                            borderColor: on
+                              ? NOVEL_ACCENT
+                              : display.chrome.hair,
                           },
                         ]}
                       >
@@ -765,9 +988,7 @@ export default function ReaderScreen() {
                   { borderColor: display.chrome.hair },
                 ]}
               >
-                <Text
-                  style={{ color: display.chrome.sheetSub, fontSize: 13 }}
-                >
+                <Text style={{ color: display.chrome.sheetSub, fontSize: 13 }}>
                   已显示全部章节
                 </Text>
               </Pressable>
@@ -800,6 +1021,14 @@ function ReaderAction({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  pagePanel: {
+    paddingHorizontal: PAGE_HORIZONTAL_PADDING,
+  },
+  pageEndText: {
+    marginTop: 18,
+    fontSize: 12,
+    textAlign: 'center',
+  },
   chapterTitle: {
     fontFamily: SERIF_FONT,
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
