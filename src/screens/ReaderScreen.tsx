@@ -118,6 +118,7 @@ export default function ReaderScreen() {
     'ready',
   );
   const [pageIndex, setPageIndex] = React.useState(0);
+  const flatListRef = React.useRef<FlatList<ReaderPageData>>(null);
   const transitionRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -221,13 +222,35 @@ export default function ReaderScreen() {
         } 页 · ${pageProgressPct}%`
       : `${chapterIndex + 1} / ${total} · ${progressPct}%`;
 
+  const goToPage = React.useCallback(
+    (delta: number) => {
+      const target = pageIndex + delta;
+      if (target < 0 || target >= pages.length) {
+        // 章节边界顺翻在后续任务接入；此处暂不处理越界。
+        return;
+      }
+      flatListRef.current?.scrollToIndex({ index: target, animated: true });
+      setPageIndex(target);
+    },
+    [pageIndex, pages.length],
+  );
+
   const renderPage = React.useCallback(
     ({ item, index }: { item: ReaderPageData; index: number }) => {
       const isLastPage = index === pages.length - 1;
 
       return (
         <Pressable
-          onPress={toggleToolbar}
+          onPress={(e: any) => {
+            const x = e?.nativeEvent?.locationX ?? viewportWidth / 2;
+            if (x < viewportWidth / 3) {
+              goToPage(-1);
+            } else if (x > (viewportWidth * 2) / 3) {
+              goToPage(1);
+            } else {
+              toggleToolbar();
+            }
+          }}
           style={[
             styles.pagePanel,
             {
@@ -283,6 +306,7 @@ export default function ReaderScreen() {
       display.theme.sub,
       display.theme.text,
       display.titleSize,
+      goToPage,
       pages.length,
       toggleToolbar,
       viewportWidth,
@@ -363,6 +387,7 @@ export default function ReaderScreen() {
       {status === 'ready' &&
         (settings.pageMode === 'page' ? (
           <FlatList
+            ref={flatListRef}
             testID="reader-page-list"
             data={pages}
             renderItem={renderPage}
