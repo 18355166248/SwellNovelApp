@@ -81,6 +81,7 @@ export function LibraryPersistence() {
     saveTimerRef.current = setTimeout(() => {
       saveLibrarySnapshot({
         version: 1,
+        readerSettingsVersion: 2,
         books,
         chapters,
         readingHistory,

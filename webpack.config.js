@@ -68,7 +68,16 @@ module.exports = (_env, argv) => {
       ],
     },
     resolve: {
-      extensions: ['.web.tsx', '.web.ts', '.web.js', '.tsx', '.ts', '.js', '.jsx', '.json'],
+      extensions: [
+        '.web.tsx',
+        '.web.ts',
+        '.web.js',
+        '.tsx',
+        '.ts',
+        '.js',
+        '.jsx',
+        '.json',
+      ],
       alias: {
         'react-native$': 'react-native-web',
         // 可选依赖：手势库在缺失 reanimated 时会优雅降级，Web 端未使用，
@@ -90,7 +99,7 @@ module.exports = (_env, argv) => {
       historyApiFallback: true,
       hot: true,
       host: '0.0.0.0',
-      port: 8080,
+      port: Number(process.env.PORT) || 8080,
       client: {
         overlay: { errors: true, warnings: false },
       },

@@ -18,6 +18,21 @@ const iconFontStyles = `@font-face {
   src: url(${MaterialIconsFont}) format('truetype');
   font-weight: normal;
   font-style: normal;
+}
+
+/* 阅读器左右翻页在 Web 端会获得焦点并显示浏览器 outline/scrollbar，预览时看起来像一条选中线。 */
+[data-testid="reader-page-list"],
+[data-testid="reader-page-list"] * {
+  outline: none !important;
+}
+
+[data-testid="reader-page-list"] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+[data-testid="reader-page-list"]::-webkit-scrollbar {
+  display: none;
 }`;
 
 const style = document.createElement('style');

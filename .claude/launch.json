@@ -5,7 +5,8 @@
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "web"],
-      "port": 8080
+      "port": 8080,
+      "autoPort": true
     }
   ]
 }

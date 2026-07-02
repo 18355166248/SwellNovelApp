@@ -454,18 +454,24 @@ export default function BookshelfScreen() {
                   {...COVER_GRADIENT_DIRECTION}
                   style={styles.listCover}
                 >
-                  <Text
-                    style={[
-                      styles.listCoverText,
-                      { color: paletteForId(b.id).ink },
-                    ]}
-                    numberOfLines={2}
-                    maxFontSizeMultiplier={1}
-                  >
-                    {b.title}
-                  </Text>
+                  <View style={styles.listCoverTitleLayer}>
+                    <Text
+                      style={[
+                        styles.listCoverText,
+                        {
+                          color: paletteForId(b.id).ink,
+                          fontSize: coverTitleFontSize(b.title, 12),
+                          lineHeight: coverTitleFontSize(b.title, 12) + 3,
+                        },
+                      ]}
+                      numberOfLines={2}
+                      maxFontSizeMultiplier={1}
+                    >
+                      {b.title}
+                    </Text>
+                  </View>
                 </LinearGradient>
-                <View style={{ flex: 1, marginLeft: 12 }}>
+                <View style={styles.listInfo}>
                   <Text variant="h3" numberOfLines={1}>
                     {b.title}
                   </Text>
@@ -694,20 +700,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   list: { paddingHorizontal: 20, paddingTop: 10 },
-  listItem: { flexDirection: 'row', paddingVertical: 12, borderBottomWidth: 1 },
+  listItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
   listCover: {
     width: 52,
     height: 70,
     borderRadius: 5,
+    overflow: 'hidden',
+  },
+  listCoverTitleLayer: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 5,
+    paddingHorizontal: 7,
   },
   listCoverText: {
     fontFamily: SERIF_FONT,
     fontSize: 12,
+    lineHeight: 15,
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
     textAlign: 'center',
+  },
+  listInfo: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
   },
   listImportBtn: {
     marginTop: 10,

@@ -8,6 +8,7 @@ import { ReaderSettings } from '../store/types/reader';
 
 export interface LibrarySnapshot {
   version: 1;
+  readerSettingsVersion?: 2;
   books: Book[];
   chapters: Record<string, Chapter[]>;
   readingHistory: Record<string, ReadingHistory>;
@@ -36,7 +37,16 @@ export const loadLibrarySnapshot = async (): Promise<LibrarySnapshot | null> => 
     chapters: snapshot.chapters ?? {},
     readingHistory: snapshot.readingHistory ?? {},
     bookmarks: snapshot.bookmarks ?? {},
-    readerSettings: snapshot.readerSettings,
+    readerSettings: snapshot.readerSettings
+      ? {
+          ...snapshot.readerSettings,
+          // v1 早期默认值是上下滚动。没有明确设置版本时迁移到新的默认左右翻页，之后用户选择会正常持久化。
+          pageMode:
+            snapshot.readerSettingsVersion === 2
+              ? snapshot.readerSettings.pageMode
+              : 'page',
+        }
+      : undefined,
   };
 };
 

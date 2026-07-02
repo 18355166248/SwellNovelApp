@@ -17,7 +17,7 @@ const defaultReaderSettings: ReaderSettings = {
   theme: 'paper',
   fontSizeIndex: 2,
   lineHeightIndex: 1,
-  pageMode: 'scroll',
+  pageMode: 'page',
 };
 
 // 阅读设置

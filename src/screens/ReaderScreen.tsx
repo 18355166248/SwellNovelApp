@@ -66,9 +66,38 @@ const CHAPTER_TURN_THRESHOLD = 40;
 
 // react-native-web 透传 CSS scroll-snap，横向列表在 web 获得整页吸附。
 const WEB_SNAP_CONTAINER =
-  Platform.OS === 'web' ? ({ scrollSnapType: 'x mandatory' } as any) : null;
+  Platform.OS === 'web'
+    ? ({
+        overscrollBehaviorX: 'contain',
+        scrollSnapType: 'x mandatory',
+        WebkitOverflowScrolling: 'touch',
+      } as any)
+    : null;
 const WEB_SNAP_ITEM =
-  Platform.OS === 'web' ? ({ scrollSnapAlign: 'start' } as any) : null;
+  Platform.OS === 'web'
+    ? ({ scrollSnapAlign: 'start', scrollSnapStop: 'normal' } as any)
+    : null;
+
+function findReaderPageScrollNode(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  const root = document.querySelector(
+    '[data-testid="reader-page-list"]',
+  ) as HTMLElement | null;
+  if (!root) return null;
+
+  const candidates = [
+    root,
+    ...Array.from(root.querySelectorAll<HTMLElement>('*')),
+  ];
+  return (
+    candidates.find(
+      node =>
+        node.clientWidth > 0 &&
+        node.scrollWidth > node.clientWidth &&
+        ['auto', 'scroll'].includes(getComputedStyle(node).overflowX),
+    ) ?? null
+  );
+}
 
 // onTextLayout 真实排版结果缓存：同章同排版参数只测一次。
 const measuredLinesCache = new Map<string, ReaderLine[]>();
@@ -118,10 +147,17 @@ export default function ReaderScreen() {
     'ready',
   );
   const [pageIndex, setPageIndex] = React.useState(0);
+  const [measureTick, setMeasureTick] = React.useState(0);
   const flatListRef = React.useRef<FlatList<ReaderPageData>>(null);
+  const currentOffsetRef = React.useRef(0);
+  const pendingLandRef = React.useRef<'last' | null>(null);
+  const prevChapterIdRef = React.useRef<string | undefined>(undefined);
   const transitionRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
+  const webScrollIdleRef = React.useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
 
   React.useEffect(() => {
     selectBook(bookId);
@@ -130,6 +166,7 @@ export default function ReaderScreen() {
   React.useEffect(
     () => () => {
       if (transitionRef.current) clearTimeout(transitionRef.current);
+      if (webScrollIdleRef.current) clearTimeout(webScrollIdleRef.current);
     },
     [],
   );
@@ -187,9 +224,11 @@ export default function ReaderScreen() {
     const chapterId = chapter?.id || bookId;
     const measure = getCharWidthMeasurer(SERIF_FONT, display.fontSize);
     const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}`;
+    // measureTick 是原生 onTextLayout 写入真实测量缓存后的失效版本，促使同一 cacheKey 重新取缓存。
     const lines =
-      measuredLinesCache.get(cacheKey) ??
-      breakLines(paragraphs, pageMetrics.maxWidth, measure);
+      measureTick >= 0 && measuredLinesCache.has(cacheKey)
+        ? measuredLinesCache.get(cacheKey)!
+        : breakLines(paragraphs, pageMetrics.maxWidth, measure);
     return buildPages({
       chapterId,
       lines,
@@ -205,11 +244,29 @@ export default function ReaderScreen() {
     pageMetrics.linesPerPage,
     pageMetrics.maxWidth,
     paragraphs,
+    measureTick,
   ]);
 
   React.useEffect(() => {
-    setPageIndex(0);
-  }, [chapter?.id, pages.length, settings.pageMode]);
+    const chapterChanged = prevChapterIdRef.current !== chapter?.id;
+    prevChapterIdRef.current = chapter?.id;
+
+    if (chapterChanged) {
+      if (pendingLandRef.current === 'last') {
+        pendingLandRef.current = null;
+        const last = Math.max(0, pages.length - 1);
+        currentOffsetRef.current = pages[last]?.startOffset ?? 0;
+        setPageIndex(last);
+      } else {
+        currentOffsetRef.current = 0;
+        setPageIndex(0);
+      }
+      return;
+    }
+
+    // 同章重新分页时，用逻辑字符偏移映射回原段落附近，避免字号/行距调整后跳回首页。
+    setPageIndex(findPageByOffset(pages, currentOffsetRef.current));
+  }, [chapter?.id, pages, settings.pageMode]);
 
   const pageProgressPct =
     total > 0 && pages.length > 0
@@ -222,18 +279,78 @@ export default function ReaderScreen() {
         } 页 · ${pageProgressPct}%`
       : `${chapterIndex + 1} / ${total} · ${progressPct}%`;
 
+  const goToChapter = React.useCallback(
+    (idx: number) => {
+      if (idx < 0 || idx >= total) return;
+      setStatus('loading');
+      setSettingsOpen(false);
+      setDrawerOpen(false);
+      setToolbarVisible(false);
+      if (transitionRef.current) clearTimeout(transitionRef.current);
+      transitionRef.current = setTimeout(() => {
+        openChapter(bookId, idx);
+        setStatus(chapters[idx]?.content ? 'ready' : 'error');
+      }, 260);
+    },
+    [bookId, chapters, openChapter, setToolbarVisible, total],
+  );
+
   const goToPage = React.useCallback(
     (delta: number) => {
       const target = pageIndex + delta;
-      if (target < 0 || target >= pages.length) {
-        // 章节边界顺翻在后续任务接入；此处暂不处理越界。
+      if (target < 0) {
+        if (chapterIndex > 0) {
+          pendingLandRef.current = 'last';
+          goToChapter(chapterIndex - 1);
+        }
         return;
       }
-      flatListRef.current?.scrollToIndex({ index: target, animated: true });
+      if (target >= pages.length) {
+        if (chapterIndex < total - 1) {
+          pendingLandRef.current = null;
+          goToChapter(chapterIndex + 1);
+        }
+        return;
+      }
+      const offset = target * viewportWidth;
+      // react-native-web 上 FlatList 的 scrollToIndex/scrollToOffset 会静默不滚动，
+      // 需要定位真正横向 overflow 的 DOM 节点，scroll-snap 会把落点吸附到整页。
+      if (Platform.OS === 'web') {
+        const node = findReaderPageScrollNode();
+        node?.scrollTo({ left: offset, behavior: 'smooth' });
+      } else {
+        flatListRef.current?.scrollToOffset({ offset, animated: true });
+      }
+      currentOffsetRef.current = pages[target]?.startOffset ?? 0;
       setPageIndex(target);
     },
-    [pageIndex, pages.length],
+    [chapterIndex, goToChapter, pageIndex, pages, total, viewportWidth],
   );
+
+  // Web 键盘监听用 ref 取最新 goToPage，避免闭包过期。
+  const goToPageRef = React.useRef(goToPage);
+  React.useEffect(() => {
+    goToPageRef.current = goToPage;
+  }, [goToPage]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || settings.pageMode !== 'page') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault();
+        goToPageRef.current(-1);
+      } else if (
+        e.key === 'ArrowRight' ||
+        e.key === 'PageDown' ||
+        e.key === ' '
+      ) {
+        e.preventDefault();
+        goToPageRef.current(1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [settings.pageMode]);
 
   const renderPage = React.useCallback(
     ({ item, index }: { item: ReaderPageData; index: number }) => {
@@ -258,6 +375,7 @@ export default function ReaderScreen() {
               paddingTop: PAGE_TOP_PADDING,
               paddingBottom: PAGE_BOTTOM_PADDING,
             },
+            WEB_SNAP_ITEM,
           ]}
         >
           {item.showHeader && (
@@ -324,12 +442,60 @@ export default function ReaderScreen() {
 
   const handlePageMomentumEnd = React.useCallback(
     (event: { nativeEvent: { contentOffset: { x: number } } }) => {
-      const nextPage = Math.round(
-        event.nativeEvent.contentOffset.x / viewportWidth,
-      );
-      setPageIndex(Math.max(0, Math.min(pages.length - 1, nextPage)));
+      const raw = Math.round(event.nativeEvent.contentOffset.x / viewportWidth);
+      const next = Math.max(0, Math.min(pages.length - 1, raw));
+      currentOffsetRef.current = pages[next]?.startOffset ?? 0;
+      setPageIndex(next);
     },
-    [pages.length, viewportWidth],
+    [pages, viewportWidth],
+  );
+
+  const syncPageByScrollOffset = React.useCallback(
+    (offsetX: number) => {
+      const raw = Math.round(offsetX / viewportWidth);
+      const next = Math.max(0, Math.min(pages.length - 1, raw));
+      currentOffsetRef.current = pages[next]?.startOffset ?? 0;
+      setPageIndex(prev => (prev === next ? prev : next));
+    },
+    [pages, viewportWidth],
+  );
+
+  const handlePageScroll = React.useCallback(
+    (event: { nativeEvent: { contentOffset: { x: number } } }) => {
+      const x = event.nativeEvent.contentOffset.x;
+      if (Platform.OS === 'web') {
+        if (webScrollIdleRef.current) clearTimeout(webScrollIdleRef.current);
+        // Web 端滑动期间只记录最后落点，等浏览器惯性 + scroll-snap 落定后再同步页码，避免高频 setState 影响滚动性能。
+        webScrollIdleRef.current = setTimeout(() => {
+          syncPageByScrollOffset(x);
+        }, 80);
+        return;
+      }
+
+      if (x < -CHAPTER_TURN_THRESHOLD && pageIndex === 0) {
+        if (chapterIndex > 0) {
+          pendingLandRef.current = 'last';
+          goToChapter(chapterIndex - 1);
+        }
+      } else if (
+        x > (pages.length - 1) * viewportWidth + CHAPTER_TURN_THRESHOLD &&
+        pageIndex === pages.length - 1
+      ) {
+        if (chapterIndex < total - 1) {
+          pendingLandRef.current = null;
+          goToChapter(chapterIndex + 1);
+        }
+      }
+    },
+    [
+      chapterIndex,
+      goToChapter,
+      pageIndex,
+      pages.length,
+      syncPageByScrollOffset,
+      total,
+      viewportWidth,
+    ],
   );
 
   const paragraphNodes = React.useMemo(
@@ -358,19 +524,6 @@ export default function ReaderScreen() {
     ],
   );
 
-  const goToChapter = (idx: number) => {
-    if (idx < 0 || idx >= total) return;
-    setStatus('loading');
-    setSettingsOpen(false);
-    setDrawerOpen(false);
-    setToolbarVisible(false);
-    if (transitionRef.current) clearTimeout(transitionRef.current);
-    transitionRef.current = setTimeout(() => {
-      openChapter(bookId, idx);
-      setStatus(chapters[idx]?.content ? 'ready' : 'error');
-    }, 260);
-  };
-
   const handleBack = () => {
     // 阅读页返回必须保持原导航栈语义：从详情进入回详情，从书架进入回书架；无历史栈时再兜底到详情页。
     if (navigation.canGoBack()) {
@@ -386,24 +539,51 @@ export default function ReaderScreen() {
     <View style={[styles.container, { backgroundColor: display.theme.bg }]}>
       {status === 'ready' &&
         (settings.pageMode === 'page' ? (
-          <FlatList
-            ref={flatListRef}
-            testID="reader-page-list"
-            data={pages}
-            renderItem={renderPage}
-            keyExtractor={item => item.key}
-            horizontal
-            pagingEnabled
-            style={StyleSheet.absoluteFill}
-            showsHorizontalScrollIndicator={false}
-            initialNumToRender={2}
-            maxToRenderPerBatch={2}
-            windowSize={3}
-            removeClippedSubviews
-            getItemLayout={getPageLayout}
-            onScrollBeginDrag={() => setToolbarVisible(false)}
-            onMomentumScrollEnd={handlePageMomentumEnd}
-          />
+          <>
+            <FlatList
+              ref={flatListRef}
+              testID="reader-page-list"
+              data={pages}
+              renderItem={renderPage}
+              keyExtractor={item => item.key}
+              horizontal
+              pagingEnabled={Platform.OS !== 'web'}
+              style={[StyleSheet.absoluteFill, WEB_SNAP_CONTAINER]}
+              showsHorizontalScrollIndicator={false}
+              initialNumToRender={2}
+              maxToRenderPerBatch={2}
+              windowSize={3}
+              removeClippedSubviews
+              getItemLayout={getPageLayout}
+              onScrollBeginDrag={() => setToolbarVisible(false)}
+              onMomentumScrollEnd={handlePageMomentumEnd}
+              scrollEventThrottle={16}
+              onScroll={handlePageScroll}
+            />
+            {Platform.OS !== 'web' && paragraphs.length > 0 && (
+              <Text
+                style={{
+                  position: 'absolute',
+                  opacity: 0,
+                  width: pageMetrics.maxWidth,
+                  fontFamily: SERIF_FONT,
+                  fontSize: display.fontSize,
+                  lineHeight: display.fontSize * display.lineHeight,
+                }}
+                onTextLayout={e => {
+                  const chapterId = chapter?.id || bookId;
+                  const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}`;
+                  if (measuredLinesCache.has(cacheKey)) return;
+                  const lineTexts = e.nativeEvent.lines.map(l => l.text);
+                  const lines = linesFromTextLayout(paragraphs, lineTexts);
+                  cacheMeasuredLines(cacheKey, lines);
+                  setMeasureTick(t => t + 1);
+                }}
+              >
+                {paragraphs.map(p => INDENT + p).join('\n')}
+              </Text>
+            )}
+          </>
         ) : (
           <ScrollView
             style={StyleSheet.absoluteFill}
