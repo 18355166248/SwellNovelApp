@@ -1,11 +1,29 @@
 declare module '@react-native-documents/picker' {
   export const types: any;
-  export function isCancel(err: unknown): boolean;
-  export interface PickerOptions {
+  export const errorCodes: {
+    OPERATION_CANCELED: string;
+    IN_PROGRESS: string;
+    UNABLE_TO_OPEN_FILE_TYPE: string;
+    NULL_PRESENTER: string;
+  };
+  export function isErrorWithCode(
+    err: unknown,
+  ): err is Error & { code: string };
+  export interface DocumentPickerOptions {
     allowMultiSelection?: boolean;
-    types?: any[];
-    copyTo?: 'cachesDirectory' | 'documentDirectory';
+    type?: string | string[];
+    mode?: 'import' | 'open';
   }
-  const DocPicker: (options?: PickerOptions) => Promise<any[]>;
-  export default DocPicker;
+  export interface DocumentPickerResponse {
+    uri: string;
+    name: string | null;
+    type: string | null;
+    nativeType: string | null;
+    size: number | null;
+    error: string | null;
+    hasRequestedType: boolean;
+  }
+  export function pick(
+    options?: DocumentPickerOptions,
+  ): Promise<DocumentPickerResponse[]>;
 }

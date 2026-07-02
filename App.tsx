@@ -11,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
+import { LibraryPersistence } from './src/store/LibraryPersistence';
 
 function AppContent() {
   const { isDarkMode } = useTheme();
@@ -22,6 +23,7 @@ function AppContent() {
         backgroundColor="transparent"
         translucent
       />
+      <LibraryPersistence />
       <AppNavigator />
     </>
   );

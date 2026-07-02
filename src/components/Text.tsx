@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text as RNText, TextStyle, StyleProp } from 'react-native';
+import { Text as RNText, TextStyle, StyleProp, Platform } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 
 interface TextProps {
@@ -8,6 +8,7 @@ interface TextProps {
   color?: 'primary' | 'secondary' | 'text' | 'textSecondary' | 'error';
   style?: StyleProp<TextStyle>;
   numberOfLines?: number;
+  maxFontSizeMultiplier?: number;
 }
 
 export const Text: React.FC<TextProps> = ({
@@ -16,6 +17,7 @@ export const Text: React.FC<TextProps> = ({
   color = 'text',
   style,
   numberOfLines,
+  maxFontSizeMultiplier = 1.15,
 }) => {
   const { theme } = useTheme();
 
@@ -38,14 +40,14 @@ export const Text: React.FC<TextProps> = ({
       case 'h3':
         return {
           fontSize: theme.fontSize.lg,
-          fontWeight: '600',
+          fontWeight: Platform.select({ ios: '600', android: 'bold' }),
           lineHeight: theme.fontSize.lg * 1.3,
           letterSpacing: 0.2,
         };
       case 'label':
         return {
           fontSize: theme.fontSize.sm,
-          fontWeight: '600',
+          fontWeight: Platform.select({ ios: '600', android: 'bold' }),
           lineHeight: theme.fontSize.sm * 1.2,
           letterSpacing: 0.2,
         };
@@ -82,7 +84,9 @@ export const Text: React.FC<TextProps> = ({
   return (
     <RNText
       style={[getVariantStyle(), getColorStyle(), style]}
-      numberOfLines={numberOfLines}>
+      numberOfLines={numberOfLines}
+      maxFontSizeMultiplier={maxFontSizeMultiplier}
+    >
       {children}
     </RNText>
   );

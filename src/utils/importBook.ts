@@ -3,7 +3,12 @@
  * Web 端由同目录的 importBook.web.ts 覆盖实现。
  */
 
-import DocPicker, { types as DocTypes, isCancel as isDocCancel } from '@react-native-documents/picker';
+import {
+  errorCodes,
+  isErrorWithCode,
+  pick,
+  types as DocTypes,
+} from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
 
 export interface PickedTxt {
@@ -13,19 +18,27 @@ export interface PickedTxt {
 
 export async function pickTxtFile(): Promise<PickedTxt | null> {
   try {
-    const results = await (DocPicker as any)({
+    // @react-native-documents/picker v12 使用命名导出的 pick，旧版 default 函数调用会在点击导入时直接报错。
+    const results = await pick({
       allowMultiSelection: false,
-      types: [DocTypes?.plainText || 'public.plain-text'],
-      copyTo: 'cachesDirectory',
+      type: [DocTypes?.plainText || 'public.plain-text'],
     });
     const picked = Array.isArray(results) ? results[0] : results;
     if (!picked) return null;
-    const path = picked.fileCopyUri || picked.uri;
+    const path = picked.uri;
     if (!path) return null;
-    const content = await RNFS.readFile(path.replace('file://', ''), 'utf8');
+    const content = await RNFS.readFile(
+      decodeURIComponent(path.replace('file://', '')),
+      'utf8',
+    );
     return { name: (picked.name || '本地TXT').replace(/\.txt$/i, ''), content };
   } catch (e: any) {
-    if (typeof isDocCancel === 'function' && isDocCancel(e)) return null;
+    if (
+      isErrorWithCode(e) &&
+      e.code === errorCodes.OPERATION_CANCELED
+    ) {
+      return null;
+    }
     throw e;
   }
 }
