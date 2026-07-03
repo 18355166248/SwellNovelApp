@@ -200,22 +200,26 @@ export default function ReaderScreen() {
   // 左右翻页先按真实字符宽度断行、组页，再交给 FlatList 虚拟渲染，避免大章节一次性挂载所有页面。
   const pageMetrics = React.useMemo(() => {
     const maxWidth = Math.max(1, viewportWidth - PAGE_HORIZONTAL_PADDING * 2);
-    const readableHeight = Math.max(
+    const bodyHeight = Math.max(
       1,
       viewportHeight - PAGE_TOP_PADDING - PAGE_BOTTOM_PADDING,
     );
     const lineHeight = display.fontSize * display.lineHeight;
-    const linesPerPage = Math.max(1, Math.floor(readableHeight / lineHeight));
-    // 首页扣除标题区（章节名 + meta + 间距）真实占用的行数，消除首页尾部留白。
-    const headerLines = Math.ceil(
-      (display.titleSize * 1.4 + 12 + 24) / lineHeight,
-    );
-    const firstPageLines = Math.max(1, linesPerPage - headerLines);
+    // 首页扣除标题区（章节名 + meta + 间距）真实占用的高度，消除首页尾部留白。
+    const headerHeight = display.titleSize * 1.4 + 12 + 24;
+    const firstBodyHeight = Math.max(lineHeight, bodyHeight - headerHeight);
 
-    return { maxWidth, linesPerPage, firstPageLines };
+    return {
+      maxWidth,
+      lineHeight,
+      paraGap: display.paraGap,
+      bodyHeight,
+      firstBodyHeight,
+    };
   }, [
     display.fontSize,
     display.lineHeight,
+    display.paraGap,
     display.titleSize,
     viewportHeight,
     viewportWidth,
@@ -232,17 +236,21 @@ export default function ReaderScreen() {
     return buildPages({
       chapterId,
       lines,
-      linesPerPage: pageMetrics.linesPerPage,
-      firstPageLines: pageMetrics.firstPageLines,
+      lineHeight: pageMetrics.lineHeight,
+      paraGap: pageMetrics.paraGap,
+      bodyHeight: pageMetrics.bodyHeight,
+      firstBodyHeight: pageMetrics.firstBodyHeight,
     });
   }, [
     bookId,
     chapter?.id,
     display.fontSize,
     display.lineHeight,
-    pageMetrics.firstPageLines,
-    pageMetrics.linesPerPage,
+    pageMetrics.bodyHeight,
+    pageMetrics.firstBodyHeight,
+    pageMetrics.lineHeight,
     pageMetrics.maxWidth,
+    pageMetrics.paraGap,
     paragraphs,
     measureTick,
   ]);
@@ -405,17 +413,36 @@ export default function ReaderScreen() {
               </Text>
             </>
           )}
-          <Text
-            style={{
-              fontFamily: SERIF_FONT,
-              fontSize: display.fontSize,
-              lineHeight: display.fontSize * display.lineHeight,
-              color: display.theme.text,
-              textAlign: 'justify',
-            }}
-          >
-            {item.text || '本章暂无内容'}
-          </Text>
+          {item.blocks.length === 0 ? (
+            <Text
+              style={{
+                fontFamily: SERIF_FONT,
+                fontSize: display.fontSize,
+                lineHeight: display.fontSize * display.lineHeight,
+                color: display.theme.text,
+                textAlign: 'justify',
+              }}
+            >
+              本章暂无内容
+            </Text>
+          ) : (
+            // 每段独立成块，块间用 marginTop 留段间距（首块不留），页首续段块也不留。
+            item.blocks.map((block, i) => (
+              <Text
+                key={block.startOffset}
+                style={{
+                  fontFamily: SERIF_FONT,
+                  fontSize: display.fontSize,
+                  lineHeight: display.fontSize * display.lineHeight,
+                  color: display.theme.text,
+                  textAlign: 'justify',
+                  marginTop: i === 0 ? 0 : display.paraGap,
+                }}
+              >
+                {block.text}
+              </Text>
+            ))
+          )}
           {isLastPage && (
             <Text style={[styles.pageEndText, { color: display.theme.sub }]}>
               本章完
@@ -430,6 +457,7 @@ export default function ReaderScreen() {
       chapter?.title,
       display.fontSize,
       display.lineHeight,
+      display.paraGap,
       display.theme.sub,
       display.theme.text,
       display.titleSize,

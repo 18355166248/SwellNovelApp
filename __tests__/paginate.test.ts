@@ -96,40 +96,73 @@ describe('buildPages', () => {
     makeLine('　　丙丙', 10, true),
   ];
 
-  it('首页用 firstPageLines 限制，后续页用 linesPerPage，段落间不插空行', () => {
+  // 行高 10、段间距 5：首页可用 25（放 2 行 + 段间距余量），普通页可用 40。
+  it('按像素高度组页，段落各自成块并计入段间距', () => {
     const pages = buildPages({
       chapterId: 'ch1',
       lines,
-      linesPerPage: 4,
-      firstPageLines: 2,
+      lineHeight: 10,
+      paraGap: 5,
+      bodyHeight: 40,
+      firstBodyHeight: 25,
     });
-    expect(pages[0].text).toBe('　　甲甲甲\n甲甲');
+    // 首页：甲段(2行=20)，再放乙段需 +5(段间距)+10 > 25，翻页。
+    expect(pages[0].blocks.map(b => b.text)).toEqual(['　　甲甲甲\n甲甲']);
     expect(pages[0].startOffset).toBe(0);
     expect(pages[0].showHeader).toBe(true);
-    expect(pages[1].text).toBe('　　乙乙乙\n乙乙\n　　丙丙');
+    // 次页：乙段(20)+丙段(段间距5+10=15)=35 ≤ 40，同页两块。
+    expect(pages[1].blocks.map(b => b.text)).toEqual([
+      '　　乙乙乙\n乙乙',
+      '　　丙丙',
+    ]);
+    expect(pages[1].blocks.map(b => b.startOffset)).toEqual([5, 10]);
     expect(pages[1].startOffset).toBe(5);
     expect(pages[1].showHeader).toBe(false);
     expect(pages.map(p => p.key)).toEqual(['ch1-0', 'ch1-1']);
+  });
+
+  it('段落跨页时续段块单独成页且不再留段间距', () => {
+    const long: ReaderLine[] = [
+      makeLine('　　甲甲甲', 0, true),
+      makeLine('甲甲', 3),
+      makeLine('甲甲甲', 5),
+    ];
+    // 每页只放 2 行（bodyHeight 20 / 行高 10），段落被拆到第二页。
+    const pages = buildPages({
+      chapterId: 'ch1',
+      lines: long,
+      lineHeight: 10,
+      paraGap: 5,
+      bodyHeight: 20,
+      firstBodyHeight: 20,
+    });
+    expect(pages[0].blocks.map(b => b.text)).toEqual(['　　甲甲甲\n甲甲']);
+    expect(pages[1].blocks.map(b => b.text)).toEqual(['甲甲甲']);
+    expect(pages[1].startOffset).toBe(5);
   });
 
   it('空章节至少产出 1 页', () => {
     const pages = buildPages({
       chapterId: 'ch1',
       lines: [],
-      linesPerPage: 4,
-      firstPageLines: 2,
+      lineHeight: 10,
+      paraGap: 5,
+      bodyHeight: 40,
+      firstBodyHeight: 25,
     });
     expect(pages).toHaveLength(1);
-    expect(pages[0].text).toBe('');
+    expect(pages[0].blocks).toEqual([]);
     expect(pages[0].showHeader).toBe(true);
   });
 
-  it('limit 非法时兜底为 1，不死循环', () => {
+  it('高度非法时兜底为至少一行，不死循环', () => {
     const pages = buildPages({
       chapterId: 'ch1',
       lines,
-      linesPerPage: 0,
-      firstPageLines: -1,
+      lineHeight: 10,
+      paraGap: 5,
+      bodyHeight: 0,
+      firstBodyHeight: -1,
     });
     expect(pages.length).toBeGreaterThan(0);
   });
@@ -144,8 +177,10 @@ describe('findPageByOffset', () => {
       makeLine('　　乙乙乙', 5, true),
       makeLine('乙乙', 8),
     ],
-    linesPerPage: 2,
-    firstPageLines: 2,
+    lineHeight: 10,
+    paraGap: 5,
+    bodyHeight: 20,
+    firstBodyHeight: 20,
   });
 
   it('每页 startOffset 往返映射回自身页码', () => {

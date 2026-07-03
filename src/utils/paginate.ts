@@ -64,56 +64,111 @@ export function breakLines(
   return lines;
 }
 
+/** 页内的一个段落块（同段的连续行），块之间渲染时插入段间距。 */
+export interface ReaderPageBlock {
+  /** 段落在本页的文本，行以 \n 连接 */
+  text: string;
+  /** 该块首行的逻辑偏移量 */
+  startOffset: number;
+}
+
 export interface ReaderPageData {
   key: string;
-  /** 页内文本，行以 \n 连接（段落仅靠首行缩进区分，不插空行） */
-  text: string;
+  /** 本页的段落块；相邻块之间按段间距留白，段落仅靠首行缩进区分 */
+  blocks: ReaderPageBlock[];
   /** 本页首行的逻辑偏移量 */
   startOffset: number;
   /** 仅章节首页展示标题区 */
   showHeader: boolean;
 }
 
+/**
+ * 按像素高度组页：每行占 lineHeight，相邻段落之间额外占 paraGap，
+ * 这样段间距（marginTop）能被准确计入分页，避免最后一行溢出页面。
+ */
 export function buildPages({
   chapterId,
   lines,
-  linesPerPage,
-  firstPageLines,
+  lineHeight,
+  paraGap,
+  bodyHeight,
+  firstBodyHeight,
 }: {
   chapterId: string;
   lines: ReaderLine[];
-  linesPerPage: number;
-  firstPageLines: number;
+  /** 单行像素高（fontSize × 行高倍率） */
+  lineHeight: number;
+  /** 段落之间的像素间距 */
+  paraGap: number;
+  /** 普通页可用像素高 */
+  bodyHeight: number;
+  /** 首页可用像素高（已扣除标题区） */
+  firstBodyHeight: number;
 }): ReaderPageData[] {
   const pages: ReaderPageData[] = [];
-  const limitFor = (pageNo: number) =>
-    Math.max(1, pageNo === 0 ? firstPageLines : linesPerPage);
+  const safeLineHeight = Math.max(1, lineHeight);
+  const safeGap = Math.max(0, paraGap);
+  const budgetFor = (pageNo: number) =>
+    Math.max(safeLineHeight, pageNo === 0 ? firstBodyHeight : bodyHeight);
 
-  let current: string[] = [];
-  let currentStart = 0;
+  let blocks: ReaderPageBlock[] = [];
+  let blockLines: string[] = [];
+  let blockStart = 0;
+  let pageStart = 0;
+  let pageHeight = 0;
+  let pageHasContent = false;
+
+  const flushBlock = () => {
+    if (blockLines.length > 0) {
+      blocks.push({ text: blockLines.join('\n'), startOffset: blockStart });
+      blockLines = [];
+    }
+  };
 
   const pushPage = () => {
+    flushBlock();
     pages.push({
       key: `${chapterId}-${pages.length}`,
-      text: current.join('\n'),
-      startOffset: currentStart,
+      blocks,
+      startOffset: pageStart,
       showHeader: pages.length === 0,
     });
-    current = [];
+    blocks = [];
+    pageHeight = 0;
+    pageHasContent = false;
   };
 
   lines.forEach(line => {
-    // 段落之间不再插入空行，仅靠段首行的全角缩进区分，避免左右翻页段间距过大。
-    if (current.length > 0 && current.length + 1 > limitFor(pages.length)) {
+    const startsParagraph = line.isParagraphStart;
+    // 新段落且本页已有内容时，段落前要占用一段段间距。
+    const gap = startsParagraph && pageHasContent ? safeGap : 0;
+
+    if (
+      pageHasContent &&
+      pageHeight + gap + safeLineHeight > budgetFor(pages.length)
+    ) {
       pushPage();
     }
-    if (current.length === 0) {
-      currentStart = line.charOffset;
+
+    // 段落边界：结束上一块，另起一块（页首的续段块 blockLines 为空，同样在此起块）。
+    if (startsParagraph || blockLines.length === 0) {
+      flushBlock();
+      blockStart = line.charOffset;
     }
-    current.push(line.text);
+
+    if (!pageHasContent) {
+      pageStart = line.charOffset;
+      pageHasContent = true;
+      pageHeight += safeLineHeight;
+    } else {
+      pageHeight += (startsParagraph ? safeGap : 0) + safeLineHeight;
+    }
+
+    blockLines.push(line.text);
   });
 
-  if (current.length > 0 || pages.length === 0) {
+  flushBlock();
+  if (blocks.length > 0 || pages.length === 0) {
     pushPage();
   }
 

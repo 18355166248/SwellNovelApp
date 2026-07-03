@@ -74,7 +74,7 @@ const CHROME_NIGHT: ReaderChromeTokens = {
   field: 'rgba(255,255,255,.06)',
 };
 
-export const FONT_SIZES = [16, 18, 20, 22, 25];
+export const FONT_SIZES = [16, 18, 20, 22, 25, 28, 32, 36, 40];
 export const LINE_HEIGHTS = [1.6, 1.85, 2.15];
 export const PARA_GAPS = [14, 18, 22];
 
