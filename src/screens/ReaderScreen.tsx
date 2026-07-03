@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { Icon } from '../components';
@@ -118,6 +119,14 @@ export default function ReaderScreen() {
   const route = useRoute<ReaderRoute>();
   const { width: viewportWidth, height: viewportHeight } =
     useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  // 顶/底工具栏与进度提示按安全区避让刘海/灵动岛与底部手势条；web 保持原固定值。
+  const topBarPad =
+    Platform.OS === 'web' ? 44 : Math.max(insets.top, 12) + 8;
+  const bottomBarPad =
+    Platform.OS === 'web' ? 22 : Math.max(insets.bottom, 8) + 14;
+  const progressHintBottom =
+    Platform.OS === 'web' ? 10 : Math.max(insets.bottom, 10);
   const { bookId, openDrawer } = route.params;
 
   const books = useAllBooks();
@@ -834,7 +843,10 @@ export default function ReaderScreen() {
         </View>
       )}
 
-      <View style={styles.progressHint} pointerEvents="none">
+      <View
+        style={[styles.progressHint, { bottom: progressHintBottom }]}
+        pointerEvents="none"
+      >
         <Text style={{ color: display.theme.sub, fontSize: 10.5 }}>
           {progressLabel}
         </Text>
@@ -845,6 +857,7 @@ export default function ReaderScreen() {
           style={[
             styles.topBar,
             {
+              paddingTop: topBarPad,
               backgroundColor: display.chrome.bg,
               borderBottomColor: display.chrome.hair,
             },
@@ -879,6 +892,7 @@ export default function ReaderScreen() {
           style={[
             styles.bottomBar,
             {
+              paddingBottom: bottomBarPad,
               backgroundColor: display.chrome.bg,
               borderTopColor: display.chrome.hair,
             },
