@@ -317,7 +317,16 @@ export default function ReaderScreen() {
       // 需要定位真正横向 overflow 的 DOM 节点，scroll-snap 会把落点吸附到整页。
       if (Platform.OS === 'web') {
         const node = findReaderPageScrollNode();
-        node?.scrollTo({ left: offset, behavior: 'smooth' });
+        // RNW 会把 ScrollView DOM 节点的 scrollTo 覆写成 {x,y,animated} 签名，
+        // 直接传 DOM 标准的 {left,behavior} 会被忽略，键盘/点击翻页因此不生效；
+        // 调用原生 scrollTo 绕过该补丁，保留平滑滚动。
+        if (node) {
+          const nativeScrollTo = HTMLElement.prototype.scrollTo as unknown as (
+            this: Element,
+            options: { left: number; behavior: ScrollBehavior },
+          ) => void;
+          nativeScrollTo.call(node, { left: offset, behavior: 'smooth' });
+        }
       } else {
         flatListRef.current?.scrollToOffset({ offset, animated: true });
       }
