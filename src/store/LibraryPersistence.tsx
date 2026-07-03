@@ -1,5 +1,9 @@
 /**
  * 书库持久化桥接组件。
+ *
+ * 只负责启动时恢复快照，以及 meta（书籍/进度/书签/设置）的高频轻量落盘。
+ * 章节正文改为按书分文件、在导入/删书时由对应 hook 直接落盘，翻页更新进度
+ * 不再触发任何正文写入，避免整本 10MB 正文被反复序列化导致卡顿。
  */
 
 import React from 'react';
@@ -11,32 +15,30 @@ import {
   readerSettingsAtom,
   readingHistoryAtom,
 } from './atoms';
-import {
-  loadLibrarySnapshot,
-  saveLibrarySnapshot,
-} from '../utils/libraryStorage';
+import { loadLibrarySnapshot, saveLibraryMeta } from '../utils/libraryStorage';
 
 const SAVE_DEBOUNCE_MS = 500;
 
 export function LibraryPersistence() {
   const [books, setBooks] = useAtom(booksAtom);
-  const [chapters, setChapters] = useAtom(chaptersAtom);
+  const setChapters = useAtom(chaptersAtom)[1];
   const [readingHistory, setReadingHistory] = useAtom(readingHistoryAtom);
   const [bookmarks, setBookmarks] = useAtom(bookmarksAtom);
   const [readerSettings, setReaderSettings] = useAtom(readerSettingsAtom);
   const hydratedRef = React.useRef(false);
-  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metaTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
 
     loadLibrarySnapshot()
-      .then((snapshot) => {
+      .then(snapshot => {
         if (!snapshot || cancelled) {
           return;
         }
 
         // 先恢复本地快照再开放保存，避免首次启动把旧书库覆盖成空状态。
+        // 章节此处仍为空对象，等打开具体书籍时再按需懒加载。
         setBooks(snapshot.books);
         setChapters(snapshot.chapters);
         setReadingHistory(snapshot.readingHistory);
@@ -45,7 +47,7 @@ export function LibraryPersistence() {
           setReaderSettings(snapshot.readerSettings);
         }
       })
-      .catch((error) => {
+      .catch(error => {
         console.warn('[LibraryPersistence] load failed', error);
       })
       .finally(() => {
@@ -56,8 +58,8 @@ export function LibraryPersistence() {
 
     return () => {
       cancelled = true;
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
+      if (metaTimerRef.current) {
+        clearTimeout(metaTimerRef.current);
       }
     };
   }, [
@@ -68,30 +70,29 @@ export function LibraryPersistence() {
     setReadingHistory,
   ]);
 
+  // 轻量 meta：书籍、阅读进度、书签、设置高频变更，防抖后单独落盘。
   React.useEffect(() => {
     if (!hydratedRef.current) {
       return;
     }
 
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
+    if (metaTimerRef.current) {
+      clearTimeout(metaTimerRef.current);
     }
 
-    // 阅读进度会高频更新，轻量防抖能减少大章节 JSON 的重复写入。
-    saveTimerRef.current = setTimeout(() => {
-      saveLibrarySnapshot({
+    metaTimerRef.current = setTimeout(() => {
+      saveLibraryMeta({
         version: 1,
         readerSettingsVersion: 2,
         books,
-        chapters,
         readingHistory,
         bookmarks,
         readerSettings,
-      }).catch((error) => {
-        console.warn('[LibraryPersistence] save failed', error);
+      }).catch(error => {
+        console.warn('[LibraryPersistence] save meta failed', error);
       });
     }, SAVE_DEBOUNCE_MS);
-  }, [bookmarks, books, chapters, readerSettings, readingHistory]);
+  }, [bookmarks, books, readerSettings, readingHistory]);
 
   return null;
 }
