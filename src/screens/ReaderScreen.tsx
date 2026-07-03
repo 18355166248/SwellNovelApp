@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   Platform,
+  BackHandler,
   useWindowDimensions,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -411,6 +412,29 @@ export default function ReaderScreen() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [settings.pageMode]);
+
+  // 安卓硬件返回键：优先关闭已打开的浮层（设置面板 / 目录抽屉 / 工具栏），
+  // 都关闭后才交回导航栈退出阅读页，符合安卓返回习惯。
+  React.useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const onBack = () => {
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return true;
+      }
+      if (drawerOpen) {
+        setDrawerOpen(false);
+        return true;
+      }
+      if (isToolbarVisible) {
+        setToolbarVisible(false);
+        return true;
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [settingsOpen, drawerOpen, isToolbarVisible, setToolbarVisible]);
 
   const renderPage = React.useCallback(
     ({ item, index }: { item: ReaderPageData; index: number }) => {
