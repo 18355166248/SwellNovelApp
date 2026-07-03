@@ -62,7 +62,7 @@ type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
 
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
 const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
-const PAGE_HORIZONTAL_PADDING = 24;
+const PAGE_HORIZONTAL_PADDING = 20;
 const PAGE_TOP_PADDING = 36;
 const PAGE_BOTTOM_PADDING = 48;
 /** 章节边界越界回弹翻章的位移阈值 */
@@ -162,9 +162,18 @@ export default function ReaderScreen() {
   );
   const [pageIndex, setPageIndex] = React.useState(0);
   const [measureTick, setMeasureTick] = React.useState(0);
+  // 远距离跳页（换章落到末页/续读远页）时先关掉 scroll-snap，否则强制吸附会把
+  // 程序滚动拽回已渲染的邻近页；滚动落定并渲染出目标页后再恢复吸附。
+  const [snapEnabled, setSnapEnabled] = React.useState(true);
+  const snapTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const flatListRef = React.useRef<FlatList<ReaderPageData>>(null);
   const currentOffsetRef = React.useRef(0);
   const pendingLandRef = React.useRef<'last' | null>(null);
+  // 换章/重排版后需要把横向容器定位到的目标页；setPageIndex 只更新页码，
+  // 不会滚动容器，需在新内容布局完成后由 rAF 轮询补一次定位。
+  const pendingScrollPageRef = React.useRef<number | null>(null);
   const prevChapterIdRef = React.useRef<string | undefined>(undefined);
   // 续读：捕获打开时保存的页内偏移，仅在首个匹配章节应用一次。
   const resumeRef = React.useRef<{ chapterId: string; position: number } | null>(
@@ -198,6 +207,7 @@ export default function ReaderScreen() {
     () => () => {
       if (transitionRef.current) clearTimeout(transitionRef.current);
       if (webScrollIdleRef.current) clearTimeout(webScrollIdleRef.current);
+      if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
     },
     [],
   );
@@ -294,27 +304,35 @@ export default function ReaderScreen() {
       // 续读位置只在首个章节尝试一次，消费后清空，避免回到该章又跳回旧偏移。
       const resume = resumeRef.current;
       resumeRef.current = null;
+      let landing = 0;
       if (pendingLandRef.current === 'last') {
         pendingLandRef.current = null;
-        const last = Math.max(0, pages.length - 1);
-        currentOffsetRef.current = pages[last]?.startOffset ?? 0;
-        setPageIndex(last);
+        landing = Math.max(0, pages.length - 1);
+        currentOffsetRef.current = pages[landing]?.startOffset ?? 0;
       } else if (
         resume &&
         resume.chapterId === chapter?.id &&
         resume.position > 0
       ) {
+        landing = findPageByOffset(pages, resume.position);
         currentOffsetRef.current = resume.position;
-        setPageIndex(findPageByOffset(pages, resume.position));
       } else {
+        landing = 0;
         currentOffsetRef.current = 0;
-        setPageIndex(0);
       }
+      setPageIndex(landing);
+      // 落点非首页时，等新章布局完成后把容器滚到对应页（首页 scrollLeft 本就为 0）。
+      pendingScrollPageRef.current = landing > 0 ? landing : null;
+      // 远距离落点先关吸附，避免程序滚动被 mandatory-snap 拽回；首页无需处理。
+      if (Platform.OS === 'web') setSnapEnabled(landing <= 0);
       return;
     }
 
     // 同章重新分页时，用逻辑字符偏移映射回原段落附近，避免字号/行距调整后跳回首页。
-    setPageIndex(findPageByOffset(pages, currentOffsetRef.current));
+    const remapped = findPageByOffset(pages, currentOffsetRef.current);
+    setPageIndex(remapped);
+    // 页宽随分页变化，容器旧 scrollLeft 会指向错页，重排版后同样需要重定位。
+    pendingScrollPageRef.current = remapped > 0 ? remapped : null;
   }, [chapter?.id, pages, settings.pageMode]);
 
   const pageProgressPct =
@@ -356,6 +374,34 @@ export default function ReaderScreen() {
     [bookId, chapters, openChapter, setToolbarVisible, total],
   );
 
+  // 把横向翻页容器定位到指定页。同章翻页平滑滚动，换章/续读补位用即时定位。
+  const scrollToPage = React.useCallback(
+    (index: number, smooth: boolean) => {
+      const offset = index * viewportWidth;
+      // react-native-web 上 FlatList 的 scrollToIndex/scrollToOffset 会静默不滚动，
+      // 需要定位真正横向 overflow 的 DOM 节点，scroll-snap 会把落点吸附到整页。
+      if (Platform.OS === 'web') {
+        const node = findReaderPageScrollNode();
+        // RNW 会把 ScrollView DOM 节点的 scrollTo 覆写成 {x,y,animated} 签名，
+        // 直接传 DOM 标准的 {left,behavior} 会被忽略，键盘/点击翻页因此不生效；
+        // 调用原生 scrollTo 绕过该补丁，保留平滑滚动。
+        if (node) {
+          const nativeScrollTo = HTMLElement.prototype.scrollTo as unknown as (
+            this: Element,
+            options: { left: number; behavior: ScrollBehavior },
+          ) => void;
+          nativeScrollTo.call(node, {
+            left: offset,
+            behavior: smooth ? 'smooth' : 'auto',
+          });
+        }
+      } else {
+        flatListRef.current?.scrollToOffset({ offset, animated: smooth });
+      }
+    },
+    [viewportWidth],
+  );
+
   const goToPage = React.useCallback(
     (delta: number) => {
       const target = pageIndex + delta;
@@ -373,28 +419,11 @@ export default function ReaderScreen() {
         }
         return;
       }
-      const offset = target * viewportWidth;
-      // react-native-web 上 FlatList 的 scrollToIndex/scrollToOffset 会静默不滚动，
-      // 需要定位真正横向 overflow 的 DOM 节点，scroll-snap 会把落点吸附到整页。
-      if (Platform.OS === 'web') {
-        const node = findReaderPageScrollNode();
-        // RNW 会把 ScrollView DOM 节点的 scrollTo 覆写成 {x,y,animated} 签名，
-        // 直接传 DOM 标准的 {left,behavior} 会被忽略，键盘/点击翻页因此不生效；
-        // 调用原生 scrollTo 绕过该补丁，保留平滑滚动。
-        if (node) {
-          const nativeScrollTo = HTMLElement.prototype.scrollTo as unknown as (
-            this: Element,
-            options: { left: number; behavior: ScrollBehavior },
-          ) => void;
-          nativeScrollTo.call(node, { left: offset, behavior: 'smooth' });
-        }
-      } else {
-        flatListRef.current?.scrollToOffset({ offset, animated: true });
-      }
+      scrollToPage(target, true);
       currentOffsetRef.current = pages[target]?.startOffset ?? 0;
       setPageIndex(target);
     },
-    [chapterIndex, goToChapter, pageIndex, pages, total, viewportWidth],
+    [chapterIndex, goToChapter, pageIndex, pages, scrollToPage, total],
   );
 
   // Web 键盘监听用 ref 取最新 goToPage，避免闭包过期。
@@ -402,6 +431,41 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     goToPageRef.current = goToPage;
   }, [goToPage]);
+
+  // 换章/重排版后把容器补位到目标页。横向列表在 web 上内容宽度是逐帧铺开的，
+  // 过早滚动会被夹到当前最大宽度，故用 rAF 轮询到内容够宽（够到目标页）再定位。
+  React.useEffect(() => {
+    if (status !== 'ready' || pendingScrollPageRef.current == null) return;
+    let rafId = 0;
+    let tries = 0;
+    const tick = () => {
+      const target = pendingScrollPageRef.current;
+      if (target == null) return;
+      if (Platform.OS === 'web') {
+        const node = findReaderPageScrollNode();
+        const need = target * viewportWidth;
+        if (node && node.scrollWidth >= need + node.clientWidth - 1) {
+          pendingScrollPageRef.current = null;
+          scrollToPage(target, false);
+          // 滚动落定并渲染出目标页后恢复吸附（此时 scrollLeft 已在整页边界，不会跳动）。
+          if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
+          snapTimerRef.current = setTimeout(() => setSnapEnabled(true), 180);
+          return;
+        }
+        if (tries++ < 60) {
+          rafId = requestAnimationFrame(tick);
+        } else {
+          pendingScrollPageRef.current = null;
+          setSnapEnabled(true);
+        }
+      } else {
+        pendingScrollPageRef.current = null;
+        scrollToPage(target, false);
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [status, pageIndex, pages.length, scrollToPage, viewportWidth]);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web' || settings.pageMode !== 'page') return;
@@ -670,7 +734,13 @@ export default function ReaderScreen() {
               keyExtractor={item => item.key}
               horizontal
               pagingEnabled={Platform.OS !== 'web'}
-              style={[StyleSheet.absoluteFill, WEB_SNAP_CONTAINER]}
+              style={[
+                StyleSheet.absoluteFill,
+                WEB_SNAP_CONTAINER,
+                Platform.OS === 'web' && !snapEnabled
+                  ? ({ scrollSnapType: 'none' } as any)
+                  : null,
+              ]}
               showsHorizontalScrollIndicator={false}
               initialNumToRender={2}
               maxToRenderPerBatch={2}
