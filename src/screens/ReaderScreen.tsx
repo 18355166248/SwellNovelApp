@@ -376,7 +376,16 @@ export default function ReaderScreen() {
       return (
         <Pressable
           onPress={(e: any) => {
-            const x = e?.nativeEvent?.locationX ?? viewportWidth / 2;
+            // react-native-web 上 onPress 来自 DOM click，其 nativeEvent 是 MouseEvent，
+            // 没有 locationX，只有 pageX/offsetX；原来只读 locationX 会恒退化到 viewportWidth/2，
+            // 使每次点击都落在中间热区（只切换工具栏），左右翻页热区在 web 端形同虚设。
+            const ne = e?.nativeEvent ?? {};
+            const x =
+              ne.locationX != null
+                ? ne.locationX
+                : ne.pageX != null
+                ? ne.pageX
+                : viewportWidth / 2;
             if (x < viewportWidth / 3) {
               goToPage(-1);
             } else if (x > (viewportWidth * 2) / 3) {
