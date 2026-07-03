@@ -74,7 +74,11 @@ const CHROME_NIGHT: ReaderChromeTokens = {
   field: 'rgba(255,255,255,.06)',
 };
 
-export const FONT_SIZES = [16, 18, 20, 22, 25, 28, 32, 36, 40];
+// 字号按 1px 连续步进，加减逐档不跳（16…40）。
+export const FONT_SIZES = Array.from(
+  { length: 40 - 16 + 1 },
+  (_, i) => 16 + i,
+);
 export const LINE_HEIGHTS = [1.6, 1.85, 2.15];
 export const PARA_GAPS = [14, 18, 22];
 

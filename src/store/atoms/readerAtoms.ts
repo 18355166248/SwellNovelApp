@@ -15,7 +15,8 @@ import {
 // 默认阅读设置
 const defaultReaderSettings: ReaderSettings = {
   theme: 'paper',
-  fontSizeIndex: 2,
+  // FONT_SIZES 现从 16 起以 1px 步进，索引 4 → 20px（原默认字号）。
+  fontSizeIndex: 4,
   lineHeightIndex: 1,
   pageMode: 'page',
 };
