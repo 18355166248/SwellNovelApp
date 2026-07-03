@@ -9,6 +9,8 @@ import {
   TextInput,
   Alert,
   Platform,
+  Animated,
+  Easing,
   BackHandler,
   useWindowDimensions,
 } from 'react-native';
@@ -114,6 +116,33 @@ function cacheMeasuredLines(key: string, lines: ReaderLine[]) {
   measuredLinesCache.set(key, lines);
 }
 
+// 浮层进出场过渡：open 关闭后先播完退场动画再卸载，避免直接闪现/闪没。
+function useOverlayTransition(open: boolean, duration = 220) {
+  const [mounted, setMounted] = React.useState(open);
+  const value = React.useRef(new Animated.Value(open ? 1 : 0)).current;
+  React.useEffect(() => {
+    if (open) {
+      setMounted(true);
+      Animated.timing(value, {
+        toValue: 1,
+        duration,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: Platform.OS !== 'web',
+      }).start();
+    } else {
+      Animated.timing(value, {
+        toValue: 0,
+        duration,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: Platform.OS !== 'web',
+      }).start(({ finished }) => {
+        if (finished) setMounted(false);
+      });
+    }
+  }, [open, duration, value]);
+  return { mounted, value };
+}
+
 export default function ReaderScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ReaderRoute>();
@@ -155,6 +184,13 @@ export default function ReaderScreen() {
 
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(!!openDrawer);
+
+  // 工具栏 / 设置面板 / 目录抽屉的进出场过渡。
+  const barsTransition = useOverlayTransition(isToolbarVisible);
+  const sheetTransition = useOverlayTransition(settingsOpen);
+  const drawerTransition = useOverlayTransition(drawerOpen);
+  const [sheetHeight, setSheetHeight] = React.useState(420);
+
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
   const [status, setStatus] = React.useState<'ready' | 'loading' | 'error'>(
@@ -922,14 +958,23 @@ export default function ReaderScreen() {
         </Text>
       </View>
 
-      {isToolbarVisible && (
-        <View
+      {barsTransition.mounted && (
+        <Animated.View
           style={[
             styles.topBar,
             {
               paddingTop: topBarPad,
               backgroundColor: display.chrome.bg,
               borderBottomColor: display.chrome.hair,
+              opacity: barsTransition.value,
+              transform: [
+                {
+                  translateY: barsTransition.value.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-16, 0],
+                  }),
+                },
+              ],
             },
           ]}
         >
@@ -954,17 +999,26 @@ export default function ReaderScreen() {
           >
             <Icon name="more-horiz" size={20} color={display.chrome.ink} />
           </Pressable>
-        </View>
+        </Animated.View>
       )}
 
-      {isToolbarVisible && (
-        <View
+      {barsTransition.mounted && (
+        <Animated.View
           style={[
             styles.bottomBar,
             {
               paddingBottom: bottomBarPad,
               backgroundColor: display.chrome.bg,
               borderTopColor: display.chrome.hair,
+              opacity: barsTransition.value,
+              transform: [
+                {
+                  translateY: barsTransition.value.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [16, 0],
+                  }),
+                },
+              ],
             },
           ]}
         >
@@ -1039,17 +1093,35 @@ export default function ReaderScreen() {
               }}
             />
           </View>
-        </View>
+        </Animated.View>
       )}
 
-      {settingsOpen && (
+      {sheetTransition.mounted && (
         <>
-          <Pressable
-            style={styles.overlay}
-            onPress={() => setSettingsOpen(false)}
-          />
-          <View
-            style={[styles.sheet, { backgroundColor: display.chrome.sheetBg }]}
+          <Animated.View
+            style={[styles.overlay, { opacity: sheetTransition.value }]}
+          >
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setSettingsOpen(false)}
+            />
+          </Animated.View>
+          <Animated.View
+            onLayout={e => setSheetHeight(e.nativeEvent.layout.height)}
+            style={[
+              styles.sheet,
+              {
+                backgroundColor: display.chrome.sheetBg,
+                transform: [
+                  {
+                    translateY: sheetTransition.value.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [sheetHeight + 40, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
           >
             <View
               style={[styles.grabber, { backgroundColor: display.chrome.hair }]}
@@ -1251,18 +1323,35 @@ export default function ReaderScreen() {
                 })}
               </View>
             </View>
-          </View>
+          </Animated.View>
         </>
       )}
 
-      {drawerOpen && (
+      {drawerTransition.mounted && (
         <>
-          <Pressable
-            style={styles.overlay}
-            onPress={() => setDrawerOpen(false)}
-          />
-          <View
-            style={[styles.drawer, { backgroundColor: display.chrome.sheetBg }]}
+          <Animated.View
+            style={[styles.overlay, { opacity: drawerTransition.value }]}
+          >
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setDrawerOpen(false)}
+            />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.drawer,
+              {
+                backgroundColor: display.chrome.sheetBg,
+                transform: [
+                  {
+                    translateX: drawerTransition.value.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-viewportWidth * 0.8, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
           >
             <View style={{ padding: 18, paddingTop: 48, paddingBottom: 12 }}>
               <Text
@@ -1395,7 +1484,7 @@ export default function ReaderScreen() {
                 </Text>
               </Pressable>
             </ScrollView>
-          </View>
+          </Animated.View>
         </>
       )}
     </View>
