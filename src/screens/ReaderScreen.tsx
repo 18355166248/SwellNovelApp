@@ -59,8 +59,8 @@ type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
 const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
 const PAGE_HORIZONTAL_PADDING = 24;
-const PAGE_TOP_PADDING = 56;
-const PAGE_BOTTOM_PADDING = 90;
+const PAGE_TOP_PADDING = 36;
+const PAGE_BOTTOM_PADDING = 48;
 /** 章节边界越界回弹翻章的位移阈值 */
 const CHAPTER_TURN_THRESHOLD = 40;
 
