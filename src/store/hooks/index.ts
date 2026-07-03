@@ -7,6 +7,7 @@ export {
   useBooks,
   useAllBooks,
   useCurrentBook,
+  useCurrentBookHistory,
   useSelectBook,
   useAddBook,
   useRemoveBook,

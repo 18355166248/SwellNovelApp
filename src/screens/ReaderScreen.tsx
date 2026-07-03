@@ -22,6 +22,8 @@ import {
   useCurrentChapterIndex,
   useCurrentChapterContent,
   useOpenChapter,
+  useUpdateReadingProgress,
+  useCurrentBookHistory,
   useReaderSettings,
   useReaderDisplay,
   useSetReaderTheme,
@@ -124,6 +126,8 @@ export default function ReaderScreen() {
   const chapterIndex = useCurrentChapterIndex() ?? 0;
   const content = useCurrentChapterContent();
   const openChapter = useOpenChapter();
+  const updateProgress = useUpdateReadingProgress();
+  const bookHistory = useCurrentBookHistory();
 
   const settings = useReaderSettings();
   const display = useReaderDisplay();
@@ -152,6 +156,23 @@ export default function ReaderScreen() {
   const currentOffsetRef = React.useRef(0);
   const pendingLandRef = React.useRef<'last' | null>(null);
   const prevChapterIdRef = React.useRef<string | undefined>(undefined);
+  // 续读：捕获打开时保存的页内偏移，仅在首个匹配章节应用一次。
+  const resumeRef = React.useRef<{ chapterId: string; position: number } | null>(
+    null,
+  );
+  const resumeCapturedRef = React.useRef(false);
+  if (!resumeCapturedRef.current && bookHistory) {
+    resumeCapturedRef.current = true;
+    resumeRef.current = {
+      chapterId: bookHistory.chapterId,
+      position: bookHistory.position,
+    };
+  }
+  // updateProgress 每次渲染换新引用，用 ref 持有，避免作为副作用依赖导致写库循环。
+  const updateProgressRef = React.useRef(updateProgress);
+  React.useEffect(() => {
+    updateProgressRef.current = updateProgress;
+  });
   const transitionRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -260,11 +281,21 @@ export default function ReaderScreen() {
     prevChapterIdRef.current = chapter?.id;
 
     if (chapterChanged) {
+      // 续读位置只在首个章节尝试一次，消费后清空，避免回到该章又跳回旧偏移。
+      const resume = resumeRef.current;
+      resumeRef.current = null;
       if (pendingLandRef.current === 'last') {
         pendingLandRef.current = null;
         const last = Math.max(0, pages.length - 1);
         currentOffsetRef.current = pages[last]?.startOffset ?? 0;
         setPageIndex(last);
+      } else if (
+        resume &&
+        resume.chapterId === chapter?.id &&
+        resume.position > 0
+      ) {
+        currentOffsetRef.current = resume.position;
+        setPageIndex(findPageByOffset(pages, resume.position));
       } else {
         currentOffsetRef.current = 0;
         setPageIndex(0);
@@ -286,6 +317,18 @@ export default function ReaderScreen() {
           pages.length
         } 页 · ${pageProgressPct}%`
       : `${chapterIndex + 1} / ${total} · ${progressPct}%`;
+
+  // 翻页/滚动落定后，把当前页内偏移与书籍进度持久化，重开时精确续读。
+  React.useEffect(() => {
+    if (status !== 'ready' || !chapter) return;
+    updateProgressRef.current(
+      bookId,
+      pageProgressPct,
+      chapter.id,
+      currentOffsetRef.current,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId, chapter?.id, pageIndex, pageProgressPct, status]);
 
   const goToChapter = React.useCallback(
     (idx: number) => {

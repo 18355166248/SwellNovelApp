@@ -8,6 +8,7 @@ import {
   booksAtom,
   selectedBookIdAtom,
   currentBookAtom,
+  currentBookHistoryAtom,
   filteredBooksAtom,
   bookSearchQueryAtom,
   chaptersAtom,
@@ -40,6 +41,13 @@ export const useAllBooks = () => {
  */
 export const useCurrentBook = () => {
   return useAtomValue(currentBookAtom);
+};
+
+/**
+ * 获取当前选中书籍的阅读历史（含页内偏移 position），用于续读定位。
+ */
+export const useCurrentBookHistory = () => {
+  return useAtomValue(currentBookHistoryAtom);
 };
 
 /**

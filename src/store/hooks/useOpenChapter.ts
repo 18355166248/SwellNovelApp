@@ -23,7 +23,9 @@ export const useOpenChapter = () => {
     setChapterContent(chapter?.content || '');
     if (chapter && chapters.length > 0) {
       const progress = Math.round(((chapterIndex + 1) / chapters.length) * 100);
-      updateProgress(bookId, progress, chapter.id, 0);
+      // 只更新书籍进度/当前章，不写 readingHistory.position——页内偏移由阅读器
+      // 按实际翻页落盘，这里传 0 会把续读位置清成章首。
+      updateProgress(bookId, progress, chapter.id);
     }
   };
 };
