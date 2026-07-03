@@ -11,7 +11,7 @@ export interface ReaderLine {
   text: string;
   /** 行首字符的逻辑偏移量 */
   charOffset: number;
-  /** 是否段落首行（组页时段落之间插入空行） */
+  /** 是否段落首行（段首带全角缩进，用于区分段落与恢复阅读位置） */
   isParagraphStart: boolean;
 }
 
@@ -66,7 +66,7 @@ export function breakLines(
 
 export interface ReaderPageData {
   key: string;
-  /** 页内文本，行以 \n 连接，段落间已插入空行 */
+  /** 页内文本，行以 \n 连接（段落仅靠首行缩进区分，不插空行） */
   text: string;
   /** 本页首行的逻辑偏移量 */
   startOffset: number;
@@ -103,18 +103,12 @@ export function buildPages({
   };
 
   lines.forEach(line => {
-    const needsGap = line.isParagraphStart && current.length > 0;
-    const needed = 1 + (needsGap ? 1 : 0);
-    if (
-      current.length > 0 &&
-      current.length + needed > limitFor(pages.length)
-    ) {
+    // 段落之间不再插入空行，仅靠段首行的全角缩进区分，避免左右翻页段间距过大。
+    if (current.length > 0 && current.length + 1 > limitFor(pages.length)) {
       pushPage();
     }
     if (current.length === 0) {
       currentStart = line.charOffset;
-    } else if (needsGap) {
-      current.push('');
     }
     current.push(line.text);
   });

@@ -96,7 +96,7 @@ describe('buildPages', () => {
     makeLine('　　丙丙', 10, true),
   ];
 
-  it('首页用 firstPageLines 限制，后续页用 linesPerPage，段落间插空行', () => {
+  it('首页用 firstPageLines 限制，后续页用 linesPerPage，段落间不插空行', () => {
     const pages = buildPages({
       chapterId: 'ch1',
       lines,
@@ -106,7 +106,7 @@ describe('buildPages', () => {
     expect(pages[0].text).toBe('　　甲甲甲\n甲甲');
     expect(pages[0].startOffset).toBe(0);
     expect(pages[0].showHeader).toBe(true);
-    expect(pages[1].text).toBe('　　乙乙乙\n乙乙\n\n　　丙丙');
+    expect(pages[1].text).toBe('　　乙乙乙\n乙乙\n　　丙丙');
     expect(pages[1].startOffset).toBe(5);
     expect(pages[1].showHeader).toBe(false);
     expect(pages.map(p => p.key)).toEqual(['ch1-0', 'ch1-1']);
