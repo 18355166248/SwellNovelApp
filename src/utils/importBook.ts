@@ -10,6 +10,7 @@ import {
   types as DocTypes,
 } from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
+import { base64ToBytes, decodeBytes } from './decodeText';
 
 export interface PickedTxt {
   name: string;
@@ -27,10 +28,13 @@ export async function pickTxtFile(): Promise<PickedTxt | null> {
     if (!picked) return null;
     const path = picked.uri;
     if (!path) return null;
-    const content = await RNFS.readFile(
+    // 读原始字节（base64）再按编码探测解码，兼容 UTF-8 / GBK / GB18030 / UTF-16，
+    // 避免 GBK 中文 TXT 被固定 utf8 解码成乱码。
+    const base64 = await RNFS.readFile(
       decodeURIComponent(path.replace('file://', '')),
-      'utf8',
+      'base64',
     );
+    const content = decodeBytes(base64ToBytes(base64));
     return { name: (picked.name || '本地TXT').replace(/\.txt$/i, ''), content };
   } catch (e: any) {
     if (

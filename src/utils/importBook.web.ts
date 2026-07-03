@@ -9,6 +9,8 @@ export interface PickedTxt {
   content: string;
 }
 
+import { decodeBytes } from './decodeText';
+
 export function pickTxtFile(): Promise<PickedTxt | null> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
@@ -23,11 +25,16 @@ export function pickTxtFile(): Promise<PickedTxt | null> {
         resolve(null);
         return;
       }
-      const reader = new FileReader();
-      reader.onload = () =>
-        resolve({ name: file.name.replace(/\.txt$/i, ''), content: String(reader.result || '') });
-      reader.onerror = () => reject(reader.error);
-      reader.readAsText(file, 'utf-8');
+      // 读原始字节再按编码探测解码，兼容 UTF-8 / GBK / GB18030 / UTF-16。
+      file
+        .arrayBuffer()
+        .then(buf => {
+          resolve({
+            name: file.name.replace(/\.txt$/i, ''),
+            content: decodeBytes(new Uint8Array(buf)),
+          });
+        })
+        .catch(reject);
     };
 
     document.body.appendChild(input);
