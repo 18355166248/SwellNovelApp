@@ -69,6 +69,8 @@ const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
 const PAGE_HORIZONTAL_PADDING = 20;
 const PAGE_TOP_PADDING = 36;
 const PAGE_BOTTOM_PADDING = 48;
+/** 阅读列最大宽度（含左右内边距）：宽屏下超出则居中留白，避免一行几十字难读。 */
+const READER_MAX_CONTENT = 680;
 /** 章节边界越界回弹翻章的位移阈值 */
 const CHAPTER_TURN_THRESHOLD = 40;
 
@@ -322,9 +324,20 @@ export default function ReaderScreen() {
     [chapter?.content, content],
   );
 
+  // 阅读列宽度：窄屏铺满，宽屏封顶到 READER_MAX_CONTENT 并居中（两侧多留白）。
+  // paddingH 用于渲染时把文本块在整页/滚动容器内居中；textWidth 用于分页断行。
+  const readerColumn = React.useMemo(() => {
+    const clamped = Math.min(viewportWidth, READER_MAX_CONTENT);
+    const sideGutter = Math.max(0, (viewportWidth - clamped) / 2);
+    return {
+      paddingH: PAGE_HORIZONTAL_PADDING + sideGutter,
+      textWidth: Math.max(1, clamped - PAGE_HORIZONTAL_PADDING * 2),
+    };
+  }, [viewportWidth]);
+
   // 左右翻页先按真实字符宽度断行、组页，再交给 FlatList 虚拟渲染，避免大章节一次性挂载所有页面。
   const pageMetrics = React.useMemo(() => {
-    const maxWidth = Math.max(1, viewportWidth - PAGE_HORIZONTAL_PADDING * 2);
+    const maxWidth = readerColumn.textWidth;
     const bodyHeight = Math.max(
       1,
       viewportHeight - PAGE_TOP_PADDING - PAGE_BOTTOM_PADDING,
@@ -347,7 +360,7 @@ export default function ReaderScreen() {
     display.paraGap,
     display.titleSize,
     viewportHeight,
-    viewportWidth,
+    readerColumn.textWidth,
   ]);
   const pages = React.useMemo<ReaderPageData[]>(() => {
     const chapterId = chapter?.id || bookId;
@@ -649,6 +662,7 @@ export default function ReaderScreen() {
               width: viewportWidth,
               paddingTop: PAGE_TOP_PADDING,
               paddingBottom: PAGE_BOTTOM_PADDING,
+              paddingHorizontal: readerColumn.paddingH,
             },
             WEB_SNAP_ITEM,
           ]}
@@ -721,6 +735,7 @@ export default function ReaderScreen() {
       display.titleSize,
       goToPage,
       pages.length,
+      readerColumn.paddingH,
       toggleToolbar,
       viewportWidth,
     ],
@@ -899,7 +914,7 @@ export default function ReaderScreen() {
           <ScrollView
             style={StyleSheet.absoluteFill}
             contentContainerStyle={{
-              padding: PAGE_HORIZONTAL_PADDING,
+              paddingHorizontal: readerColumn.paddingH,
               paddingTop: PAGE_TOP_PADDING,
               paddingBottom: PAGE_BOTTOM_PADDING,
             }}
