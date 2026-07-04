@@ -14,8 +14,18 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { useAtom } from 'jotai';
-import { useBookSearch, searchHistoryAtom, useAllBooks } from '../store';
+import {
+  useBookSearch,
+  searchHistoryAtom,
+  useAllBooks,
+  useAddOnlineBook,
+} from '../store';
 import { paletteForId, COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
+import {
+  isNovelSearchSupported,
+  searchNovels,
+  NovelSearchResult,
+} from '../services/search/novelSearch';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -27,6 +37,51 @@ export default function SearchScreen() {
   const { query, setQuery, results } = useBookSearch();
   const [history, setHistory] = useAtom(searchHistoryAtom);
   const allBooks = useAllBooks();
+  const addOnlineBook = useAddOnlineBook();
+
+  // 在线搜书（仅原生）：把书名经搜索引擎解析成受支持书源的书籍链接。
+  const [onlineResults, setOnlineResults] = React.useState<NovelSearchResult[]>(
+    [],
+  );
+  const [onlineState, setOnlineState] = React.useState<
+    'idle' | 'loading' | 'error' | 'empty' | 'done'
+  >('idle');
+  const [addingUrl, setAddingUrl] = React.useState<string | null>(null);
+  const searchSeqRef = React.useRef(0);
+
+  const runOnlineSearch = React.useCallback(
+    async (kw: string) => {
+      if (!isNovelSearchSupported || !kw.trim()) return;
+      const seq = ++searchSeqRef.current;
+      setOnlineState('loading');
+      setOnlineResults([]);
+      try {
+        const res = await searchNovels(kw);
+        if (seq !== searchSeqRef.current) return; // 已有更新的搜索，丢弃旧结果
+        setOnlineResults(res);
+        setOnlineState(res.length ? 'done' : 'empty');
+      } catch {
+        if (seq === searchSeqRef.current) setOnlineState('error');
+      }
+    },
+    [],
+  );
+
+  const onTapOnline = React.useCallback(
+    async (r: NovelSearchResult) => {
+      if (addingUrl) return;
+      setAddingUrl(r.url);
+      try {
+        const book = await addOnlineBook(r.url);
+        navigation.navigate('BookDetail', { bookId: book.id });
+      } catch {
+        setOnlineState('error');
+      } finally {
+        setAddingUrl(null);
+      }
+    },
+    [addingUrl, addOnlineBook, navigation],
+  );
   // 本地阅读器无热搜后端，改为按最近阅读/加入列出书库速览。
   const shelf = React.useMemo(
     () =>
@@ -42,6 +97,10 @@ export default function SearchScreen() {
     if (trimmed) {
       // 去重后置顶，最多保留 8 条；持久化到本地。
       setHistory(prev => [trimmed, ...prev.filter(h => h !== trimmed)].slice(0, 8));
+      runOnlineSearch(trimmed);
+    } else {
+      setOnlineState('idle');
+      setOnlineResults([]);
     }
   };
 
@@ -197,6 +256,81 @@ export default function SearchScreen() {
           </View>
         )}
 
+        {isNovelSearchSupported && query.trim().length > 0 && (
+          <View style={styles.section}>
+            <Text variant="label" style={{ marginBottom: 12 }}>
+              网络搜书
+            </Text>
+            {onlineState === 'loading' && (
+              <Text variant="caption" color="textSecondary">
+                正在从书源搜索「{query.trim()}」…
+              </Text>
+            )}
+            {onlineState === 'error' && (
+              <Text variant="caption" color="textSecondary">
+                搜索失败，请检查网络后重试
+              </Text>
+            )}
+            {onlineState === 'empty' && (
+              <Text variant="caption" color="textSecondary">
+                没有找到可添加的网络书籍，可换个关键词试试
+              </Text>
+            )}
+            {onlineResults.length > 0 && (
+              <View
+                style={[
+                  styles.hotList,
+                  { backgroundColor: theme.colors.surface },
+                  theme.shadows.sm,
+                ]}
+              >
+                {onlineResults.map(r => (
+                  <Pressable
+                    key={r.url}
+                    onPress={() => onTapOnline(r)}
+                    style={[
+                      styles.onlineRow,
+                      { borderBottomColor: theme.colors.border },
+                    ]}
+                  >
+                    <Icon
+                      name="cloud-download"
+                      size={18}
+                      color={theme.colors.accentDark}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        numberOfLines={1}
+                        style={{ fontSize: 13.5, color: theme.colors.text }}
+                      >
+                        {r.title}
+                      </Text>
+                      <Text
+                        variant="caption"
+                        color="textSecondary"
+                        style={{ marginTop: 2 }}
+                      >
+                        {r.sourceName}
+                      </Text>
+                    </View>
+                    {addingUrl === r.url ? (
+                      <Text variant="caption" color="textSecondary">
+                        添加中…
+                      </Text>
+                    ) : (
+                      <Icon
+                        name="add"
+                        size={18}
+                        color={theme.colors.textSecondary}
+                      />
+                    )}
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
         <View style={styles.section}>
           {history.length > 0 && (
             <>
@@ -325,6 +459,14 @@ const styles = StyleSheet.create({
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   historyChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16 },
   hotList: { borderRadius: 8, overflow: 'hidden' },
+  onlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+  },
   hotRow: {
     flexDirection: 'row',
     alignItems: 'center',
