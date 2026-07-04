@@ -231,6 +231,7 @@ export default function ReaderScreen() {
   );
 
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
+  const [drawerTab, setDrawerTab] = React.useState<'toc' | 'marks'>('toc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
   const [status, setStatus] = React.useState<'ready' | 'loading' | 'error'>(
     'ready',
@@ -499,6 +500,28 @@ export default function ReaderScreen() {
       setPageIndex(target);
     },
     [chapterIndex, goToChapter, pageIndex, pages, scrollToPage, total],
+  );
+
+  // 跳转到书签：跨章用 resumeRef 复用换章落点逻辑；同章直接定位到偏移对应页。
+  const jumpToBookmark = React.useCallback(
+    (chapterId: string, position: number) => {
+      const idx = chapters.findIndex(c => c.id === chapterId);
+      if (idx < 0) return;
+      setDrawerOpen(false);
+      if (idx !== chapterIndex) {
+        resumeRef.current = { chapterId, position };
+        goToChapter(idx);
+        return;
+      }
+      if (settings.pageMode === 'page' && pages.length > 0) {
+        const target = findPageByOffset(pages, position);
+        currentOffsetRef.current = position;
+        if (Platform.OS === 'web') setSnapEnabled(target <= 0);
+        pendingScrollPageRef.current = target > 0 ? target : null;
+        setPageIndex(target);
+      }
+    },
+    [chapters, chapterIndex, goToChapter, pages, settings.pageMode],
   );
 
   // Web 键盘监听用 ref 取最新 goToPage，避免闭包过期。
@@ -1114,7 +1137,10 @@ export default function ReaderScreen() {
               icon={hasBookmark ? 'bookmark' : 'bookmark-border'}
               label="书签"
               color={display.chrome.ink}
-              onPress={() => chapter && toggleBookmark(bookId, chapter.id)}
+              onPress={() =>
+                chapter &&
+                toggleBookmark(bookId, chapter.id, currentOffsetRef.current)
+              }
             />
             <ReaderAction
               icon={isNight ? 'wb-sunny' : 'brightness-2'}
@@ -1437,9 +1463,39 @@ export default function ReaderScreen() {
                   marginTop: 3,
                 }}
               >
-                共 {total} 章
+                {drawerTab === 'toc' ? `共 ${total} 章` : `共 ${bookmarks.length} 条书签`}
               </Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                {(['toc', 'marks'] as const).map(tab => {
+                  const active = drawerTab === tab;
+                  return (
+                    <Pressable
+                      key={tab}
+                      onPress={() => setDrawerTab(tab)}
+                      style={{
+                        paddingVertical: 5,
+                        paddingHorizontal: 14,
+                        borderRadius: 14,
+                        backgroundColor: active
+                          ? NOVEL_ACCENT
+                          : display.chrome.field,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12.5,
+                          color: active ? '#fff' : display.chrome.sheetSub,
+                          fontWeight: active ? '600' : '400',
+                        }}
+                      >
+                        {tab === 'toc' ? '目录' : '书签'}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {drawerTab === 'toc' && (
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                 <View
                   style={[
                     styles.drawerSearch,
@@ -1486,6 +1542,7 @@ export default function ReaderScreen() {
                   </Text>
                 </Pressable>
               </View>
+              )}
             </View>
             <ScrollView
               style={{ flex: 1 }}
@@ -1494,7 +1551,73 @@ export default function ReaderScreen() {
                 paddingBottom: 20,
               }}
             >
-              {drawerList.map(({ c, idx }) => {
+              {drawerTab === 'marks' &&
+                (bookmarks.length === 0 ? (
+                  <View style={{ paddingVertical: 48, alignItems: 'center' }}>
+                    <Icon
+                      name="bookmark-border"
+                      size={30}
+                      color={display.chrome.sheetSub}
+                    />
+                    <Text
+                      style={{
+                        color: display.chrome.sheetSub,
+                        fontSize: 12.5,
+                        marginTop: 8,
+                      }}
+                    >
+                      还没有书签，阅读时点底部「书签」添加
+                    </Text>
+                  </View>
+                ) : (
+                  bookmarks
+                    .map(bm => ({
+                      bm,
+                      idx: chapters.findIndex(c => c.id === bm.chapterId),
+                    }))
+                    .filter(x => x.idx >= 0)
+                    .sort((a, b) => a.idx - b.idx)
+                    .map(({ bm, idx }) => (
+                      <Pressable
+                        key={bm.id}
+                        onPress={() => jumpToBookmark(bm.chapterId, bm.position)}
+                        onLongPress={() =>
+                          toggleBookmark(bookId, bm.chapterId, bm.position)
+                        }
+                        delayLongPress={350}
+                        style={styles.chapterRow}
+                      >
+                        <Icon
+                          name="bookmark"
+                          size={15}
+                          color={NOVEL_ACCENT}
+                          style={{ width: 34 }}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              fontSize: 13.5,
+                              color: display.chrome.sheetInk,
+                            }}
+                          >
+                            {chapters[idx]?.title || `第 ${idx + 1} 章`}
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              color: display.chrome.sheetSub,
+                              marginTop: 2,
+                            }}
+                          >
+                            {`第 ${idx + 1} 章 · 长按删除`}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))
+                ))}
+              {drawerTab === 'toc' &&
+                drawerList.map(({ c, idx }) => {
                 const isCur = idx === chapterIndex;
                 return (
                   <Pressable
@@ -1538,17 +1661,19 @@ export default function ReaderScreen() {
                 );
               })}
               {/* 章节已在本地一次性加载，这里保留设计稿的目录尾部控件但不触发分页。 */}
-              <Pressable
-                disabled
-                style={[
-                  styles.drawerFooterBtn,
-                  { borderColor: display.chrome.hair },
-                ]}
-              >
-                <Text style={{ color: display.chrome.sheetSub, fontSize: 13 }}>
-                  已显示全部章节
-                </Text>
-              </Pressable>
+              {drawerTab === 'toc' && (
+                <Pressable
+                  disabled
+                  style={[
+                    styles.drawerFooterBtn,
+                    { borderColor: display.chrome.hair },
+                  ]}
+                >
+                  <Text style={{ color: display.chrome.sheetSub, fontSize: 13 }}>
+                    已显示全部章节
+                  </Text>
+                </Pressable>
+              )}
             </ScrollView>
           </Animated.View>
         </>

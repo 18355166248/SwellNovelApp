@@ -220,7 +220,7 @@ export const useBookmarks = (bookId: string | null) => {
 export const useToggleBookmark = () => {
   const setBookmarks = useSetAtom(bookmarksAtom);
 
-  return (bookId: string, chapterId: string) => {
+  return (bookId: string, chapterId: string, position = 0) => {
     setBookmarks(prev => {
       const list = prev[bookId] || [];
       const existing = list.find(b => b.chapterId === chapterId);
@@ -238,7 +238,7 @@ export const useToggleBookmark = () => {
             id: `${bookId}-${chapterId}-${Date.now()}`,
             bookId,
             chapterId,
-            position: 0,
+            position,
             createdAt: Date.now(),
           },
         ],
