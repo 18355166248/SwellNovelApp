@@ -148,8 +148,23 @@ function useOverlayTransition(open: boolean, duration = 220) {
 export default function ReaderScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ReaderRoute>();
-  const { width: viewportWidth, height: viewportHeight } =
-    useWindowDimensions();
+  const winDims = useWindowDimensions();
+  // Web 大屏 #root 被 CSS 约束为 420px，useWindowDimensions 返回的是窗口宽度，
+  // 分页断行必须用容器实际宽度，否则文字会溢出被裁剪。
+  const [rootWidth, setRootWidth] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const root = document.getElementById('root');
+    if (!root) return;
+    const measure = () => setRootWidth(root.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, []);
+  const viewportWidth =
+    Platform.OS === 'web' && rootWidth != null ? rootWidth : winDims.width;
+  const viewportHeight = winDims.height;
   const insets = useSafeAreaInsets();
   // 顶/底工具栏与进度提示按安全区避让刘海/灵动岛与底部手势条。
   // web 无状态栏/刘海，顶栏 44 的状态栏预留会变成大片空白，收到 12。
@@ -616,15 +631,18 @@ export default function ReaderScreen() {
         <Pressable
           onPress={(e: any) => {
             // react-native-web 上 onPress 来自 DOM click，其 nativeEvent 是 MouseEvent，
-            // 没有 locationX，只有 pageX/offsetX；原来只读 locationX 会恒退化到 viewportWidth/2，
-            // 使每次点击都落在中间热区（只切换工具栏），左右翻页热区在 web 端形同虚设。
+            // 没有 locationX，只有 pageX/offsetX；pageX 是相对浏览器视口的坐标，
+            // 大屏下 #root 居中（margin: 0 auto），必须减去面板左偏移才能得到面板内坐标。
             const ne = e?.nativeEvent ?? {};
-            const x =
-              ne.locationX != null
-                ? ne.locationX
-                : ne.pageX != null
-                ? ne.pageX
-                : viewportWidth / 2;
+            let x: number;
+            if (ne.locationX != null) {
+              x = ne.locationX;
+            } else if (ne.pageX != null && e?.currentTarget) {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              x = ne.pageX - rect.left;
+            } else {
+              x = viewportWidth / 2;
+            }
             if (x < viewportWidth / 3) {
               goToPage(-1);
             } else if (x > (viewportWidth * 2) / 3) {
@@ -1021,146 +1039,144 @@ export default function ReaderScreen() {
         </Text>
       </View>
 
-      {barsTransition.mounted && (
-        <Animated.View
-          style={[
-            styles.topBar,
-            {
-              paddingTop: topBarPad,
-              backgroundColor: display.chrome.bg,
-              borderBottomColor: display.chrome.hair,
-              opacity: barsTransition.value,
-              transform: [
-                {
-                  translateY: barsTransition.value.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [-16, 0],
-                  }),
-                },
-              ],
-            },
-          ]}
+      <Animated.View
+        pointerEvents={isToolbarVisible ? 'auto' : 'none'}
+        style={[
+          styles.topBar,
+          {
+            paddingTop: topBarPad,
+            backgroundColor: display.chrome.bg,
+            borderBottomColor: display.chrome.hair,
+            opacity: barsTransition.value,
+            transform: [
+              {
+                translateY: barsTransition.value.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-16, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <Pressable onPress={handleBack} style={styles.barBtn}>
+          <Icon name="arrow-back" size={20} color={display.chrome.ink} />
+        </Pressable>
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Text
+            numberOfLines={1}
+            style={{
+              color: display.chrome.ink,
+              fontSize: 14,
+              fontWeight: Platform.select({ ios: '600', android: 'bold' }),
+            }}
+          >
+            {book.title}
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => Alert.alert('更多', '举报 / 分享功能开发中')}
+          style={styles.barBtn}
         >
-          <Pressable onPress={handleBack} style={styles.barBtn}>
-            <Icon name="arrow-back" size={20} color={display.chrome.ink} />
-          </Pressable>
-          <View style={{ flex: 1, alignItems: 'center' }}>
+          <Icon name="more-horiz" size={20} color={display.chrome.ink} />
+        </Pressable>
+      </Animated.View>
+
+      <Animated.View
+        pointerEvents={isToolbarVisible ? 'auto' : 'none'}
+        style={[
+          styles.bottomBar,
+          {
+            paddingBottom: bottomBarPad,
+            backgroundColor: display.chrome.bg,
+            borderTopColor: display.chrome.hair,
+            opacity: barsTransition.value,
+            transform: [
+              {
+                translateY: barsTransition.value.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [16, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <View style={styles.chapterNav}>
+          <Pressable
+            onPress={() => goToChapter(chapterIndex - 1)}
+            disabled={chapterIndex <= 0}
+          >
             <Text
-              numberOfLines={1}
               style={{
                 color: display.chrome.ink,
-                fontSize: 14,
-                fontWeight: Platform.select({ ios: '600', android: 'bold' }),
+                fontSize: 12.5,
+                opacity: chapterIndex <= 0 ? 0.4 : 1,
               }}
             >
-              {book.title}
+              上一章
             </Text>
+          </Pressable>
+          <View
+            style={[
+              styles.sliderTrack,
+              { backgroundColor: display.chrome.hair },
+            ]}
+          >
+            <View style={[styles.sliderFill, { width: `${progressPct}%` }]} />
+            <View style={[styles.sliderThumb, { left: `${progressPct}%` }]} />
           </View>
           <Pressable
-            onPress={() => Alert.alert('更多', '举报 / 分享功能开发中')}
-            style={styles.barBtn}
+            onPress={() => goToChapter(chapterIndex + 1)}
+            disabled={chapterIndex >= total - 1}
           >
-            <Icon name="more-horiz" size={20} color={display.chrome.ink} />
+            <Text
+              style={{
+                color: display.chrome.ink,
+                fontSize: 12.5,
+                opacity: chapterIndex >= total - 1 ? 0.4 : 1,
+              }}
+            >
+              下一章
+            </Text>
           </Pressable>
-        </Animated.View>
-      )}
-
-      {barsTransition.mounted && (
-        <Animated.View
-          style={[
-            styles.bottomBar,
-            {
-              paddingBottom: bottomBarPad,
-              backgroundColor: display.chrome.bg,
-              borderTopColor: display.chrome.hair,
-              opacity: barsTransition.value,
-              transform: [
-                {
-                  translateY: barsTransition.value.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [16, 0],
-                  }),
-                },
-              ],
-            },
-          ]}
-        >
-          <View style={styles.chapterNav}>
-            <Pressable
-              onPress={() => goToChapter(chapterIndex - 1)}
-              disabled={chapterIndex <= 0}
-            >
-              <Text
-                style={{
-                  color: display.chrome.ink,
-                  fontSize: 12.5,
-                  opacity: chapterIndex <= 0 ? 0.4 : 1,
-                }}
-              >
-                上一章
-              </Text>
-            </Pressable>
-            <View
-              style={[
-                styles.sliderTrack,
-                { backgroundColor: display.chrome.hair },
-              ]}
-            >
-              <View style={[styles.sliderFill, { width: `${progressPct}%` }]} />
-              <View style={[styles.sliderThumb, { left: `${progressPct}%` }]} />
-            </View>
-            <Pressable
-              onPress={() => goToChapter(chapterIndex + 1)}
-              disabled={chapterIndex >= total - 1}
-            >
-              <Text
-                style={{
-                  color: display.chrome.ink,
-                  fontSize: 12.5,
-                  opacity: chapterIndex >= total - 1 ? 0.4 : 1,
-                }}
-              >
-                下一章
-              </Text>
-            </Pressable>
-          </View>
-          <View style={styles.actionRow}>
-            <ReaderAction
-              icon="list-alt"
-              label="目录"
-              color={display.chrome.ink}
-              onPress={() => {
-                setDrawerOpen(true);
-                setToolbarVisible(false);
-              }}
-            />
-            <ReaderAction
-              icon={hasBookmark ? 'bookmark' : 'bookmark-border'}
-              label="书签"
-              color={display.chrome.ink}
-              onPress={() =>
-                chapter &&
-                toggleBookmark(bookId, chapter.id, currentOffsetRef.current)
-              }
-            />
-            <ReaderAction
-              icon={isNight ? 'wb-sunny' : 'brightness-2'}
-              label={isNight ? '日间' : '夜间'}
-              color={display.chrome.ink}
-              onPress={() => setReaderTheme(isNight ? 'paper' : 'night')}
-            />
-            <ReaderAction
-              icon="tune"
-              label="设置"
-              color={display.chrome.ink}
-              onPress={() => {
-                setSettingsOpen(true);
-                setToolbarVisible(false);
-              }}
-            />
-          </View>
-        </Animated.View>
-      )}
+        </View>
+        <View style={styles.actionRow}>
+          <ReaderAction
+            icon="list-alt"
+            label="目录"
+            color={display.chrome.ink}
+            onPress={() => {
+              setDrawerOpen(true);
+              setToolbarVisible(false);
+            }}
+          />
+          <ReaderAction
+            icon={hasBookmark ? 'bookmark' : 'bookmark-border'}
+            label="书签"
+            color={display.chrome.ink}
+            onPress={() =>
+              chapter &&
+              toggleBookmark(bookId, chapter.id, currentOffsetRef.current)
+            }
+          />
+          <ReaderAction
+            icon={isNight ? 'wb-sunny' : 'brightness-2'}
+            label={isNight ? '日间' : '夜间'}
+            color={display.chrome.ink}
+            onPress={() => setReaderTheme(isNight ? 'paper' : 'night')}
+          />
+          <ReaderAction
+            icon="tune"
+            label="设置"
+            color={display.chrome.ink}
+            onPress={() => {
+              setSettingsOpen(true);
+              setToolbarVisible(false);
+            }}
+          />
+        </View>
+      </Animated.View>
 
       {sheetTransition.mounted && (
         <>
@@ -1703,7 +1719,7 @@ function ReaderAction({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, overflow: 'hidden' },
   pagePanel: {
     paddingHorizontal: PAGE_HORIZONTAL_PADDING,
   },
