@@ -14,18 +14,11 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { useAtom } from 'jotai';
-import { useBookSearch, searchHistoryAtom } from '../store';
+import { useBookSearch, searchHistoryAtom, useAllBooks } from '../store';
 import { paletteForId, COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-const HOT = [
-  { rank: '1', title: '观沧海', heat: '128.5万' },
-  { rank: '2', title: '山河故人', heat: '96.2万' },
-  { rank: '3', title: '青蝉记', heat: '81.7万' },
-  { rank: '4', title: '归墟', heat: '54.0万' },
-  { rank: '5', title: '故都的秋', heat: '38.9万' },
-];
 const RANK_COLORS = ['#c25a3a', '#c9852f', '#2e6b5e', '#9aa39a', '#9aa39a'];
 
 export default function SearchScreen() {
@@ -33,6 +26,15 @@ export default function SearchScreen() {
   const navigation = useNavigation<NavigationProp>();
   const { query, setQuery, results } = useBookSearch();
   const [history, setHistory] = useAtom(searchHistoryAtom);
+  const allBooks = useAllBooks();
+  // 本地阅读器无热搜后端，改为按最近阅读/加入列出书库速览。
+  const shelf = React.useMemo(
+    () =>
+      [...allBooks]
+        .sort((a, b) => (b.lastReadAt || b.addedAt) - (a.lastReadAt || a.addedAt))
+        .slice(0, 8),
+    [allBooks],
+  );
 
   const commitSearch = (q: string) => {
     const trimmed = q.trim();
@@ -228,42 +230,58 @@ export default function SearchScreen() {
             </>
           )}
 
-          <Text
-            variant="label"
-            style={{ marginTop: history.length ? 22 : 0, marginBottom: 12 }}
-          >
-            热门搜索
-          </Text>
-          <View
-            style={[
-              styles.hotList,
-              { backgroundColor: theme.colors.surface },
-              theme.shadows.sm,
-            ]}
-          >
-            {HOT.map((h, i) => (
-              <Pressable
-                key={h.rank}
-                onPress={() => commitSearch(h.title)}
+          {shelf.length > 0 && (
+            <>
+              <Text
+                variant="label"
+                style={{ marginTop: history.length ? 22 : 0, marginBottom: 12 }}
+              >
+                书库速览
+              </Text>
+              <View
                 style={[
-                  styles.hotRow,
-                  { borderBottomColor: theme.colors.border },
+                  styles.hotList,
+                  { backgroundColor: theme.colors.surface },
+                  theme.shadows.sm,
                 ]}
               >
-                <Text style={[styles.hotRank, { color: RANK_COLORS[i] }]}>
-                  {h.rank}
-                </Text>
-                <Text
-                  style={{ flex: 1, fontSize: 13.5, color: theme.colors.text }}
-                >
-                  {h.title}
-                </Text>
-                <Text variant="caption" color="textSecondary">
-                  {h.heat}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+                {shelf.map((b, i) => (
+                  <Pressable
+                    key={b.id}
+                    onPress={() =>
+                      navigation.navigate('BookDetail', { bookId: b.id })
+                    }
+                    style={[
+                      styles.hotRow,
+                      { borderBottomColor: theme.colors.border },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.hotRank,
+                        { color: RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)] },
+                      ]}
+                    >
+                      {i + 1}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        flex: 1,
+                        fontSize: 13.5,
+                        color: theme.colors.text,
+                      }}
+                    >
+                      {b.title}
+                    </Text>
+                    <Text variant="caption" color="textSecondary">
+                      {`已读 ${b.progress}%`}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          )}
         </View>
       </ScrollView>
     </View>

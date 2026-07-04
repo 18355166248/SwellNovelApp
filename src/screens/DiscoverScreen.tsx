@@ -1,24 +1,36 @@
 import React from 'react';
 import { View, StyleSheet, ScrollView, Pressable, Platform } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon, LinearGradient } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
+import { RootStackParamList } from '../types/navigation';
+import { useAllBooks } from '../store';
 import {
   CONTINUE_CARD_GRADIENT,
   CONTINUE_CARD_GRADIENT_DIRECTION,
-  NOVEL_ACCENT,
-  NOVEL_GOLD,
 } from '../theme/readerThemes';
 
-const TOPICS = ['历史权谋', '东方玄幻', '悬疑探案', '近代群像'];
-const RANKS = [
-  { title: '观沧海', meta: '临川生 · 128.5万热度' },
-  { title: '山河故人', meta: '江左 · 96.2万热度' },
-  { title: '青蝉记', meta: '沈砚 · 81.7万热度' },
-];
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function DiscoverScreen() {
   const { theme } = useTheme();
+  const navigation = useNavigation<NavigationProp>();
+  const allBooks = useAllBooks();
+
+  // 本地阅读器无书城后端，「发现」改为呈现真实书库：按最近阅读/加入排序。
+  const recent = React.useMemo(
+    () =>
+      [...allBooks].sort(
+        (a, b) => (b.lastReadAt || b.addedAt) - (a.lastReadAt || a.addedAt),
+      ),
+    [allBooks],
+  );
+  const hero = recent[0];
+  const ranks = recent.slice(0, 6);
+  const openDetail = (bookId: string) =>
+    navigation.navigate('BookDetail', { bookId });
 
   return (
     <ScrollView
@@ -30,7 +42,9 @@ export default function DiscoverScreen() {
         <View>
           <Text style={[styles.title, { color: theme.colors.text }]}>发现</Text>
           <Text variant="caption" color="textSecondary" style={styles.subtitle}>
-            今日精选 · 适合通勤阅读
+            {allBooks.length > 0
+              ? `书库共 ${allBooks.length} 本 · 最近在读`
+              : '导入本地 TXT，开始你的书架'}
           </Text>
         </View>
         <Pressable
@@ -44,99 +58,98 @@ export default function DiscoverScreen() {
         </Pressable>
       </View>
 
-      <LinearGradient
-        colors={CONTINUE_CARD_GRADIENT}
-        {...CONTINUE_CARD_GRADIENT_DIRECTION}
-        style={styles.feature}
-      >
-        <View style={styles.featureDeco} pointerEvents="none" />
-        <Text style={styles.featureLabel}>编辑推荐</Text>
-        <Text style={styles.featureTitle}>海风、旧案与一封被抹去的信</Text>
-        <Text style={styles.featureDesc}>
-          从历史权谋到海岸悬疑，挑三本节奏稳、章节完整的长篇。
-        </Text>
-      </LinearGradient>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-          热门题材
-        </Text>
-        <View style={styles.topicGrid}>
-          {TOPICS.map((topic, index) => (
-            <Pressable
-              key={topic}
-              style={[
-                styles.topic,
-                {
-                  backgroundColor: theme.colors.surface,
-                  borderColor: theme.colors.border,
-                },
-                theme.shadows.sm,
-              ]}
-            >
-              <View
-                style={[
-                  styles.topicMark,
-                  { backgroundColor: index === 0 ? NOVEL_GOLD : NOVEL_ACCENT },
-                ]}
-              />
-              <Text style={[styles.topicText, { color: theme.colors.text }]}>
-                {topic}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-          新书榜
-        </Text>
-        <View
-          style={[
-            styles.rankList,
-            { backgroundColor: theme.colors.surface },
-            theme.shadows.sm,
-          ]}
+      {hero ? (
+        <Pressable onPress={() => openDetail(hero.id)}>
+          <LinearGradient
+            colors={CONTINUE_CARD_GRADIENT}
+            {...CONTINUE_CARD_GRADIENT_DIRECTION}
+            style={styles.feature}
+          >
+            <View style={styles.featureDeco} pointerEvents="none" />
+            <Text style={styles.featureLabel}>
+              {hero.progress > 0 ? '继续阅读' : '开始阅读'}
+            </Text>
+            <Text style={styles.featureTitle} numberOfLines={1}>
+              {hero.title}
+            </Text>
+            <Text style={styles.featureDesc} numberOfLines={2}>
+              {`${hero.author || '本地导入'} · 已读 ${hero.progress}%`}
+            </Text>
+          </LinearGradient>
+        </Pressable>
+      ) : (
+        <LinearGradient
+          colors={CONTINUE_CARD_GRADIENT}
+          {...CONTINUE_CARD_GRADIENT_DIRECTION}
+          style={styles.feature}
         >
-          {RANKS.map((item, index) => (
-            <Pressable
-              key={item.title}
-              style={[
-                styles.rankRow,
-                {
-                  borderBottomColor:
-                    index === RANKS.length - 1
-                      ? 'transparent'
-                      : theme.colors.border,
-                },
-              ]}
-            >
-              <Text
+          <View style={styles.featureDeco} pointerEvents="none" />
+          <Text style={styles.featureLabel}>书架空空</Text>
+          <Text style={styles.featureTitle}>先去书架导入一本 TXT</Text>
+          <Text style={styles.featureDesc}>
+            导入后这里会展示你最近在读与书库速览。
+          </Text>
+        </LinearGradient>
+      )}
+
+      {ranks.length > 0 && (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+            最近在读
+          </Text>
+          <View
+            style={[
+              styles.rankList,
+              { backgroundColor: theme.colors.surface },
+              theme.shadows.sm,
+            ]}
+          >
+            {ranks.map((item, index) => (
+              <Pressable
+                key={item.id}
+                onPress={() => openDetail(item.id)}
                 style={[
-                  styles.rankNo,
-                  { color: index === 0 ? theme.colors.danger : theme.colors.accent },
+                  styles.rankRow,
+                  {
+                    borderBottomColor:
+                      index === ranks.length - 1
+                        ? 'transparent'
+                        : theme.colors.border,
+                  },
                 ]}
               >
-                {index + 1}
-              </Text>
-              <View style={styles.rankInfo}>
-                <Text style={[styles.rankTitle, { color: theme.colors.text }]}>
-                  {item.title}
+                <Text
+                  style={[
+                    styles.rankNo,
+                    {
+                      color:
+                        index === 0 ? theme.colors.danger : theme.colors.accent,
+                    },
+                  ]}
+                >
+                  {index + 1}
                 </Text>
-                <Text variant="caption" color="textSecondary">
-                  {item.meta}
-                </Text>
-              </View>
-              <Icon
-                name="chevron-right"
-                size={18}
-                color={theme.colors.textSecondary}
-              />
-            </Pressable>
-          ))}
+                <View style={styles.rankInfo}>
+                  <Text
+                    style={[styles.rankTitle, { color: theme.colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {item.title}
+                  </Text>
+                  <Text variant="caption" color="textSecondary">
+                    {`${item.author || '本地导入'} · 已读 ${item.progress}%`}
+                  </Text>
+                </View>
+                <Icon
+                  name="chevron-right"
+                  size={18}
+                  color={theme.colors.textSecondary}
+                />
+              </Pressable>
+            ))}
+          </View>
         </View>
-      </View>
+      )}
     </ScrollView>
   );
 }
@@ -207,19 +220,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
-  topicGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  topic: {
-    width: '48.5%',
-    minHeight: 52,
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-  },
-  topicMark: { width: 7, height: 7, borderRadius: 4 },
-  topicText: { fontSize: 13.5, fontWeight: '500' },
   rankList: { borderRadius: 8, overflow: 'hidden' },
   rankRow: {
     minHeight: 58,
