@@ -10,13 +10,14 @@
 const path = require('path');
 const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const { execFile } = require('child_process');
 
 const appDirectory = path.resolve(__dirname);
 
 // 需要经 babel 转译的模块：应用源码 + 少数发布未编译代码的 RN 包
 const compileInclude = [
   path.resolve(appDirectory, 'index.web.js'),
-  path.resolve(appDirectory, 'App.tsx'),
+  /App(\.web)?\.tsx$/,
   path.resolve(appDirectory, 'src'),
   path.resolve(appDirectory, 'node_modules/react-native-vector-icons'),
 ];
@@ -34,7 +35,21 @@ module.exports = (_env, argv) => {
       publicPath: '/',
       clean: true,
     },
-    devtool: isProd ? 'source-map' : 'eval-cheap-module-source-map',
+    devtool: isProd ? false : 'eval-cheap-module-source-map',
+    optimization: isProd
+      ? {
+          splitChunks: {
+            chunks: 'all',
+            cacheGroups: {
+              vendor: {
+                test: /[\\/]node_modules[\\/]/,
+                name: 'vendor',
+                priority: 10,
+              },
+            },
+          },
+        }
+      : undefined,
     module: {
       rules: [
         {
@@ -94,6 +109,9 @@ module.exports = (_env, argv) => {
         'process.env.NODE_ENV': JSON.stringify(mode),
       }),
     ],
+    performance: isProd
+      ? { hints: 'warning', maxAssetSize: 400 * 1024, maxEntrypointSize: 500 * 1024 }
+      : false,
     devServer: {
       static: { directory: path.resolve(appDirectory, 'public') },
       historyApiFallback: true,
@@ -102,6 +120,55 @@ module.exports = (_env, argv) => {
       port: Number(process.env.PORT) || 8080,
       client: {
         overlay: { errors: true, warnings: false },
+      },
+      // 网络书源代理：浏览器直连书源站点会被 CORS 拦截，Web 端把请求发到
+      // 同源的 /proxy/bookshuku（见 services/http/fetchHtml.web.ts），由此转发到真实站点。
+      // 生产 Web 需由反向代理（nginx 等）提供同名前缀；开发/原生不受影响。
+      //
+      // Cloudflare 会通过 TLS 指纹（JA3）拦截 Node.js http-proxy 的请求，
+      // 即使 header 完全伪装成手机端也会返回 403 challenge。
+      // 改用 curl 子进程转发——curl 的 TLS 指纹被 Cloudflare 放行。
+      setupMiddlewares: (middlewares, _devServer) => {
+        const PROXY_PREFIX = '/proxy/bookshuku';
+        const UPSTREAM = 'http://wap.bookshuku.org';
+        const MOBILE_UA =
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
+
+        middlewares.unshift({
+          name: 'bookshuku-proxy',
+          path: PROXY_PREFIX,
+          middleware: (req, res, next) => {
+            // Express app.use(path, fn) 已将 PROXY_PREFIX 从 req.url 剥掉，
+            // 此时 req.url 就是上游路径，如 /bookinfo/160297.html
+            const target = UPSTREAM + (req.url || '/');
+
+            execFile(
+              'curl',
+              [
+                '-s', '-L', '--max-redirs', '3',
+                '-H', `User-Agent: ${MOBILE_UA}`,
+                '-H', 'Accept: text/html',
+                target,
+              ],
+              { timeout: 15000, maxBuffer: 10 * 1024 * 1024 },
+              (err, stdout, stderr) => {
+                if (err) {
+                  console.error('[bookshuku-proxy] curl error:', err.message);
+                  res.writeHead(502, { 'content-type': 'text/plain' });
+                  res.end('Proxy upstream error');
+                  return;
+                }
+                res.writeHead(200, {
+                  'content-type': 'text/html; charset=utf-8',
+                  'cache-control': 'no-store',
+                });
+                res.end(stdout);
+              },
+            );
+          },
+        });
+
+        return middlewares;
       },
     },
   };

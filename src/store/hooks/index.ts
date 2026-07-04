@@ -43,6 +43,9 @@ export {
 
 export { useOpenChapter } from './useOpenChapter';
 
+// 网络书源相关
+export { useAddOnlineBook, useEnsureChapterContent } from './useOnlineBook';
+
 // 设置相关
 export {
   useAppSettings,

@@ -23,6 +23,7 @@ import {
   useRemoveBook,
 } from '../store';
 import { confirmAction } from '../utils/confirm';
+import { AddOnlineBookModal } from '../components/AddOnlineBookModal';
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
 import { pickTxtFile } from '../utils/importBook';
@@ -87,6 +88,7 @@ export default function BookshelfScreen() {
 
   const [filter, setFilter] = React.useState<(typeof FILTERS)[number]>('全部');
   const [gridView, setGridView] = React.useState(true);
+  const [onlineOpen, setOnlineOpen] = React.useState(false);
   const [importState, setImportState] = React.useState({
     active: false,
     message: '',
@@ -178,6 +180,16 @@ export default function BookshelfScreen() {
             </Text>
           </View>
           <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => setOnlineOpen(true)}
+              style={[
+                styles.iconBtn,
+                { backgroundColor: theme.colors.surface },
+                theme.shadows.sm,
+              ]}
+            >
+              <Icon name="add-link" size={18} color={theme.colors.text} />
+            </Pressable>
             <Pressable
               onPress={() =>
                 navigation.navigate('MainTabs', { screen: 'Search' })
@@ -350,6 +362,14 @@ export default function BookshelfScreen() {
                 }}
               >
                 导入本地 TXT
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setOnlineOpen(true)}
+              style={{ marginTop: 14 }}
+            >
+              <Text style={{ color: theme.colors.accent, fontSize: 13.5 }}>
+                或 粘贴网址添加网络书籍
               </Text>
             </Pressable>
           </View>
@@ -549,6 +569,11 @@ export default function BookshelfScreen() {
           </View>
         </View>
       )}
+      <AddOnlineBookModal
+        visible={onlineOpen}
+        onClose={() => setOnlineOpen(false)}
+        onAdded={bookId => navigation.navigate('BookDetail', { bookId })}
+      />
     </View>
   );
 }

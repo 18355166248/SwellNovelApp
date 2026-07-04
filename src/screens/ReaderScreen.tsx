@@ -41,6 +41,7 @@ import {
   useReaderState,
   useBookmarks,
   useToggleBookmark,
+  useEnsureChapterContent,
 } from '../store';
 import {
   DRAWER_WIDTH,
@@ -172,6 +173,7 @@ export default function ReaderScreen() {
 
   const books = useAllBooks();
   const book = books.find(b => b.id === bookId);
+  const isOnline = !!book?.source;
   const selectBook = useSelectBook();
   const chapters = useBookChapters(bookId);
   const chapterIndex = useCurrentChapterIndex() ?? 0;
@@ -179,6 +181,12 @@ export default function ReaderScreen() {
   const openChapter = useOpenChapter();
   const updateProgress = useUpdateReadingProgress();
   const bookHistory = useCurrentBookHistory();
+  // 在线书章节正文按需抓取，用 ref 持有以免作为副作用依赖导致重复触发。
+  const ensureChapterContent = useEnsureChapterContent();
+  const ensureRef = React.useRef(ensureChapterContent);
+  React.useEffect(() => {
+    ensureRef.current = ensureChapterContent;
+  });
 
   const settings = useReaderSettings();
   const display = useReaderDisplay();
@@ -455,6 +463,39 @@ export default function ReaderScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, chapter?.id, pageIndex, pageProgressPct, status]);
 
+  // 在线书：当前章正文尚未抓取时按需拉取并缓存，复用现成的 loading / error 态。
+  // 本地书章节已带正文，直接置为 ready。effect 以 chapter.id 为键，换章会自动重跑。
+  React.useEffect(() => {
+    if (!chapter) return;
+    if (chapter.content) {
+      setStatus(prev => (prev === 'ready' ? prev : 'ready'));
+      return;
+    }
+    if (!isOnline) return;
+    let cancelled = false;
+    setStatus('loading');
+    ensureRef.current(bookId, chapterIndex)
+      .then(filled => {
+        if (cancelled) return;
+        if (filled && filled.content) {
+          setStatus('ready');
+          // 预取下一章，翻章更顺（失败静默）。
+          if (chapterIndex + 1 < chapters.length) {
+            ensureRef.current(bookId, chapterIndex + 1).catch(() => {});
+          }
+        } else {
+          setStatus('error');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId, chapter?.id, chapterIndex, isOnline]);
+
   const goToChapter = React.useCallback(
     (idx: number) => {
       if (idx < 0 || idx >= total) return;
@@ -465,10 +506,13 @@ export default function ReaderScreen() {
       if (transitionRef.current) clearTimeout(transitionRef.current);
       transitionRef.current = setTimeout(() => {
         openChapter(bookId, idx);
-        setStatus(chapters[idx]?.content ? 'ready' : 'error');
+        // 在线书正文可能尚未抓取：保持 loading 交给上面的 effect 拉取，别误报 error。
+        if (chapters[idx]?.content) setStatus('ready');
+        else if (isOnline) setStatus('loading');
+        else setStatus('error');
       }, 260);
     },
-    [bookId, chapters, openChapter, setToolbarVisible, total],
+    [bookId, chapters, isOnline, openChapter, setToolbarVisible, total],
   );
 
   // 把横向翻页容器定位到指定页。同章翻页平滑滚动，换章/续读补位用即时定位。
