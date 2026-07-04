@@ -14,6 +14,7 @@ import {
   chaptersAtom,
   readerSettingsAtom,
   readingHistoryAtom,
+  readingStatsAtom,
   searchHistoryAtom,
 } from './atoms';
 import { loadLibrarySnapshot, saveLibraryMeta } from '../utils/libraryStorage';
@@ -27,6 +28,7 @@ export function LibraryPersistence() {
   const [bookmarks, setBookmarks] = useAtom(bookmarksAtom);
   const [readerSettings, setReaderSettings] = useAtom(readerSettingsAtom);
   const [searchHistory, setSearchHistory] = useAtom(searchHistoryAtom);
+  const [readingStats, setReadingStats] = useAtom(readingStatsAtom);
   const hydratedRef = React.useRef(false);
   const metaTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,6 +53,9 @@ export function LibraryPersistence() {
         if (snapshot.searchHistory) {
           setSearchHistory(snapshot.searchHistory);
         }
+        if (snapshot.readingStats) {
+          setReadingStats(snapshot.readingStats);
+        }
       })
       .catch(error => {
         console.warn('[LibraryPersistence] load failed', error);
@@ -73,6 +78,7 @@ export function LibraryPersistence() {
     setChapters,
     setReaderSettings,
     setReadingHistory,
+    setReadingStats,
     setSearchHistory,
   ]);
 
@@ -95,11 +101,19 @@ export function LibraryPersistence() {
         bookmarks,
         readerSettings,
         searchHistory,
+        readingStats,
       }).catch(error => {
         console.warn('[LibraryPersistence] save meta failed', error);
       });
     }, SAVE_DEBOUNCE_MS);
-  }, [bookmarks, books, readerSettings, readingHistory, searchHistory]);
+  }, [
+    bookmarks,
+    books,
+    readerSettings,
+    readingHistory,
+    readingStats,
+    searchHistory,
+  ]);
 
   return null;
 }

@@ -33,3 +33,6 @@ export {
   appSettingsAtom,
   isDarkModeAtom,
 } from './settingsAtoms';
+
+// 阅读统计
+export { readingStatsAtom } from './statsAtoms';

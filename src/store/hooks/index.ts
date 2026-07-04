@@ -47,6 +47,9 @@ export { useOpenChapter } from './useOpenChapter';
 // 网络书源相关
 export { useAddOnlineBook, useEnsureChapterContent } from './useOnlineBook';
 
+// 阅读统计
+export { useAddReadingTime, useReadingStats } from './useStats';
+
 // 设置相关
 export {
   useAppSettings,

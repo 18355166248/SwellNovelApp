@@ -10,6 +10,7 @@
 
 import { Book, Bookmark, Chapter, ReadingHistory } from '../store/types/book';
 import { ReaderSettings } from '../store/types/reader';
+import { ReadingStats, emptyReadingStats } from '../store/types/stats';
 
 export interface LibrarySnapshot {
   version: 1;
@@ -20,9 +21,10 @@ export interface LibrarySnapshot {
   bookmarks: Record<string, Bookmark[]>;
   readerSettings?: ReaderSettings;
   searchHistory?: string[];
+  readingStats?: ReadingStats;
 }
 
-/** 轻量元数据：书籍、阅读进度、书签、阅读设置。 */
+/** 轻量元数据：书籍、阅读进度、书签、阅读设置、阅读统计。 */
 export interface LibraryMeta {
   version: 1;
   readerSettingsVersion?: 2;
@@ -31,6 +33,7 @@ export interface LibraryMeta {
   bookmarks: Record<string, Bookmark[]>;
   readerSettings?: ReaderSettings;
   searchHistory?: string[];
+  readingStats?: ReadingStats;
 }
 
 const LEGACY_STATE_KEY = 'swell-novel-library-state-v1';
@@ -127,6 +130,7 @@ const metaToSnapshot = (meta: Partial<LibraryMeta>): LibrarySnapshot => ({
     meta.readerSettingsVersion,
   ),
   searchHistory: meta.searchHistory ?? [],
+  readingStats: meta.readingStats ?? emptyReadingStats,
 });
 
 // 把整库章节 Map 拆存为按书条目（用于迁移旧的单文件正文）。

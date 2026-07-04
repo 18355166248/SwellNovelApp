@@ -41,6 +41,7 @@ import {
   useBookmarks,
   useToggleBookmark,
   useEnsureChapterContent,
+  useAddReadingTime,
 } from '../store';
 import {
   DRAWER_WIDTH,
@@ -60,6 +61,7 @@ import {
   ReaderPageData,
 } from '../utils/paginate';
 import { getCharWidthMeasurer } from '../utils/charWidth';
+import { startReadingSession } from '../utils/readingSession';
 import {
   isFullscreenSupported,
   isFullscreen as fsIsFullscreen,
@@ -209,6 +211,18 @@ export default function ReaderScreen() {
   // FullscreenController 持久化并跨屏保持，这里只订阅实际状态以同步按钮图标。
   const [isFs, setIsFs] = React.useState(fsIsFullscreen());
   React.useEffect(() => subscribeFullscreen(setIsFs), []);
+
+  // 阅读时长统计：阅读器挂载期间按前台时间累计到今天。用 ref 持有累加器避免作为依赖；
+  // 计时由全局单例 startReadingSession 负责，避免导航过渡中出现两个实例时重复计时。
+  const addReadingTime = useAddReadingTime();
+  const addReadingTimeRef = React.useRef(addReadingTime);
+  React.useEffect(() => {
+    addReadingTimeRef.current = addReadingTime;
+  });
+  React.useEffect(
+    () => startReadingSession(ms => addReadingTimeRef.current(ms)),
+    [],
+  );
 
   const bookmarks = useBookmarks(bookId);
   const toggleBookmark = useToggleBookmark();

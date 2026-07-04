@@ -8,6 +8,7 @@ import {
   useAllBooks,
   useReaderSettings,
   useSetFullscreenPref,
+  useReadingStats,
 } from '../store';
 import { SERIF_FONT } from '../theme/fonts';
 import { NOVEL_GOLD } from '../theme/readerThemes';
@@ -28,6 +29,12 @@ export default function MeScreen() {
 
   const finished = books.filter(b => b.progress >= 100).length;
   const imported = books.filter(b => b.fileFormat === 'txt').length;
+  const stats = useReadingStats();
+  // 累计时长：不足 1 小时按分钟展示，超过则按「X.X 小时」。
+  const totalLabel =
+    stats.totalMinutes >= 60
+      ? `${(stats.totalMinutes / 60).toFixed(1)}h`
+      : `${stats.totalMinutes}m`;
 
   return (
     <ScrollView
@@ -105,6 +112,33 @@ export default function MeScreen() {
           </Text>
           <Text variant="caption" color="textSecondary">
             本地书
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.stats}>
+        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
+          <Text style={[styles.statValue, { color: theme.colors.accent }]}>
+            {stats.streak}
+          </Text>
+          <Text variant="caption" color="textSecondary">
+            连续天数
+          </Text>
+        </View>
+        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
+          <Text style={[styles.statValue, { color: theme.colors.text }]}>
+            {stats.todayMinutes}m
+          </Text>
+          <Text variant="caption" color="textSecondary">
+            今日阅读
+          </Text>
+        </View>
+        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
+          <Text style={[styles.statValue, { color: theme.colors.text }]}>
+            {totalLabel}
+          </Text>
+          <Text variant="caption" color="textSecondary">
+            累计时长
           </Text>
         </View>
       </View>
