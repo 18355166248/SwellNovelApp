@@ -151,9 +151,10 @@ export default function ReaderScreen() {
   const { width: viewportWidth, height: viewportHeight } =
     useWindowDimensions();
   const insets = useSafeAreaInsets();
-  // 顶/底工具栏与进度提示按安全区避让刘海/灵动岛与底部手势条；web 保持原固定值。
+  // 顶/底工具栏与进度提示按安全区避让刘海/灵动岛与底部手势条。
+  // web 无状态栏/刘海，顶栏 44 的状态栏预留会变成大片空白，收到 12。
   const topBarPad =
-    Platform.OS === 'web' ? 44 : Math.max(insets.top, 12) + 8;
+    Platform.OS === 'web' ? 12 : Math.max(insets.top, 12) + 8;
   const bottomBarPad =
     Platform.OS === 'web' ? 22 : Math.max(insets.bottom, 8) + 14;
   const progressHintBottom =
