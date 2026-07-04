@@ -13,7 +13,8 @@ import { SERIF_FONT } from '../theme/fonts';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
-import { useBookSearch } from '../store';
+import { useAtom } from 'jotai';
+import { useBookSearch, searchHistoryAtom } from '../store';
 import { paletteForId, COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -31,13 +32,14 @@ export default function SearchScreen() {
   const { theme } = useTheme();
   const navigation = useNavigation<NavigationProp>();
   const { query, setQuery, results } = useBookSearch();
-  const [history, setHistory] = React.useState<string[]>([]);
+  const [history, setHistory] = useAtom(searchHistoryAtom);
 
   const commitSearch = (q: string) => {
     const trimmed = q.trim();
     setQuery(trimmed);
-    if (trimmed && !history.includes(trimmed)) {
-      setHistory(prev => [trimmed, ...prev].slice(0, 8));
+    if (trimmed) {
+      // 去重后置顶，最多保留 8 条；持久化到本地。
+      setHistory(prev => [trimmed, ...prev.filter(h => h !== trimmed)].slice(0, 8));
     }
   };
 

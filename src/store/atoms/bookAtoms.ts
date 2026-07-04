@@ -50,6 +50,9 @@ export const currentBookAtom = atom<Book | null>((get) => {
 // 书籍搜索关键词
 export const bookSearchQueryAtom = atom<string>('');
 
+// 搜索历史（最近在前，持久化）
+export const searchHistoryAtom = atom<string[]>([]);
+
 // 筛选后的书籍列表
 export const filteredBooksAtom = atom<Book[]>((get) => {
   const books = get(booksAtom);

@@ -14,6 +14,7 @@ export {
   currentBookHistoryAtom,
   currentBookAtom,
   bookSearchQueryAtom,
+  searchHistoryAtom,
   filteredBooksAtom,
 } from './bookAtoms';
 

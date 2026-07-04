@@ -14,6 +14,7 @@ import {
   chaptersAtom,
   readerSettingsAtom,
   readingHistoryAtom,
+  searchHistoryAtom,
 } from './atoms';
 import { loadLibrarySnapshot, saveLibraryMeta } from '../utils/libraryStorage';
 
@@ -25,6 +26,7 @@ export function LibraryPersistence() {
   const [readingHistory, setReadingHistory] = useAtom(readingHistoryAtom);
   const [bookmarks, setBookmarks] = useAtom(bookmarksAtom);
   const [readerSettings, setReaderSettings] = useAtom(readerSettingsAtom);
+  const [searchHistory, setSearchHistory] = useAtom(searchHistoryAtom);
   const hydratedRef = React.useRef(false);
   const metaTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -45,6 +47,9 @@ export function LibraryPersistence() {
         setBookmarks(snapshot.bookmarks);
         if (snapshot.readerSettings) {
           setReaderSettings(snapshot.readerSettings);
+        }
+        if (snapshot.searchHistory) {
+          setSearchHistory(snapshot.searchHistory);
         }
       })
       .catch(error => {
@@ -68,6 +73,7 @@ export function LibraryPersistence() {
     setChapters,
     setReaderSettings,
     setReadingHistory,
+    setSearchHistory,
   ]);
 
   // 轻量 meta：书籍、阅读进度、书签、设置高频变更，防抖后单独落盘。
@@ -88,11 +94,12 @@ export function LibraryPersistence() {
         readingHistory,
         bookmarks,
         readerSettings,
+        searchHistory,
       }).catch(error => {
         console.warn('[LibraryPersistence] save meta failed', error);
       });
     }, SAVE_DEBOUNCE_MS);
-  }, [bookmarks, books, readerSettings, readingHistory]);
+  }, [bookmarks, books, readerSettings, readingHistory, searchHistory]);
 
   return null;
 }

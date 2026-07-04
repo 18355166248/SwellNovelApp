@@ -19,6 +19,7 @@ export interface LibrarySnapshot {
   readingHistory: Record<string, ReadingHistory>;
   bookmarks: Record<string, Bookmark[]>;
   readerSettings?: ReaderSettings;
+  searchHistory?: string[];
 }
 
 /** 轻量元数据：书籍、阅读进度、书签、阅读设置。 */
@@ -29,6 +30,7 @@ export interface LibraryMeta {
   readingHistory: Record<string, ReadingHistory>;
   bookmarks: Record<string, Bookmark[]>;
   readerSettings?: ReaderSettings;
+  searchHistory?: string[];
 }
 
 const LEGACY_STATE_KEY = 'swell-novel-library-state-v1';
@@ -124,6 +126,7 @@ const metaToSnapshot = (meta: Partial<LibraryMeta>): LibrarySnapshot => ({
     meta.readerSettings,
     meta.readerSettingsVersion,
   ),
+  searchHistory: meta.searchHistory ?? [],
 });
 
 // 把整库章节 Map 拆存为按书条目（用于迁移旧的单文件正文）。
@@ -178,6 +181,7 @@ export const loadLibrarySnapshot =
         legacy.readerSettings,
         legacy.readerSettingsVersion,
       ),
+      searchHistory: legacy.searchHistory ?? [],
     };
     await saveLibraryMeta(meta);
     window.localStorage.removeItem(LEGACY_STATE_KEY);
