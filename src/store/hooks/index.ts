@@ -29,6 +29,7 @@ export {
   useSetLineHeightIndex,
   useSetPageMode,
   useSetBrightness,
+  useSetFullscreenPref,
   useReaderState,
   useUpdateReaderState,
   useToggleToolbar,

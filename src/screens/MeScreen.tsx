@@ -2,15 +2,29 @@ import React from 'react';
 import { View, StyleSheet, ScrollView, Switch, Platform } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon } from '../components';
-import { useAppSettings, useToggleNotifications, useAllBooks } from '../store';
+import {
+  useAppSettings,
+  useToggleNotifications,
+  useAllBooks,
+  useReaderSettings,
+  useSetFullscreenPref,
+} from '../store';
 import { SERIF_FONT } from '../theme/fonts';
 import { NOVEL_GOLD } from '../theme/readerThemes';
+import { isFullscreenSupported, setFullscreen } from '../utils/fullscreen';
 
 export default function MeScreen() {
   const { theme, isDarkMode, toggleTheme } = useTheme();
   const appSettings = useAppSettings();
   const toggleNotifications = useToggleNotifications();
   const books = useAllBooks();
+  const readerSettings = useReaderSettings();
+  const setFullscreenPref = useSetFullscreenPref();
+  // 记住偏好；Web 端切换开关本身是用户手势，可在此直接进入/退出全屏（进入全屏必须在手势内）。
+  const onToggleFullscreen = (next: boolean) => {
+    setFullscreenPref(next);
+    setFullscreen(next);
+  };
 
   const finished = books.filter(b => b.progress >= 100).length;
   const imported = books.filter(b => b.fileFormat === 'txt').length;
@@ -124,6 +138,31 @@ export default function MeScreen() {
             />
           }
         />
+        {isFullscreenSupported && (
+          <SettingRow
+            icon="fullscreen"
+            title="全屏阅读"
+            desc={
+              Platform.OS === 'web'
+                ? '隐藏浏览器边栏，沉浸阅读（记住设置）'
+                : '隐藏状态栏，沉浸阅读（记住设置）'
+            }
+            borderColor="transparent"
+            textColor={theme.colors.text}
+            subColor={theme.colors.textSecondary}
+            right={
+              <Switch
+                value={!!readerSettings.fullscreen}
+                onValueChange={onToggleFullscreen}
+                trackColor={{
+                  false: theme.colors.border,
+                  true: theme.colors.accentDark,
+                }}
+                thumbColor="#FFFFFF"
+              />
+            }
+          />
+        )}
       </View>
 
       <View

@@ -7,7 +7,6 @@ import {
   FlatList,
   Pressable,
   TextInput,
-  Alert,
   Platform,
   Animated,
   Easing,
@@ -61,6 +60,12 @@ import {
   ReaderPageData,
 } from '../utils/paginate';
 import { getCharWidthMeasurer } from '../utils/charWidth';
+import {
+  isFullscreenSupported,
+  isFullscreen as fsIsFullscreen,
+  toggleFullscreen,
+  subscribeFullscreen,
+} from '../utils/fullscreen';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
@@ -199,6 +204,11 @@ export default function ReaderScreen() {
   const { isToolbarVisible } = useReaderState();
   const toggleToolbar = useToggleToolbar();
   const setToolbarVisible = useSetToolbarVisible();
+
+  // 全屏：Web 用浏览器 Fullscreen API，原生用沉浸式隐藏状态栏。偏好由全局
+  // FullscreenController 持久化并跨屏保持，这里只订阅实际状态以同步按钮图标。
+  const [isFs, setIsFs] = React.useState(fsIsFullscreen());
+  React.useEffect(() => subscribeFullscreen(setIsFs), []);
 
   const bookmarks = useBookmarks(bookId);
   const toggleBookmark = useToggleBookmark();
@@ -1135,12 +1145,17 @@ export default function ReaderScreen() {
             {book.title}
           </Text>
         </View>
-        <Pressable
-          onPress={() => Alert.alert('更多', '举报 / 分享功能开发中')}
-          style={styles.barBtn}
-        >
-          <Icon name="more-horiz" size={20} color={display.chrome.ink} />
-        </Pressable>
+        {isFullscreenSupported ? (
+          <Pressable onPress={() => toggleFullscreen()} style={styles.barBtn}>
+            <Icon
+              name={isFs ? 'fullscreen-exit' : 'fullscreen'}
+              size={22}
+              color={display.chrome.ink}
+            />
+          </Pressable>
+        ) : (
+          <View style={styles.barBtn} />
+        )}
       </Animated.View>
 
       <Animated.View

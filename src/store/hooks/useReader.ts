@@ -94,6 +94,18 @@ export const useSetBrightness = () => {
 };
 
 /**
+ * 设置全屏/沉浸偏好。持久化到阅读设置，由全局 FullscreenController 应用与恢复。
+ */
+export const useSetFullscreenPref = () => {
+  const setSettings = useSetAtom(readerSettingsAtom);
+  return (fullscreen: boolean) => {
+    setSettings((prev) =>
+      prev.fullscreen === fullscreen ? prev : { ...prev, fullscreen },
+    );
+  };
+};
+
+/**
  * 获取阅读器状态
  */
 export const useReaderState = () => {

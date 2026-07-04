@@ -12,9 +12,12 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { LibraryPersistence } from './src/store/LibraryPersistence';
+import { FullscreenController } from './src/components/FullscreenController';
+import { useReaderSettings } from './src/store';
 
 function AppContent() {
   const { isDarkMode } = useTheme();
+  const { fullscreen } = useReaderSettings();
 
   return (
     <>
@@ -22,8 +25,10 @@ function AppContent() {
         barStyle={isDarkMode ? 'light-content' : 'dark-content'}
         backgroundColor="transparent"
         translucent
+        hidden={!!fullscreen}
       />
       <LibraryPersistence />
+      <FullscreenController />
       <AppNavigator />
     </>
   );
