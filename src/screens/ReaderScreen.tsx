@@ -149,22 +149,14 @@ export default function ReaderScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ReaderRoute>();
   const winDims = useWindowDimensions();
-  // Web 大屏 #root 被 CSS 约束为 420px，useWindowDimensions 返回的是窗口宽度，
-  // 分页断行必须用容器实际宽度，否则文字会溢出被裁剪。
-  const [rootWidth, setRootWidth] = React.useState<number | null>(null);
-  React.useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const root = document.getElementById('root');
-    if (!root) return;
-    const measure = () => setRootWidth(root.clientWidth);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(root);
-    return () => ro.disconnect();
-  }, []);
-  const viewportWidth =
-    Platform.OS === 'web' && rootWidth != null ? rootWidth : winDims.width;
-  const viewportHeight = winDims.height;
+  // 分页断行必须用阅读器容器的真实宽高：web 大屏下 app 可能被约束得比窗口窄，
+  // useWindowDimensions 返回的是窗口尺寸，按它分页会让每行过宽、右侧溢出被裁切。
+  // 用根 View 的 onLayout 量实际尺寸（原生即全屏，web 即受约束的容器）。
+  const [layout, setLayout] = React.useState<{ w: number; h: number } | null>(
+    null,
+  );
+  const viewportWidth = layout?.w ?? winDims.width;
+  const viewportHeight = layout?.h ?? winDims.height;
   const insets = useSafeAreaInsets();
   // 顶/底工具栏与进度提示按安全区避让刘海/灵动岛与底部手势条。
   // web 无状态栏/刘海，顶栏 44 的状态栏预留会变成大片空白，收到 12。
@@ -839,7 +831,17 @@ export default function ReaderScreen() {
   if (!book) return null;
 
   return (
-    <View style={[styles.container, { backgroundColor: display.theme.bg }]}>
+    <View
+      style={[styles.container, { backgroundColor: display.theme.bg }]}
+      onLayout={e => {
+        const { width, height } = e.nativeEvent.layout;
+        setLayout(prev =>
+          prev && prev.w === width && prev.h === height
+            ? prev
+            : { w: width, h: height },
+        );
+      }}
+    >
       {status === 'ready' &&
         (settings.pageMode === 'page' ? (
           <>
