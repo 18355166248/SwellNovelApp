@@ -88,3 +88,113 @@ export const useEnsureChapterContent = () => {
     return filled;
   };
 };
+
+export interface CacheProgress {
+  done: number;
+  total: number;
+}
+
+/**
+ * 缓存整本在线书：串行抓取所有缺正文的章节并落盘，供离线阅读。已缓存的跳过。
+ * onProgress 回报进度；单章失败不中断，最终返回实际完成数（done < total 即部分失败）。
+ * 串行是刻意的：并发抓取容易触发书源限流/封禁。
+ */
+export const useCacheWholeBook = () => {
+  const store = useStore();
+
+  return async (
+    bookId: string,
+    onProgress?: (p: CacheProgress) => void,
+  ): Promise<CacheProgress> => {
+    const book = store.get(booksAtom).find(b => b.id === bookId);
+    const source = book?.source ? getSourceById(book.source.name) : null;
+    const initial = store.get(chaptersAtom)[bookId];
+    if (!source || !initial) return { done: 0, total: 0 };
+
+    const total = initial.length;
+    let done = initial.filter(c => c.content).length;
+    onProgress?.({ done, total });
+
+    // 每抓够若干章就落一次盘：整本 700+ 章耗时较长，中途关闭/断网也能保住已抓进度。
+    const FLUSH_EVERY = 20;
+    let sinceFlush = 0;
+    const flush = async () => {
+      const list = store.get(chaptersAtom)[bookId];
+      if (list) {
+        await saveBookChapters(bookId, list).catch(error => {
+          console.warn('[useCacheWholeBook] save failed', error);
+        });
+      }
+      sinceFlush = 0;
+    };
+
+    for (let i = 0; i < total; i++) {
+      const ch = store.get(chaptersAtom)[bookId]?.[i];
+      if (!ch || ch.content || !ch.sourceUrl) continue;
+      try {
+        const content = await source.parseChapterContent(ch.sourceUrl);
+        const filled: Chapter = { ...ch, content, wordCount: content.length };
+        store.set(chaptersAtom, prev => {
+          const list = prev[bookId];
+          if (!list) return prev;
+          return { ...prev, [bookId]: list.map(c => (c.id === filled.id ? filled : c)) };
+        });
+        done += 1;
+        sinceFlush += 1;
+        onProgress?.({ done, total });
+        if (sinceFlush >= FLUSH_EVERY) await flush();
+      } catch {
+        // 单章失败静默跳过，继续抓下一章。
+      }
+    }
+
+    if (sinceFlush > 0) await flush();
+    return { done, total };
+  };
+};
+
+/**
+ * 检查在线书更新：重拉目录，把超出现有数量的新章节追加进来（正文留空，阅读时懒加载）。
+ * 返回新增章节数。假定书源目录按顺序追加新章（连载站点常态）；不处理中途插入/重排。
+ */
+export const useCheckBookUpdate = () => {
+  const store = useStore();
+
+  return async (bookId: string): Promise<number> => {
+    const book = store.get(booksAtom).find(b => b.id === bookId);
+    const source = book?.source ? getSourceById(book.source.name) : null;
+    if (!source || !book?.source) return 0;
+
+    const metas = await source.parseCatalog({
+      sourceBookId: '',
+      title: book.title,
+      author: book.author,
+      catalogUrl: book.source.bookUrl,
+    });
+    const existing = store.get(chaptersAtom)[bookId] ?? [];
+    if (metas.length <= existing.length) return 0;
+
+    const added: Chapter[] = metas.slice(existing.length).map((m, i) => ({
+      id: `${bookId}-${existing.length + i}`,
+      bookId,
+      title: m.title,
+      content: '',
+      order: existing.length + i,
+      sourceUrl: m.url,
+    }));
+    const next = [...existing, ...added];
+
+    store.set(chaptersAtom, prev => ({ ...prev, [bookId]: next }));
+    store.set(booksAtom, prev =>
+      prev.map(b =>
+        b.id === bookId
+          ? { ...b, totalChapters: next.length, updatedAt: Date.now() }
+          : b,
+      ),
+    );
+    await saveBookChapters(bookId, next).catch(error => {
+      console.warn('[useCheckBookUpdate] save failed', error);
+    });
+    return added.length;
+  };
+};

@@ -18,6 +18,8 @@ import {
   useBookChapters,
   useOpenChapter,
   useRemoveBook,
+  useCacheWholeBook,
+  useCheckBookUpdate,
 } from '../store';
 import { resumeChapterIndex } from '../utils/chapters';
 import { confirmAction } from '../utils/confirm';
@@ -60,8 +62,52 @@ export default function BookDetailScreen() {
   const chapters = useBookChapters(bookId);
   const openChapter = useOpenChapter();
   const removeBook = useRemoveBook();
+  const cacheWholeBook = useCacheWholeBook();
+  const checkBookUpdate = useCheckBookUpdate();
   const palette = paletteForId(bookId);
   const bottomActionOffset = Math.max(insets.bottom, 34) + 18;
+
+  // 在线书专属：检查更新 / 缓存全本的进行态与结果提示。
+  const [checking, setChecking] = React.useState(false);
+  const [caching, setCaching] = React.useState({ active: false, done: 0, total: 0 });
+  const [onlineMsg, setOnlineMsg] = React.useState('');
+  const cachedCount = chapters.filter(c => c.content).length;
+  const cachePct =
+    caching.total > 0 ? Math.round((caching.done / caching.total) * 100) : 0;
+
+  const onCheckUpdate = async () => {
+    if (checking || caching.active) return;
+    setChecking(true);
+    setOnlineMsg('');
+    try {
+      const n = await checkBookUpdate(bookId);
+      setOnlineMsg(n > 0 ? `发现 ${n} 个新章节` : '已是最新章节');
+    } catch {
+      setOnlineMsg('检查更新失败，请检查网络后重试');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const onCacheAll = async () => {
+    if (caching.active || checking) return;
+    setCaching({ active: true, done: cachedCount, total: chapters.length });
+    setOnlineMsg('');
+    try {
+      const res = await cacheWholeBook(bookId, p =>
+        setCaching({ active: true, done: p.done, total: p.total }),
+      );
+      setOnlineMsg(
+        res.done >= res.total
+          ? `已缓存全部 ${res.total} 章，可离线阅读`
+          : `已缓存 ${res.done}/${res.total} 章（部分失败，可重试）`,
+      );
+    } catch {
+      setOnlineMsg('缓存失败，请检查网络后重试');
+    } finally {
+      setCaching(prev => ({ ...prev, active: false }));
+    }
+  };
 
   if (!book) {
     return (
@@ -243,6 +289,59 @@ export default function BookDetailScreen() {
             </View>
             <Text style={{ color: theme.colors.accent, fontSize: 12 }}>
               最新
+            </Text>
+          </View>
+        )}
+
+        {book.source && (
+          <View style={styles.section}>
+            <View style={styles.onlineRow}>
+              <Pressable
+                onPress={onCheckUpdate}
+                disabled={checking || caching.active}
+                style={[
+                  styles.onlineBtn,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border,
+                    opacity: checking || caching.active ? 0.5 : 1,
+                  },
+                ]}
+              >
+                <Icon name="refresh" size={16} color={theme.colors.accentDark} />
+                <Text style={{ fontSize: 13, color: theme.colors.text }}>
+                  {checking ? '检查中…' : '检查更新'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={onCacheAll}
+                disabled={caching.active || checking}
+                style={[
+                  styles.onlineBtn,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border,
+                    opacity: caching.active || checking ? 0.7 : 1,
+                  },
+                ]}
+              >
+                <Icon
+                  name="download"
+                  size={16}
+                  color={theme.colors.accentDark}
+                />
+                <Text style={{ fontSize: 13, color: theme.colors.text }}>
+                  {caching.active ? `缓存中 ${cachePct}%` : '缓存全本'}
+                </Text>
+              </Pressable>
+            </View>
+            <Text
+              variant="caption"
+              color="textSecondary"
+              style={{ marginTop: 8 }}
+            >
+              {onlineMsg ||
+                `已缓存 ${cachedCount}/${chapters.length} 章，可离线阅读`}
             </Text>
           </View>
         )}
@@ -486,6 +585,17 @@ const styles = StyleSheet.create({
     gap: 11,
   },
   dot: { width: 7, height: 7, borderRadius: 4 },
+  onlineRow: { flexDirection: 'row', gap: 10 },
+  onlineBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
   tocHeader: {
     flexDirection: 'row',
     alignItems: 'center',

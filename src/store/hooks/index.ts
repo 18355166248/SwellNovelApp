@@ -45,7 +45,12 @@ export {
 export { useOpenChapter } from './useOpenChapter';
 
 // 网络书源相关
-export { useAddOnlineBook, useEnsureChapterContent } from './useOnlineBook';
+export {
+  useAddOnlineBook,
+  useEnsureChapterContent,
+  useCacheWholeBook,
+  useCheckBookUpdate,
+} from './useOnlineBook';
 
 // 阅读统计
 export { useAddReadingTime, useReadingStats } from './useStats';
