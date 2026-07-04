@@ -20,7 +20,9 @@ import {
   useSetChapters,
   useOpenChapter,
   useBookChapters,
+  useRemoveBook,
 } from '../store';
+import { confirmAction } from '../utils/confirm';
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
 import { pickTxtFile } from '../utils/importBook';
@@ -70,6 +72,18 @@ export default function BookshelfScreen() {
   const addBook = useAddBook();
   const setChapters = useSetChapters();
   const openChapter = useOpenChapter();
+  const removeBook = useRemoveBook();
+
+  const confirmDeleteBook = React.useCallback(
+    (b: Book) => {
+      confirmAction(
+        '删除书籍',
+        `确定删除《${b.title}》？将同时移除章节与阅读进度，此操作不可撤销。`,
+        () => removeBook(b.id),
+      );
+    },
+    [removeBook],
+  );
 
   const [filter, setFilter] = React.useState<(typeof FILTERS)[number]>('全部');
   const [gridView, setGridView] = React.useState(true);
@@ -356,6 +370,8 @@ export default function BookshelfScreen() {
                   onPress={() =>
                     navigation.navigate('BookDetail', { bookId: b.id })
                   }
+                  onLongPress={() => confirmDeleteBook(b)}
+                  delayLongPress={350}
                 >
                   <LinearGradient
                     colors={[palette.from, palette.to]}
@@ -448,6 +464,8 @@ export default function BookshelfScreen() {
                 onPress={() =>
                   navigation.navigate('BookDetail', { bookId: b.id })
                 }
+                onLongPress={() => confirmDeleteBook(b)}
+                delayLongPress={350}
               >
                 <LinearGradient
                   colors={[paletteForId(b.id).from, paletteForId(b.id).to]}

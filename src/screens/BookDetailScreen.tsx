@@ -13,8 +13,14 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
-import { useAllBooks, useBookChapters, useOpenChapter } from '../store';
+import {
+  useAllBooks,
+  useBookChapters,
+  useOpenChapter,
+  useRemoveBook,
+} from '../store';
 import { resumeChapterIndex } from '../utils/chapters';
+import { confirmAction } from '../utils/confirm';
 import {
   DETAIL_HERO_GRADIENT,
   paletteForId,
@@ -53,6 +59,7 @@ export default function BookDetailScreen() {
   const book = books.find(b => b.id === bookId);
   const chapters = useBookChapters(bookId);
   const openChapter = useOpenChapter();
+  const removeBook = useRemoveBook();
   const palette = paletteForId(bookId);
   const bottomActionOffset = Math.max(insets.bottom, 34) + 18;
 
@@ -108,7 +115,19 @@ export default function BookDetailScreen() {
               >
                 <Icon name="arrow-back" size={20} color="#fff" />
               </Pressable>
-              <Pressable style={styles.heroBtn}>
+              <Pressable
+                style={styles.heroBtn}
+                onPress={() =>
+                  confirmAction(
+                    '删除书籍',
+                    `确定删除《${book.title}》？将同时移除章节与阅读进度，此操作不可撤销。`,
+                    () => {
+                      removeBook(book.id);
+                      navigation.goBack();
+                    },
+                  )
+                }
+              >
                 <Icon name="more-horiz" size={20} color="#fff" />
               </Pressable>
             </View>
