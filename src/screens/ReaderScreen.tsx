@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Brightness from '../native/Brightness';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { Icon } from '../components';
@@ -34,6 +35,7 @@ import {
   useAdjustFontSize,
   useSetLineHeightIndex,
   useSetPageMode,
+  useSetBrightness,
   useToggleToolbar,
   useSetToolbarVisible,
   useReaderState,
@@ -174,6 +176,7 @@ export default function ReaderScreen() {
   const { inc: incFont, dec: decFont } = useAdjustFontSize();
   const setLineHeightIndex = useSetLineHeightIndex();
   const setPageMode = useSetPageMode();
+  const setBrightness = useSetBrightness();
 
   const { isToolbarVisible } = useReaderState();
   const toggleToolbar = useToggleToolbar();
@@ -190,6 +193,42 @@ export default function ReaderScreen() {
   const sheetTransition = useOverlayTransition(settingsOpen);
   const drawerTransition = useOverlayTransition(drawerOpen);
   const [sheetHeight, setSheetHeight] = React.useState(420);
+
+  // 亮度（仅原生）：进入阅读器记住系统原始亮度、套用已保存的阅读亮度，离开时恢复。
+  const [brightnessLevel, setBrightnessLevel] = React.useState(
+    settings.brightness ?? 0.5,
+  );
+  const brightnessTrackWRef = React.useRef(0);
+  React.useEffect(() => {
+    if (!Brightness.isSupported) return;
+    let active = true;
+    let original: number | null = null;
+    Brightness.getBrightness().then(sys => {
+      if (!active) return;
+      original = sys;
+      if (settings.brightness != null) {
+        Brightness.setBrightness(settings.brightness);
+        setBrightnessLevel(settings.brightness);
+      } else if (sys != null) {
+        setBrightnessLevel(sys);
+      }
+    });
+    return () => {
+      active = false;
+      if (original != null) Brightness.setBrightness(original);
+    };
+    // 仅在进入/离开阅读器时执行一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const applyBrightness = React.useCallback(
+    (v: number) => {
+      const clamped = Math.max(0, Math.min(1, v));
+      setBrightnessLevel(clamped);
+      Brightness.setBrightness(clamped);
+      setBrightness(clamped);
+    },
+    [setBrightness],
+  );
 
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
@@ -1127,27 +1166,54 @@ export default function ReaderScreen() {
               style={[styles.grabber, { backgroundColor: display.chrome.hair }]}
             />
 
-            <View style={styles.brightnessRow}>
-              <Icon
-                name="brightness-6"
-                size={18}
-                color={display.chrome.sheetSub}
-              />
-              <View
-                style={[
-                  styles.sliderTrack,
-                  { backgroundColor: display.chrome.hair, height: 5 },
-                ]}
-              >
+            {Brightness.isSupported && (
+              <View style={styles.brightnessRow}>
+                <Icon
+                  name="brightness-6"
+                  size={18}
+                  color={display.chrome.sheetSub}
+                />
                 <View
                   style={[
-                    styles.sliderFill,
-                    { width: '55%', backgroundColor: NOVEL_GOLD },
+                    styles.sliderTrack,
+                    { backgroundColor: display.chrome.hair, height: 5 },
                   ]}
-                />
-                <View style={[styles.sliderThumb, { left: '55%' }]} />
+                  onLayout={e => {
+                    brightnessTrackWRef.current = e.nativeEvent.layout.width;
+                  }}
+                  onStartShouldSetResponder={() => true}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderGrant={e =>
+                    applyBrightness(
+                      e.nativeEvent.locationX /
+                        (brightnessTrackWRef.current || 1),
+                    )
+                  }
+                  onResponderMove={e =>
+                    applyBrightness(
+                      e.nativeEvent.locationX /
+                        (brightnessTrackWRef.current || 1),
+                    )
+                  }
+                >
+                  <View
+                    style={[
+                      styles.sliderFill,
+                      {
+                        width: `${Math.round(brightnessLevel * 100)}%`,
+                        backgroundColor: NOVEL_GOLD,
+                      },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      styles.sliderThumb,
+                      { left: `${Math.round(brightnessLevel * 100)}%` },
+                    ]}
+                  />
+                </View>
               </View>
-            </View>
+            )}
 
             <View style={styles.fontRow}>
               <Text

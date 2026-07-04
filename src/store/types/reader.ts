@@ -9,6 +9,7 @@ export interface ReaderSettings {
   fontSizeIndex: number; // 字号档位，索引对应 theme/readerThemes.ts 中的 FONT_SIZES
   lineHeightIndex: number; // 行间距档位：紧凑/适中/宽松
   pageMode: 'scroll' | 'page'; // 翻页方式：上下滚动 / 左右翻页
+  brightness?: number; // 阅读亮度覆盖 0..1；undefined 表示跟随系统（不覆盖）。仅原生生效。
 }
 
 export interface ReaderState {

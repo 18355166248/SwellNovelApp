@@ -81,6 +81,19 @@ export const useSetPageMode = () => {
 };
 
 /**
+ * 设置阅读亮度（0..1）。仅原生端实际改屏幕亮度，值会持久化用于下次续用。
+ */
+export const useSetBrightness = () => {
+  const setSettings = useSetAtom(readerSettingsAtom);
+  return (brightness: number) => {
+    setSettings((prev) => ({
+      ...prev,
+      brightness: Math.max(0, Math.min(1, brightness)),
+    }));
+  };
+};
+
+/**
  * 获取阅读器状态
  */
 export const useReaderState = () => {
