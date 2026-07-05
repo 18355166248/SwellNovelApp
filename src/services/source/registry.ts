@@ -4,8 +4,9 @@
 
 import { BookSource } from './types';
 import { bookshukuSource } from './bookshuku';
+import { mingzwSource } from './mingzw';
 
-export const SOURCES: BookSource[] = [bookshukuSource];
+export const SOURCES: BookSource[] = [bookshukuSource, mingzwSource];
 
 /** 按 URL 找到对应书源；无匹配返回 null。 */
 export function resolveSource(url: string): BookSource | null {

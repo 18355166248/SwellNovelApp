@@ -29,22 +29,22 @@ app.use(compression());
 // Cloudflare 通过 JA3/TLS 指纹拦截 Node.js http 模块的请求（即使 header
 // 完全伪装成手机端也返回 403 challenge）。curl 的 TLS 指纹被放行，因此用
 // 子进程调用 curl 来转发上游请求。
-const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i];
+const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i, /(^|\.)mingzw\.net$/i];
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 ' +
   'Mobile/15E148 Safari/604.1';
 
 app.use('/proxy', (req, res) => {
-  // Express app.use('/proxy', fn) 已剥掉前缀，req.url 形如 /<host>/<上游路径>
-  const m = /^\/([^/]+)(\/.*)?$/.exec(req.url || '');
-  const host = m && m[1].toLowerCase();
+  // Express app.use('/proxy', fn) 已剥掉前缀，req.url 形如 /<scheme>/<host>/<上游路径>
+  const m = /^\/(https?)\/([^/]+)(\/.*)?$/.exec(req.url || '');
+  const host = m && m[2].toLowerCase();
   if (!host || !ALLOWED_HOSTS.some(re => re.test(host))) {
     res.status(host ? 403 : 400).type('text/plain')
       .send(host ? 'Host not allowed' : 'Bad proxy path');
     return;
   }
-  const target = `http://${host}${m[2] || '/'}`;
+  const target = `${m[1]}://${host}${m[3] || '/'}`;
 
   execFile(
     'curl',

@@ -59,6 +59,14 @@ export const bookshukuSource: BookSource = {
     return /(^|\.)bookshuku\.org/i.test(url);
   },
 
+  extractId(url: string) {
+    return extractBookId(url);
+  },
+
+  detailUrl(id: string) {
+    return `${ORIGIN}/bookinfo/${id}.html`;
+  },
+
   async parseBookInfo(url: string): Promise<ParsedBookInfo> {
     const id = extractBookId(url);
     if (!id) throw new Error('无法从链接中识别书籍编号');

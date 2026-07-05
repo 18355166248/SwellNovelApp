@@ -90,7 +90,7 @@ export function AddOnlineBookModal({ visible, onClose, onAdded }: Props) {
           </View>
 
           <Text variant="caption" color="textSecondary" style={styles.hint}>
-            粘贴书源书籍页链接（目前支持 bookshuku.org）
+            粘贴书源书籍页链接（支持 bookshuku.org、mingzw.net）
           </Text>
 
           <TextInput

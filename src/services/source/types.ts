@@ -29,6 +29,10 @@ export interface BookSource {
   host: string; // 主机名，例如 'wap.bookshuku.org'
   /** 判断某个 URL 是否属于本书源。 */
   matchUrl(url: string): boolean;
+  /** 从任意站内 URL（详情/目录/正文页）提取站内书籍 id；取不到返回 undefined。 */
+  extractId(url: string): string | undefined;
+  /** 由站内书籍 id 拼出详情页 URL（供搜索结果规范化到详情页）。 */
+  detailUrl(id: string): string;
   /** 解析详情页（也兼容传入目录页/正文页 URL，只要能取到书籍 id）。 */
   parseBookInfo(url: string): Promise<ParsedBookInfo>;
   /** 解析完整目录，返回按顺序排列的章节列表。 */

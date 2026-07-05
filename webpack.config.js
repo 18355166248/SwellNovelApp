@@ -131,7 +131,7 @@ module.exports = (_env, argv) => {
       // 改用 curl 子进程转发——curl 的 TLS 指纹被 Cloudflare 放行。
       setupMiddlewares: (middlewares, _devServer) => {
         // 白名单：只代理已登记的书源域名，避免变成开放代理被滥用。新增书源在此加一条。
-        const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i];
+        const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i, /(^|\.)mingzw\.net$/i];
         const MOBILE_UA =
           'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
 
@@ -139,25 +139,26 @@ module.exports = (_env, argv) => {
           name: 'source-proxy',
           path: '/proxy',
           middleware: (req, res, next) => {
-            // path:'/proxy' 已被剥掉，此时 req.url 形如 /<host>/<上游路径>
-            const m = /^\/([^/]+)(\/.*)?$/.exec(req.url || '');
-            const host = m && m[1].toLowerCase();
+            // path:'/proxy' 已被剥掉，此时 req.url 形如 /<scheme>/<host>/<上游路径>
+            const m = /^\/(https?)\/([^/]+)(\/.*)?$/.exec(req.url || '');
+            const host = m && m[2].toLowerCase();
             if (!host || !ALLOWED_HOSTS.some(re => re.test(host))) {
               res.writeHead(host ? 403 : 400, { 'content-type': 'text/plain' });
               res.end(host ? 'Host not allowed' : 'Bad proxy path');
               return;
             }
-            const target = `http://${host}${m[2] || '/'}`;
+            const target = `${m[1]}://${host}${m[3] || '/'}`;
 
             execFile(
               'curl',
               [
                 '-s', '-L', '--max-redirs', '3',
+                '--connect-timeout', '10', '--max-time', '15',
                 '-H', `User-Agent: ${MOBILE_UA}`,
                 '-H', 'Accept: text/html',
                 target,
               ],
-              { timeout: 15000, maxBuffer: 10 * 1024 * 1024 },
+              { timeout: 20000, maxBuffer: 10 * 1024 * 1024 },
               (err, stdout, stderr) => {
                 if (err) {
                   console.error('[source-proxy] curl error:', err.message);

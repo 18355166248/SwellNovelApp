@@ -116,14 +116,14 @@ function filterToSources(hits: RawHit[]): NovelSearchResult[] {
   for (const hit of hits) {
     const source = resolveSource(hit.url);
     if (!source) continue;
-    // 站内书号：把章节页/详情页统一规范化到详情页，并按书号去重。
-    const idm = /\/(?:bookinfo|read|down|txt)\/(\d+)/.exec(hit.url);
-    if (!idm) continue;
-    const key = `${source.id}:${idm[1]}`;
+    // 站内书号由各书源自行提取，把章节页/详情页统一规范化到详情页，并按书号去重。
+    const id = source.extractId(hit.url);
+    if (!id) continue;
+    const key = `${source.id}:${id}`;
     if (seen.has(key)) continue;
     seen.add(key);
     results.push({
-      url: `http://${source.host}/bookinfo/${idm[1]}.html`,
+      url: source.detailUrl(id),
       title: decodeEntities(stripTags(hit.title)).trim() || '未知书名',
       sourceName: source.name,
     });

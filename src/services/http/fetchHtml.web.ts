@@ -9,11 +9,12 @@
 
 import { decodeBytes } from '../../utils/decodeText';
 
-/** 把 http://host/path 改写为 /proxy/host/path；相对/无主机的 URL 原样返回。 */
+/** 把 scheme://host/path 改写为 /proxy/scheme/host/path；相对/无主机的 URL 原样返回。
+ *  保留原始 scheme：https 站点直连 https，避免服务端 curl 走 http→https 重定向时出错。 */
 function toProxyUrl(url: string): string {
-  const m = /^https?:\/\/([^/]+)(\/.*)?$/i.exec(url);
+  const m = /^(https?):\/\/([^/]+)(\/.*)?$/i.exec(url);
   if (!m) return url;
-  return `/proxy/${m[1].toLowerCase()}${m[2] || '/'}`;
+  return `/proxy/${m[1].toLowerCase()}/${m[2].toLowerCase()}${m[3] || '/'}`;
 }
 
 // 单次请求超时：代理/书源卡住时不至于让阅读器永久停在“加载中”。
