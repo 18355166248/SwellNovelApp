@@ -1466,7 +1466,7 @@ export default function ReaderScreen() {
                         if (remote) ensureFont(f).catch(() => {});
                       }}
                       style={[
-                        styles.optBtn,
+                        styles.fontBtn,
                         {
                           backgroundColor: on ? NOVEL_ACCENT : 'transparent',
                           borderColor: on ? NOVEL_ACCENT : display.chrome.hair,
@@ -1474,6 +1474,7 @@ export default function ReaderScreen() {
                       ]}
                     >
                       <Text
+                        numberOfLines={1}
                         style={{
                           color: on ? '#fff' : display.chrome.sheetInk,
                           fontSize: 12,
@@ -2014,6 +2015,16 @@ const styles = StyleSheet.create({
   optBtn: {
     flex: 1,
     height: 36,
+    borderWidth: 1,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // 字体卡片：按标签宽度自适应（不 flex 拉伸），配合容器 flexWrap 自然换多行，
+  // 让“霞鹜文楷 Lite”等长标签单行显示。
+  fontBtn: {
+    height: 34,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderRadius: 7,
     alignItems: 'center',
