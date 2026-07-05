@@ -9,6 +9,10 @@ import { addOnlineBook } from '../../utils/addOnlineBook';
 import { getSourceById } from '../../services/source/registry';
 import { saveBookChapters } from '../../utils/libraryStorage';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
+import {
+  fetchRenderedContent,
+  cleanRenderedText,
+} from '../../services/browserFetch/bridge';
 
 // 懒加载正文后按书防抖落盘：整册 JSON 重写较重，短时间多次翻章合并成一次写入。
 const CACHE_DEBOUNCE_MS = 1000;
@@ -114,10 +118,19 @@ export const useEnsureChapterContent = () => {
     if (chapter.content) return chapter;
 
     const book = store.get(booksAtom).find(b => b.id === bookId);
-    const source = book?.source ? getSourceById(book.source.name) : null;
-    if (!source || !chapter.sourceUrl) return chapter; // 非在线书或缺 URL：按空正文处理
+    if (!book?.source || !chapter.sourceUrl) return chapter; // 非在线书或缺 URL：按空正文处理
 
-    const content = await source.parseChapterContent(chapter.sourceUrl);
+    // 注册书源（bookshuku/mingzw…）走 fetch 解析；浏览器识别源（source 为站点 host、
+    // 无注册书源）走隐藏 WebView 取渲染后正文。
+    const source = getSourceById(book.source.name);
+    let content: string;
+    if (source) {
+      content = await source.parseChapterContent(chapter.sourceUrl);
+    } else {
+      const raw = await fetchRenderedContent(chapter.sourceUrl);
+      content = cleanRenderedText(raw, chapter.title);
+    }
+
     const filled: Chapter = {
       ...chapter,
       content,

@@ -16,6 +16,7 @@ import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { LibraryPersistence } from './src/store/LibraryPersistence';
 import { FullscreenController } from './src/components/FullscreenController';
+import { WebViewFetcher } from './src/components/WebViewFetcher';
 
 function AppContent() {
   const { isDarkMode } = useTheme();
@@ -29,6 +30,7 @@ function AppContent() {
       />
       <LibraryPersistence />
       <FullscreenController />
+      <WebViewFetcher />
       <AppNavigator />
     </>
   );
