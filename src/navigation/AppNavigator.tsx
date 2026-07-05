@@ -16,6 +16,7 @@ import SearchScreen from '../screens/SearchScreen';
 import MeScreen from '../screens/MeScreen';
 import ReaderScreen from '../screens/ReaderScreen';
 import BookDetailScreen from '../screens/BookDetailScreen';
+import InAppBrowserScreen from '../screens/InAppBrowserScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -133,6 +134,7 @@ export default function AppNavigator() {
           <Stack.Screen name="MainTabs" component={MainTabs} />
           <Stack.Screen name="BookDetail" component={BookDetailScreen} />
           <Stack.Screen name="Reader" component={ReaderScreen} />
+          <Stack.Screen name="InAppBrowser" component={InAppBrowserScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

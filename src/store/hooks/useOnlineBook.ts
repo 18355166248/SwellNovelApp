@@ -8,6 +8,7 @@ import { Book, Chapter } from '../types/book';
 import { addOnlineBook } from '../../utils/addOnlineBook';
 import { getSourceById } from '../../services/source/registry';
 import { saveBookChapters } from '../../utils/libraryStorage';
+import type { RecognizedBook } from '../../services/recognize/recognizer';
 
 // 懒加载正文后按书防抖落盘：整册 JSON 重写较重，短时间多次翻章合并成一次写入。
 const CACHE_DEBOUNCE_MS = 1000;
@@ -45,6 +46,55 @@ export const useAddOnlineBook = () => {
     // 目录（标题 + sourceUrl，无正文）立即落盘，重启后无需重新解析。
     saveBookChapters(book.id, chapters).catch(error => {
       console.warn('[useAddOnlineBook] save catalog failed', error);
+    });
+    return book;
+  };
+};
+
+/**
+ * 把内置浏览器识别到的页面加入书架（章节仅存标题+URL，正文留待后续在浏览器会话内抓取）。
+ * 稳定 id：来源主机 + 详情页 URL 里的数字（取不到则退回 URL 本身），同页重复识别可复用。
+ * 已存在同 id 的书直接复用，避免重复入库。
+ */
+export const useAddRecognizedBook = () => {
+  const store = useStore();
+
+  return async (data: RecognizedBook): Promise<Book> => {
+    const idFromUrl =
+      (data.url.match(/(\d{2,})/g) || []).join('_') ||
+      data.url.replace(/[^a-z0-9]+/gi, '').slice(-16) ||
+      String(Date.now());
+    const bookId = `browser:${data.host}:${idFromUrl}`;
+
+    const existing = store.get(booksAtom).find(b => b.id === bookId);
+    if (existing) return existing;
+
+    const now = Date.now();
+    const book: Book = {
+      id: bookId,
+      title: data.title?.trim() || '未命名书籍',
+      author: data.author?.trim() || '佚名',
+      cover: data.cover || undefined,
+      addedAt: now,
+      updatedAt: now,
+      progress: 0,
+      totalChapters: data.chapters.length,
+      // 浏览器识别源：host 作为来源名（无注册 BookSource），bookUrl 存详情页。
+      source: { name: data.host, bookUrl: data.url },
+    };
+    const chapters: Chapter[] = data.chapters.map((c, i) => ({
+      id: `${bookId}-${i}`,
+      bookId,
+      title: c.title,
+      content: '',
+      order: i,
+      sourceUrl: c.url,
+    }));
+
+    store.set(booksAtom, prev => [...prev, book]);
+    store.set(chaptersAtom, prev => ({ ...prev, [book.id]: chapters }));
+    saveBookChapters(book.id, chapters).catch(error => {
+      console.warn('[useAddRecognizedBook] save catalog failed', error);
     });
     return book;
   };

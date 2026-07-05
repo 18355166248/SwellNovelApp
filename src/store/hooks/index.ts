@@ -50,6 +50,7 @@ export {
   useEnsureChapterContent,
   useCacheWholeBook,
   useCheckBookUpdate,
+  useAddRecognizedBook,
 } from './useOnlineBook';
 
 // 阅读统计

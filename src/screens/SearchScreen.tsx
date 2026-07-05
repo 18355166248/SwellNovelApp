@@ -150,6 +150,25 @@ export default function SearchScreen() {
           </Pressable>
         </View>
 
+        <Pressable
+          onPress={() => navigation.navigate('InAppBrowser')}
+          style={[
+            styles.browserEntry,
+            { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
+          ]}
+        >
+          <Icon name="public" size={18} color={theme.colors.accent} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13.5, color: theme.colors.text }}>
+              内置浏览器搜书
+            </Text>
+            <Text variant="caption" color="textSecondary" style={{ marginTop: 1 }}>
+              浏览任意小说站，自动识别书籍加入书架
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
+        </Pressable>
+
         {query.trim().length > 0 && (
           <View style={styles.section}>
             <Text
@@ -466,6 +485,17 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
+  },
+  browserEntry: {
+    marginHorizontal: 20,
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
   },
   hotRow: {
     flexDirection: 'row',
