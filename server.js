@@ -23,19 +23,28 @@ const DIST = path.resolve(__dirname, 'dist');
 app.use(compression());
 
 // ── 书源代理 ────────────────────────────────────────────────
+// 通用前缀 /proxy/<host>/<path>：浏览器直连书源被 CORS 拦截，前端改写到此转发。
+// 只代理白名单内的书源域名，避免变成开放代理被滥用。新增书源在此加一条域名规则。
+//
 // Cloudflare 通过 JA3/TLS 指纹拦截 Node.js http 模块的请求（即使 header
 // 完全伪装成手机端也返回 403 challenge）。curl 的 TLS 指纹被放行，因此用
 // 子进程调用 curl 来转发上游请求。
-const PROXY_PREFIX = '/proxy/bookshuku';
-const UPSTREAM = 'http://wap.bookshuku.org';
+const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i];
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 ' +
   'Mobile/15E148 Safari/604.1';
 
-app.use(PROXY_PREFIX, (req, res) => {
-  // Express app.use(path, fn) 已剥掉 PROXY_PREFIX，req.url 即上游路径
-  const target = UPSTREAM + (req.url || '/');
+app.use('/proxy', (req, res) => {
+  // Express app.use('/proxy', fn) 已剥掉前缀，req.url 形如 /<host>/<上游路径>
+  const m = /^\/([^/]+)(\/.*)?$/.exec(req.url || '');
+  const host = m && m[1].toLowerCase();
+  if (!host || !ALLOWED_HOSTS.some(re => re.test(host))) {
+    res.status(host ? 403 : 400).type('text/plain')
+      .send(host ? 'Host not allowed' : 'Bad proxy path');
+    return;
+  }
+  const target = `http://${host}${m[2] || '/'}`;
 
   execFile(
     'curl',
@@ -50,7 +59,7 @@ app.use(PROXY_PREFIX, (req, res) => {
     { timeout: 20000, maxBuffer: 10 * 1024 * 1024 },
     (err, stdout) => {
       if (err) {
-        console.error('[bookshuku-proxy]', err.message);
+        console.error('[source-proxy]', err.message);
         res.status(502).type('text/plain').send('Proxy upstream error');
         return;
       }

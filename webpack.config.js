@@ -121,26 +121,33 @@ module.exports = (_env, argv) => {
       client: {
         overlay: { errors: true, warnings: false },
       },
-      // 网络书源代理：浏览器直连书源站点会被 CORS 拦截，Web 端把请求发到
-      // 同源的 /proxy/bookshuku（见 services/http/fetchHtml.web.ts），由此转发到真实站点。
-      // 生产 Web 需由反向代理（nginx 等）提供同名前缀；开发/原生不受影响。
+      // 网络书源代理：浏览器直连书源站点会被 CORS 拦截，Web 端把请求发到同源的
+      // /proxy/<host>/<path>（见 services/http/fetchHtml.web.ts），由此转发到真实站点。
+      // 通用前缀，新增书源无需改中间件，只需把域名加进 ALLOWED_HOSTS 白名单。
+      // 生产 Web 需由反向代理（nginx / deploy/server.js）提供同名前缀。
       //
       // Cloudflare 会通过 TLS 指纹（JA3）拦截 Node.js http-proxy 的请求，
       // 即使 header 完全伪装成手机端也会返回 403 challenge。
       // 改用 curl 子进程转发——curl 的 TLS 指纹被 Cloudflare 放行。
       setupMiddlewares: (middlewares, _devServer) => {
-        const PROXY_PREFIX = '/proxy/bookshuku';
-        const UPSTREAM = 'http://wap.bookshuku.org';
+        // 白名单：只代理已登记的书源域名，避免变成开放代理被滥用。新增书源在此加一条。
+        const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i];
         const MOBILE_UA =
           'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
 
         middlewares.unshift({
-          name: 'bookshuku-proxy',
-          path: PROXY_PREFIX,
+          name: 'source-proxy',
+          path: '/proxy',
           middleware: (req, res, next) => {
-            // Express app.use(path, fn) 已将 PROXY_PREFIX 从 req.url 剥掉，
-            // 此时 req.url 就是上游路径，如 /bookinfo/160297.html
-            const target = UPSTREAM + (req.url || '/');
+            // path:'/proxy' 已被剥掉，此时 req.url 形如 /<host>/<上游路径>
+            const m = /^\/([^/]+)(\/.*)?$/.exec(req.url || '');
+            const host = m && m[1].toLowerCase();
+            if (!host || !ALLOWED_HOSTS.some(re => re.test(host))) {
+              res.writeHead(host ? 403 : 400, { 'content-type': 'text/plain' });
+              res.end(host ? 'Host not allowed' : 'Bad proxy path');
+              return;
+            }
+            const target = `http://${host}${m[2] || '/'}`;
 
             execFile(
               'curl',
@@ -153,7 +160,7 @@ module.exports = (_env, argv) => {
               { timeout: 15000, maxBuffer: 10 * 1024 * 1024 },
               (err, stdout, stderr) => {
                 if (err) {
-                  console.error('[bookshuku-proxy] curl error:', err.message);
+                  console.error('[source-proxy] curl error:', err.message);
                   res.writeHead(502, { 'content-type': 'text/plain' });
                   res.end('Proxy upstream error');
                   return;
