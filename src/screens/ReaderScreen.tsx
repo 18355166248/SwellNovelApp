@@ -33,6 +33,7 @@ import {
   useSetReaderTheme,
   useAdjustFontSize,
   useSetLineHeightIndex,
+  useSetReaderFont,
   useSetPageMode,
   useSetBrightness,
   useToggleToolbar,
@@ -51,6 +52,13 @@ import {
   ReaderThemeKey,
 } from '../theme/readerThemes';
 import { SERIF_FONT } from '../theme/fonts';
+import { useReaderFontFamily } from '../services/fonts/useReaderFontFamily';
+import { FONTS, DEFAULT_FONT_KEY } from '../theme/fontCatalog';
+import {
+  ensureFont,
+  isFontReady,
+  isFontLoading,
+} from '../services/fonts/fontManager';
 import {
   breakLines,
   buildPages,
@@ -197,9 +205,12 @@ export default function ReaderScreen() {
 
   const settings = useReaderSettings();
   const display = useReaderDisplay();
+  // 阅读正文字体：随设置切换，远程字体就绪后自动重渲染；用于正文与分页测量。
+  const bodyFont = useReaderFontFamily();
   const setReaderTheme = useSetReaderTheme();
   const { inc: incFont, dec: decFont } = useAdjustFontSize();
   const setLineHeightIndex = useSetLineHeightIndex();
+  const setReaderFont = useSetReaderFont();
   const setPageMode = useSetPageMode();
   const setBrightness = useSetBrightness();
 
@@ -396,7 +407,7 @@ export default function ReaderScreen() {
   ]);
   const pages = React.useMemo<ReaderPageData[]>(() => {
     const chapterId = chapter?.id || bookId;
-    const measure = getCharWidthMeasurer(SERIF_FONT, display.fontSize);
+    const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
     const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}`;
     // measureTick 是原生 onTextLayout 写入真实测量缓存后的失效版本，促使同一 cacheKey 重新取缓存。
     const lines =
@@ -423,6 +434,7 @@ export default function ReaderScreen() {
     pageMetrics.paraGap,
     paragraphs,
     measureTick,
+    bodyFont,
   ]);
 
   React.useEffect(() => {
@@ -756,7 +768,7 @@ export default function ReaderScreen() {
           {item.blocks.length === 0 ? (
             <Text
               style={{
-                fontFamily: SERIF_FONT,
+                fontFamily: bodyFont,
                 fontSize: display.fontSize,
                 lineHeight: display.fontSize * display.lineHeight,
                 color: display.theme.text,
@@ -772,7 +784,7 @@ export default function ReaderScreen() {
                 key={block.startOffset}
                 selectable
                 style={{
-                  fontFamily: SERIF_FONT,
+                  fontFamily: bodyFont,
                   fontSize: display.fontSize,
                   lineHeight: display.fontSize * display.lineHeight,
                   color: display.theme.text,
@@ -795,6 +807,7 @@ export default function ReaderScreen() {
     [
       book?.author,
       book?.title,
+      bodyFont,
       chapter?.title,
       display.fontSize,
       display.lineHeight,
@@ -884,7 +897,7 @@ export default function ReaderScreen() {
           key={i}
           selectable
           style={{
-            fontFamily: SERIF_FONT,
+            fontFamily: bodyFont,
             fontSize: display.fontSize,
             lineHeight: display.fontSize * display.lineHeight,
             marginBottom: display.paraGap,
@@ -896,6 +909,7 @@ export default function ReaderScreen() {
         </Text>
       )),
     [
+      bodyFont,
       display.fontSize,
       display.lineHeight,
       display.paraGap,
@@ -1421,6 +1435,52 @@ export default function ReaderScreen() {
                         }}
                       >
                         {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={{ marginBottom: 18 }}>
+              <Text
+                style={{
+                  color: display.chrome.sheetSub,
+                  fontSize: 12,
+                  marginBottom: 7,
+                }}
+              >
+                字体
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                {FONTS.map(f => {
+                  const on = (settings.fontKey || DEFAULT_FONT_KEY) === f.key;
+                  const remote = f.kind === 'remote';
+                  const busy = remote && isFontLoading(f.key);
+                  const needDl = remote && !isFontReady(f.key) && !busy;
+                  return (
+                    <Pressable
+                      key={f.key}
+                      onPress={() => {
+                        setReaderFont(f.key);
+                        if (remote) ensureFont(f).catch(() => {});
+                      }}
+                      style={[
+                        styles.optBtn,
+                        {
+                          backgroundColor: on ? NOVEL_ACCENT : 'transparent',
+                          borderColor: on ? NOVEL_ACCENT : display.chrome.hair,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={{
+                          color: on ? '#fff' : display.chrome.sheetInk,
+                          fontSize: 12,
+                        }}
+                      >
+                        {f.label}
+                        {busy ? ' …' : needDl ? ' ↓' : ''}
                       </Text>
                     </Pressable>
                   );

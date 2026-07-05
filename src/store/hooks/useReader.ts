@@ -80,6 +80,14 @@ export const useSetPageMode = () => {
   };
 };
 
+/** 设置阅读字体档位（对应 theme/fontCatalog.ts）。持久化，远程字体的下载由 UI 触发。 */
+export const useSetReaderFont = () => {
+  const setSettings = useSetAtom(readerSettingsAtom);
+  return (fontKey: string) => {
+    setSettings((prev) => (prev.fontKey === fontKey ? prev : { ...prev, fontKey }));
+  };
+};
+
 /**
  * 设置阅读亮度（0..1）。仅原生端实际改屏幕亮度，值会持久化用于下次续用。
  */

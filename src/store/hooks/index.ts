@@ -28,6 +28,7 @@ export {
   useAdjustFontSize,
   useSetLineHeightIndex,
   useSetPageMode,
+  useSetReaderFont,
   useSetBrightness,
   useSetFullscreenPref,
   useReaderState,
