@@ -71,6 +71,9 @@ export default function BookDetailScreen() {
   const [checking, setChecking] = React.useState(false);
   const [caching, setCaching] = React.useState({ active: false, done: 0, total: 0 });
   const [onlineMsg, setOnlineMsg] = React.useState('');
+  // 缓存全本可中断：离开页面或点“停止”时 abort，避免后台继续抓取。
+  const cacheAbortRef = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => cacheAbortRef.current?.abort(), []);
   const cachedCount = chapters.filter(c => c.content).length;
   const cachePct =
     caching.total > 0 ? Math.round((caching.done / caching.total) * 100) : 0;
@@ -90,21 +93,33 @@ export default function BookDetailScreen() {
   };
 
   const onCacheAll = async () => {
-    if (caching.active || checking) return;
+    // 已在缓存时，再次点击即停止。
+    if (caching.active) {
+      cacheAbortRef.current?.abort();
+      return;
+    }
+    if (checking) return;
+    const controller = new AbortController();
+    cacheAbortRef.current = controller;
     setCaching({ active: true, done: cachedCount, total: chapters.length });
     setOnlineMsg('');
     try {
-      const res = await cacheWholeBook(bookId, p =>
-        setCaching({ active: true, done: p.done, total: p.total }),
+      const res = await cacheWholeBook(
+        bookId,
+        p => setCaching({ active: true, done: p.done, total: p.total }),
+        controller.signal,
       );
       setOnlineMsg(
-        res.done >= res.total
+        res.cancelled
+          ? `已停止，缓存了 ${res.done}/${res.total} 章`
+          : res.done >= res.total
           ? `已缓存全部 ${res.total} 章，可离线阅读`
           : `已缓存 ${res.done}/${res.total} 章（部分失败，可重试）`,
       );
     } catch {
       setOnlineMsg('缓存失败，请检查网络后重试');
     } finally {
+      cacheAbortRef.current = null;
       setCaching(prev => ({ ...prev, active: false }));
     }
   };
@@ -315,23 +330,23 @@ export default function BookDetailScreen() {
               </Pressable>
               <Pressable
                 onPress={onCacheAll}
-                disabled={caching.active || checking}
+                disabled={checking}
                 style={[
                   styles.onlineBtn,
                   {
                     backgroundColor: theme.colors.surface,
                     borderColor: theme.colors.border,
-                    opacity: caching.active || checking ? 0.7 : 1,
+                    opacity: checking ? 0.5 : 1,
                   },
                 ]}
               >
                 <Icon
-                  name="download"
+                  name={caching.active ? 'stop' : 'download'}
                   size={16}
                   color={theme.colors.accentDark}
                 />
                 <Text style={{ fontSize: 13, color: theme.colors.text }}>
-                  {caching.active ? `缓存中 ${cachePct}%` : '缓存全本'}
+                  {caching.active ? `缓存中 ${cachePct}% · 停止` : '缓存全本'}
                 </Text>
               </Pressable>
             </View>

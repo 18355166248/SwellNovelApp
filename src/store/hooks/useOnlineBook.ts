@@ -92,12 +92,16 @@ export const useEnsureChapterContent = () => {
 export interface CacheProgress {
   done: number;
   total: number;
+  cancelled?: boolean; // 被 signal 中断时为 true（done < total 属正常停止而非失败）
 }
 
 /**
  * 缓存整本在线书：串行抓取所有缺正文的章节并落盘，供离线阅读。已缓存的跳过。
  * onProgress 回报进度；单章失败不中断，最终返回实际完成数（done < total 即部分失败）。
  * 串行是刻意的：并发抓取容易触发书源限流/封禁。
+ *
+ * 传入 signal 可中断：每章开始前检查，已中断则落盘当前进度后返回 { cancelled: true }。
+ * 用于用户离开详情页或主动停止，避免后台继续消耗流量/请求配额。
  */
 export const useCacheWholeBook = () => {
   const store = useStore();
@@ -105,6 +109,7 @@ export const useCacheWholeBook = () => {
   return async (
     bookId: string,
     onProgress?: (p: CacheProgress) => void,
+    signal?: AbortSignal,
   ): Promise<CacheProgress> => {
     const book = store.get(booksAtom).find(b => b.id === bookId);
     const source = book?.source ? getSourceById(book.source.name) : null;
@@ -129,6 +134,10 @@ export const useCacheWholeBook = () => {
     };
 
     for (let i = 0; i < total; i++) {
+      if (signal?.aborted) {
+        if (sinceFlush > 0) await flush();
+        return { done, total, cancelled: true };
+      }
       const ch = store.get(chaptersAtom)[bookId]?.[i];
       if (!ch || ch.content || !ch.sourceUrl) continue;
       try {
