@@ -22,9 +22,18 @@ function toProxyUrl(url: string): string {
   return `${prefix}${m[2] || '/'}`;
 }
 
+// 单次请求超时：代理/书源卡住时不至于让阅读器永久停在“加载中”。
+const TIMEOUT_MS = 15000;
+
 export async function fetchHtml(url: string): Promise<string> {
-  const res = await fetch(toProxyUrl(url));
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const buf = await res.arrayBuffer();
-  return decodeBytes(new Uint8Array(buf));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(toProxyUrl(url), { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    return decodeBytes(new Uint8Array(buf));
+  } finally {
+    clearTimeout(timer);
+  }
 }
