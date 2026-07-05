@@ -770,6 +770,7 @@ export default function ReaderScreen() {
             item.blocks.map((block, i) => (
               <Text
                 key={block.startOffset}
+                selectable
                 style={{
                   fontFamily: SERIF_FONT,
                   fontSize: display.fontSize,
@@ -881,6 +882,7 @@ export default function ReaderScreen() {
       paragraphs.map((p, i) => (
         <Text
           key={i}
+          selectable
           style={{
             fontFamily: SERIF_FONT,
             fontSize: display.fontSize,
