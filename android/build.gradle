@@ -8,6 +8,9 @@ buildscript {
         kotlinVersion = "2.1.20"
     }
     repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
         google()
         mavenCentral()
     }
@@ -19,3 +22,11 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+// 阿里云镜像优先，加速所有子项目的依赖下载（国内网络，绕开 GFW）
+allprojects {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+    }
+}

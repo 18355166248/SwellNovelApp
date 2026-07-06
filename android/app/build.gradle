@@ -72,6 +72,24 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+// 版本号单一来源：versionName 取自 package.json 的 version（用 `npm version patch/minor/major` 递增即可）。
+// versionCode 由 versionName 语义化推导：major*10000 + minor*100 + patch，保证随版本递增。
+import groovy.json.JsonSlurper
+def computeVersionName() {
+    def pkg = new JsonSlurper().parseText(file("../../package.json").text)
+    return pkg.version
+}
+def computeVersionCode() {
+    def parts = computeVersionName().tokenize('.-')
+    def major = (parts[0] ?: '0').toInteger()
+    def minor = (parts.size() > 1 ? parts[1] : '0').toInteger()
+    def patch = (parts.size() > 2 ? parts[2] : '0').toInteger()
+    return major * 10000 + minor * 100 + patch
+}
+
+// 每个 ABI 的编号（用于 ABI 拆分时给各架构 APK 生成唯一 versionCode，供上架区分）
+ext.abiCodes = ["armeabi-v7a": 1, "x86": 2, "arm64-v8a": 3, "x86_64": 4]
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -82,8 +100,19 @@ android {
         applicationId "com.swellnovalapp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode computeVersionCode()
+        versionName computeVersionName()
+    }
+
+    // 按 CPU 架构拆分 APK：各架构包体积显著减小（arm64 约 20+MB，vs 通用包 56MB）。
+    // 同时保留一个 universal 包作为兜底。可用 -PenableAbiSplit=false 关闭。
+    splits {
+        abi {
+            enable project.hasProperty('enableAbiSplit') ? project.enableAbiSplit.toBoolean() : true
+            reset()
+            include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            universalApk true
+        }
     }
     signingConfigs {
         debug {
@@ -114,6 +143,17 @@ android {
             }
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+    }
+}
+
+// 为每个 ABI 拆分包生成唯一 versionCode：base*1000 + abi 编号；universal 包保持 base。
+android.applicationVariants.all { variant ->
+    variant.outputs.each { output ->
+        def abiName = output.getFilter(com.android.build.OutputFile.ABI)
+        def abiCode = project.ext.abiCodes.get(abiName)
+        if (abiCode != null) {
+            output.versionCodeOverride = variant.versionCode * 1000 + abiCode
         }
     }
 }

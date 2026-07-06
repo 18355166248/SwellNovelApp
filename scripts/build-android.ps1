@@ -52,9 +52,9 @@ if (Test-Path $gradleExe) {
     $useLocalGradle = $true
     Write-Host "使用本地 Gradle: $localGradlePath" -ForegroundColor Green
 } else {
-    Write-Host "错误: 未找到本地 Gradle: $gradleExe" -ForegroundColor Red
-    Write-Host "请确保已安装 Gradle 8.14 并更新脚本中的路径" -ForegroundColor Yellow
-    exit 1
+    Write-Host "未找到本地 Gradle: $gradleExe" -ForegroundColor Yellow
+    Write-Host "改用项目自带的 Gradle Wrapper (gradlew)，首次运行会自动下载 gradle-8.14" -ForegroundColor Green
+    $useLocalGradle = $false
 }
 
 # 检测和配置 Java
@@ -322,27 +322,28 @@ try {
         if ($useLocalGradle) {
             # 使用本地 Gradle
             $gradleCmd = Join-Path $localGradlePath "bin\gradle.bat"
-            & $gradleCmd assembleRelease
+            & $gradleCmd assembleRelease --init-script china-mirrors.init.gradle
         } elseif ($IsWindows -or $env:OS -match "Windows") {
-            .\gradlew.bat assembleRelease
+            .\gradlew.bat assembleRelease --init-script china-mirrors.init.gradle
         } else {
-            ./gradlew assembleRelease
+            ./gradlew assembleRelease --init-script china-mirrors.init.gradle
         }
 
         if ($LASTEXITCODE -eq 0) {
-            $apkPath = "app\build\outputs\apk\release\app-release.apk"
-            if (Test-Path $apkPath) {
+            $apks = Get-ChildItem "app\build\outputs\apk\release\*.apk" -ErrorAction SilentlyContinue
+            if ($apks) {
                 Write-Host ""
                 Write-Host "=========================================" -ForegroundColor Green
                 Write-Host "   构建成功!" -ForegroundColor Green
                 Write-Host "=========================================" -ForegroundColor Green
                 Write-Host ""
-                Write-Host "APK 位置: $((Get-Item $apkPath).FullName)" -ForegroundColor Cyan
+                Write-Host "生成的 APK ($($apks.Count) 个):" -ForegroundColor Cyan
+                foreach ($apk in ($apks | Sort-Object Length)) {
+                    Write-Host ("  {0,-40} {1,7:N2} MB" -f $apk.Name, ($apk.Length / 1MB)) -ForegroundColor Cyan
+                }
                 Write-Host ""
-
-                # 显示文件大小
-                $fileSize = (Get-Item $apkPath).Length / 1MB
-                Write-Host "文件大小: $([math]::Round($fileSize, 2)) MB" -ForegroundColor Cyan
+                Write-Host "目录: $((Get-Item 'app\build\outputs\apk\release').FullName)" -ForegroundColor Cyan
+                Write-Host "提示: 现代手机装 arm64-v8a 包即可；不确定就用 universal 包。" -ForegroundColor DarkGray
             } else {
                 Write-Host "错误: 未找到生成的APK文件" -ForegroundColor Red
                 exit 1
@@ -358,26 +359,27 @@ try {
 
         if ($useLocalGradle) {
             $gradleCmd = Join-Path $localGradlePath "bin\gradle.bat"
-            & $gradleCmd assembleDebug
+            & $gradleCmd assembleDebug --init-script china-mirrors.init.gradle
         } elseif ($IsWindows -or $env:OS -match "Windows") {
-            .\gradlew.bat assembleDebug
+            .\gradlew.bat assembleDebug --init-script china-mirrors.init.gradle
         } else {
-            ./gradlew assembleDebug
+            ./gradlew assembleDebug --init-script china-mirrors.init.gradle
         }
 
         if ($LASTEXITCODE -eq 0) {
-            $apkPath = "app\build\outputs\apk\debug\app-debug.apk"
-            if (Test-Path $apkPath) {
+            $apks = Get-ChildItem "app\build\outputs\apk\debug\*.apk" -ErrorAction SilentlyContinue
+            if ($apks) {
                 Write-Host ""
                 Write-Host "=========================================" -ForegroundColor Green
                 Write-Host "   构建成功!" -ForegroundColor Green
                 Write-Host "=========================================" -ForegroundColor Green
                 Write-Host ""
-                Write-Host "APK 位置: $((Get-Item $apkPath).FullName)" -ForegroundColor Cyan
+                Write-Host "生成的 APK ($($apks.Count) 个):" -ForegroundColor Cyan
+                foreach ($apk in ($apks | Sort-Object Length)) {
+                    Write-Host ("  {0,-40} {1,7:N2} MB" -f $apk.Name, ($apk.Length / 1MB)) -ForegroundColor Cyan
+                }
                 Write-Host ""
-
-                $fileSize = (Get-Item $apkPath).Length / 1MB
-                Write-Host "文件大小: $([math]::Round($fileSize, 2)) MB" -ForegroundColor Cyan
+                Write-Host "目录: $((Get-Item 'app\build\outputs\apk\debug').FullName)" -ForegroundColor Cyan
             } else {
                 Write-Host "错误: 未找到生成的 Debug APK 文件" -ForegroundColor Red
                 exit 1
@@ -394,11 +396,11 @@ try {
         if ($useLocalGradle) {
             # 使用本地 Gradle
             $gradleCmd = Join-Path $localGradlePath "bin\gradle.bat"
-            & $gradleCmd bundleRelease
+            & $gradleCmd bundleRelease --init-script china-mirrors.init.gradle
         } elseif ($IsWindows -or $env:OS -match "Windows") {
-            .\gradlew.bat bundleRelease
+            .\gradlew.bat bundleRelease --init-script china-mirrors.init.gradle
         } else {
-            ./gradlew bundleRelease
+            ./gradlew bundleRelease --init-script china-mirrors.init.gradle
         }
 
         if ($LASTEXITCODE -eq 0) {

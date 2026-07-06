@@ -1,0 +1,18 @@
+// 国内镜像 init 脚本：为主构建中所有项目（app + 全部 autolink 原生模块）
+// 的 buildscript 与依赖仓库统一注入阿里云镜像，优先级最高，绕开被墙的 mavenCentral/google/gradlePluginPortal。
+// 用法：gradle <task> --init-script china-mirrors.init.gradle
+def aliyun = [
+    'https://maven.aliyun.com/repository/public',
+    'https://maven.aliyun.com/repository/google',
+    'https://maven.aliyun.com/repository/gradle-plugin',
+]
+allprojects {
+    buildscript {
+        repositories {
+            aliyun.each { u -> maven { url u } }
+        }
+    }
+    repositories {
+        aliyun.each { u -> maven { url u } }
+    }
+}

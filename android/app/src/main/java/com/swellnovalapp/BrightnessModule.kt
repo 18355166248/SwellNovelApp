@@ -18,7 +18,7 @@ class BrightnessModule(reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun setBrightness(value: Double) {
-    val activity = currentActivity ?: return
+    val activity = reactApplicationContext.currentActivity ?: return
     val level = value.coerceIn(0.0, 1.0).toFloat()
     activity.runOnUiThread {
       val window = activity.window ?: return@runOnUiThread
@@ -31,7 +31,7 @@ class BrightnessModule(reactContext: ReactApplicationContext) :
   @ReactMethod
   fun getBrightness(promise: Promise) {
     try {
-      val activity = currentActivity
+      val activity = reactApplicationContext.currentActivity
       val windowLevel = activity?.window?.attributes?.screenBrightness ?: -1f
       if (windowLevel >= 0f) {
         promise.resolve(windowLevel.toDouble())
