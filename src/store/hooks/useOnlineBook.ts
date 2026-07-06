@@ -43,7 +43,43 @@ export const useAddOnlineBook = () => {
     const { book, chapters } = await addOnlineBook(url);
 
     const existing = store.get(booksAtom).find(b => b.id === book.id);
-    if (existing) return existing;
+    if (existing) {
+      const currentChapters = store.get(chaptersAtom)[book.id] ?? [];
+      const contentBySource = new Map(
+        currentChapters
+          .filter(c => c.content && c.sourceUrl)
+          .map(c => [c.sourceUrl!, c.content]),
+      );
+      const mergedChapters = chapters.map(c => {
+        const cachedContent = c.sourceUrl ? contentBySource.get(c.sourceUrl) : undefined;
+        return cachedContent
+          ? { ...c, content: cachedContent, wordCount: cachedContent.length }
+          : c;
+      });
+
+      // 同一本网络书重新添加时刷新目录：书源结构修复或站点更新后，避免继续复用旧的错误目录。
+      store.set(booksAtom, prev =>
+        prev.map(b =>
+          b.id === book.id
+            ? {
+                ...b,
+                title: book.title,
+                author: book.author,
+                cover: book.cover,
+                description: book.description,
+                totalChapters: mergedChapters.length,
+                source: book.source,
+                updatedAt: Date.now(),
+              }
+            : b,
+        ),
+      );
+      store.set(chaptersAtom, prev => ({ ...prev, [book.id]: mergedChapters }));
+      saveBookChapters(book.id, mergedChapters).catch(error => {
+        console.warn('[useAddOnlineBook] refresh catalog failed', error);
+      });
+      return { ...existing, ...book, totalChapters: mergedChapters.length };
+    }
 
     store.set(booksAtom, prev => [...prev, book]);
     store.set(chaptersAtom, prev => ({ ...prev, [book.id]: chapters }));
@@ -112,8 +148,8 @@ export const useEnsureChapterContent = () => {
   const store = useStore();
 
   return async (bookId: string, index: number): Promise<Chapter | null> => {
-    const chapters = store.get(chaptersAtom)[bookId];
-    const chapter = chapters?.[index];
+    let chapters = store.get(chaptersAtom)[bookId];
+    let chapter = chapters?.[index];
     if (!chapter) return null;
     if (chapter.content) return chapter;
 
@@ -125,6 +161,51 @@ export const useEnsureChapterContent = () => {
     const source = getSourceById(book.source.name);
     let content: string;
     if (source) {
+      const needsCatalogRefresh =
+        source.id === 'bookshuku' &&
+        chapters &&
+        (chapters.length <= 20 || chapters.some(c => /^分节阅读\s*\d+$/.test(c.title)));
+      if (needsCatalogRefresh) {
+        const metas = await source.parseCatalog({
+          sourceBookId: source.extractId(book.source.bookUrl) ?? '',
+          title: book.title,
+          author: book.author,
+          catalogUrl: book.source.bookUrl,
+        });
+        const contentBySource = new Map(
+          chapters
+            .filter(c => c.content && c.sourceUrl)
+            .map(c => [c.sourceUrl!, c.content]),
+        );
+        const refreshed = metas.map((m, i) => {
+          const cachedContent = contentBySource.get(m.url);
+          return {
+            id: `${bookId}-${i}`,
+            bookId,
+            title: m.title,
+            content: cachedContent ?? '',
+            order: i,
+            sourceUrl: m.url,
+            wordCount: cachedContent ? cachedContent.length : undefined,
+          };
+        });
+
+        // 兼容旧版本错误目录：打开章节时自愈，避免用户必须删书重加才能得到完整 754 章目录。
+        store.set(chaptersAtom, prev => ({ ...prev, [bookId]: refreshed }));
+        store.set(booksAtom, prev =>
+          prev.map(b =>
+            b.id === bookId
+              ? { ...b, totalChapters: refreshed.length, updatedAt: Date.now() }
+              : b,
+          ),
+        );
+        saveBookChapters(bookId, refreshed).catch(error => {
+          console.warn('[useOnlineBook] refresh stale catalog failed', error);
+        });
+        chapters = refreshed;
+        chapter = refreshed[index];
+        if (!chapter?.sourceUrl) return chapter ?? null;
+      }
       content = await source.parseChapterContent(chapter.sourceUrl);
     } else {
       const raw = await fetchRenderedContent(chapter.sourceUrl);

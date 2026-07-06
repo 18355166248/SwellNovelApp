@@ -47,6 +47,8 @@ target 'SwellNovalApp' do
         if target.name == 'SwellNovalApp'
           target.build_configurations.each do |config|
             config.build_settings['SWIFT_EXPLICIT_MODULE_COMPILATION'] = 'NO'
+            # pnpm 的内部目录可能被 CocoaPods 解析成不可用路径；显式指向 node_modules 稳定入口，避免真机打包时找不到 hermesc。
+            config.build_settings['HERMES_CLI_PATH'] = '$(SRCROOT)/../node_modules/hermes-compiler/hermesc/osx-bin/hermesc'
           end
           break
         end

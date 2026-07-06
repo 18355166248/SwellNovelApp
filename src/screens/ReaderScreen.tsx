@@ -2004,14 +2004,6 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 16,
   },
-  fontBtn: {
-    flex: 1,
-    height: 40,
-    borderWidth: 1,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   optBtn: {
     flex: 1,
     height: 36,

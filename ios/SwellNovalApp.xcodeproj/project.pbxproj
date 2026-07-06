@@ -7,29 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		021BFC345121495596AAAB17 /* Zocial.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 41433D25CF6A441E93250D8A /* Zocial.ttf */; };
 		0C80B921A6F3F58F76C31292 /* libPods-SwellNovalApp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-SwellNovalApp.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
-		1A75487BDB7048728FEDE354 /* FontAwesome5_Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F718AD88CEE3491CBD9F34FD /* FontAwesome5_Regular.ttf */; };
-		20766D3E22CA4638B08D226E /* FontAwesome6_Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9E61EEC0243444748766F3EE /* FontAwesome6_Regular.ttf */; };
-		27ED2E3B91794827A54C93B9 /* Entypo.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9DC401DF45DD404196D0768E /* Entypo.ttf */; };
-		2B555B02A08B4259B32717D5 /* FontAwesome6_Solid.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A22F66C1AC3543ECA4F2021B /* FontAwesome6_Solid.ttf */; };
-		46B6431C64544450B19904D1 /* FontAwesome5_Solid.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2A4EB0DF93234BFAAC449196 /* FontAwesome5_Solid.ttf */; };
-		671918206F9A432790FD38B5 /* Foundation.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 36F82750F23F4E0C83671709 /* Foundation.ttf */; };
-		6F1CD9C3DE5543A9BD7BFBF0 /* Octicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A3290EAF79CC42B29999530B /* Octicons.ttf */; };
-		7462CC85D95F4039977E00A6 /* AntDesign.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B9715F3AFCC042BA838EBC85 /* AntDesign.ttf */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
-		A1142F83FAA04327B7D72E46 /* FontAwesome6_Brands.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B3AEE372FD444F9A80C1938B /* FontAwesome6_Brands.ttf */; };
-		A904A3A8FCD14B06B3F487BD /* Feather.ttf in Resources */ = {isa = PBXBuildFile; fileRef = ACF3EC8F63D44760814AE88F /* Feather.ttf */; };
-		B0A322845F834751A5529ECF /* FontAwesome5_Brands.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F41011FAD882420B8740BA3E /* FontAwesome5_Brands.ttf */; };
-		B942EC2B19FB4C38B33339A6 /* MaterialIcons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 8B26E1CA1B0A4E47B93DD198 /* MaterialIcons.ttf */; };
-		C20FC3D5F94A4E6DBB582784 /* EvilIcons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7EF6477DCC284100AB4EAEEC /* EvilIcons.ttf */; };
-		F0F7595445A24E2690E28648 /* FontAwesome.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 371469C6BBE1446AAAC26321 /* FontAwesome.ttf */; };
-		F1F95C74846E4B4E8D3EA0C9 /* SimpleLineIcons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 19CEDFCDCC9A41FEBC7CD30D /* SimpleLineIcons.ttf */; };
-		F4FF8BEA8B634874AEF28EEF /* Fontisto.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 86482EC886E74720A3DF1E5D /* Fontisto.ttf */; };
-		F6BB1504EB7E4F089C42B7AF /* Ionicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D9C05EBB7D7F4C86B704AC66 /* Ionicons.ttf */; };
-		F8ABED5C7C7A4497B05A13B6 /* MaterialCommunityIcons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 3467A5AF08954A90AED25F95 /* MaterialCommunityIcons.ttf */; };
 		FBAB9473DE8B469E836C9F57 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
@@ -328,6 +309,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CM86J97L33;
 				ENABLE_BITCODE = NO;
+				HERMES_CLI_PATH = "$(SRCROOT)/../node_modules/hermes-compiler/hermesc/osx-bin/hermesc";
 				INFOPLIST_FILE = SwellNovalApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -357,6 +339,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CM86J97L33;
+				HERMES_CLI_PATH = "$(SRCROOT)/../node_modules/hermes-compiler/hermesc/osx-bin/hermesc";
 				INFOPLIST_FILE = SwellNovalApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (

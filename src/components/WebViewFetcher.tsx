@@ -12,7 +12,6 @@ import { View } from 'react-native';
 import { WebView as RNWebView } from 'react-native-webview';
 import {
   CONTENT_MESSAGE,
-  extractorJs,
   registerBrowserFetcher,
   unregisterBrowserFetcher,
   FetchJob,
@@ -21,7 +20,8 @@ import {
 // react-native-webview 的 class 组件类型与 React 19 JSX 类型不完全兼容，以 any 渲染。
 const WebView = RNWebView as unknown as React.ComponentType<any>;
 
-const BLANK = 'about:blank';
+// iOS 的 RNCWebView 会把 about:blank 走到 loadFileURL 分支并触发崩溃；空闲态用空 HTML 占位即可。
+const EMPTY_SOURCE = { html: '<!doctype html><html><head></head><body></body></html>' };
 
 export function WebViewFetcher() {
   const ref = React.useRef<any>(null);
@@ -72,12 +72,12 @@ export function WebViewFetcher() {
     >
       <WebView
         ref={ref}
-        source={{ uri: job ? job.url : BLANK }}
+        source={job ? { uri: job.url } : EMPTY_SOURCE}
         onLoadEnd={() => {
           const cur = jobRef.current;
           if (!cur) return;
-          // 留一点时间让 CF 挑战/JS 渲染完成，再抽正文。
-          setTimeout(() => ref.current?.injectJavaScript(extractorJs(cur.id)), 800);
+          // 留足时间让 CF 挑战/JS 渲染完成，再按任务类型抽正文或 HTML；过早读取会拿到挑战页。
+          setTimeout(() => ref.current?.injectJavaScript(cur.script(cur.id)), cur.waitMs);
         }}
         onMessage={onMessage}
         javaScriptEnabled

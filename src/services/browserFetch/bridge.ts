@@ -14,6 +14,8 @@ export const CONTENT_MESSAGE = 'nvl-content';
 export interface FetchJob {
   id: string;
   url: string;
+  script: (id: string) => string;
+  waitMs: number;
   resolve: (text: string) => void;
   reject: (err: Error) => void;
 }
@@ -40,15 +42,35 @@ export function fetchRenderedContent(
   url: string,
   timeout = 25000,
 ): Promise<string> {
+  return fetchRendered(url, extractorJs, 6000, timeout, 'WebView 取正文超时');
+}
+
+/** 取某 URL 经 WebView 执行 JS/挑战后的完整 HTML，用于详情页/目录页解析兜底。 */
+export function fetchRenderedHtml(
+  url: string,
+  timeout = 45000,
+): Promise<string> {
+  return fetchRendered(url, htmlExtractorJs, 12000, timeout, 'WebView 取页面超时');
+}
+
+function fetchRendered(
+  url: string,
+  script: (id: string) => string,
+  waitMs: number,
+  timeout: number,
+  timeoutMessage: string,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const id = `c${++seq}`;
     const timer = setTimeout(
-      () => reject(new Error('WebView 取正文超时')),
+      () => reject(new Error(timeoutMessage)),
       timeout,
     );
     const job: FetchJob = {
       id,
       url,
+      script,
+      waitMs,
       resolve: t => {
         clearTimeout(timer);
         resolve(t);
@@ -83,6 +105,21 @@ export function extractorJs(id: string): string {
       }
       var text = best ? (best.innerText||'') : '';
       window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:text }));
+    } catch(e){
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) }));
+    }
+  })(); true;`.replace(/__ID__/g, id);
+}
+
+/**
+ * 注入页面执行的 HTML 抽取脚本。用于直接 fetch 被 Cloudflare/明文策略等拦住时，
+ * 让 WebView 先完成页面脚本和 cookie 流程，再把最终 DOM 交回书源解析器。
+ */
+export function htmlExtractorJs(id: string): string {
+  return `(function(){
+    try {
+      var html = document.documentElement ? document.documentElement.outerHTML : '';
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:html }));
     } catch(e){
       window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) }));
     }
