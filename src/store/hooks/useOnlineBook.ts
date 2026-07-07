@@ -7,6 +7,7 @@ import { booksAtom, chaptersAtom } from '../atoms';
 import { Book, Chapter } from '../types/book';
 import { addOnlineBook } from '../../utils/addOnlineBook';
 import { getSourceById } from '../../services/source/registry';
+import type { ParsedChapterContent } from '../../services/source/types';
 import { saveBookChapters } from '../../utils/libraryStorage';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
@@ -16,6 +17,7 @@ import {
 
 // 懒加载正文后按书防抖落盘：整册 JSON 重写较重，短时间多次翻章合并成一次写入。
 const CACHE_DEBOUNCE_MS = 1000;
+const BOOKSHUKU_CONTENT_VERSION = 2;
 const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function scheduleCache(bookId: string, chapters: Chapter[]) {
@@ -29,6 +31,66 @@ function scheduleCache(bookId: string, chapters: Chapter[]) {
         console.warn('[useOnlineBook] cache chapters failed', error);
       });
     }, CACHE_DEBOUNCE_MS),
+  );
+}
+
+function unpackChapterContent(result: ParsedChapterContent): {
+  content: string;
+  title?: string;
+} {
+  return typeof result === 'string' ? { content: result } : result;
+}
+
+function isFallbackChapterTitle(title: string): boolean {
+  return (
+    /^第\s*\d+\s*章$/.test(title) ||
+    /^第[零一二三四五六七八九十百千两万]+\s*章$/.test(title) ||
+    /^分节阅读\s*\d+$/.test(title)
+  );
+}
+
+function titleFromFirstSentence(content: string): string | undefined {
+  const firstLine = content
+    .split(/\n+/)
+    .map(line => line.trim())
+    .find(Boolean);
+  if (!firstLine) return undefined;
+  const sentenceEnd = firstLine.search(/[。！？!?]/);
+  const title =
+    sentenceEnd >= 0 ? firstLine.slice(0, sentenceEnd + 1) : firstLine;
+  return title.slice(0, 36).trim() || undefined;
+}
+
+function numberPrefix(chapter: Chapter): string {
+  return `第${chapter.order + 1}章`;
+}
+
+function withChapterNumber(chapter: Chapter, title: string): string {
+  const normalized = title.replace(/\s+/g, ' ').trim();
+  if (!normalized) return numberPrefix(chapter);
+  const numbered = normalized.match(
+    /第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章[\s\S]*/,
+  )?.[0];
+  if (numbered) return numbered.replace(/\s+/g, ' ').trim();
+  return `${numberPrefix(chapter)} ${normalized}`;
+}
+
+function resolveChapterTitle(
+  chapter: Chapter,
+  parsedTitle: string | undefined,
+  content: string,
+): string {
+  if (!isFallbackChapterTitle(chapter.title)) {
+    return withChapterNumber(chapter, chapter.title);
+  }
+  // 目录兜底名（第N章/分节阅读N）只在正文加载后修正：优先页面真实标题，
+  // 若页面没有标题，再用正文第一句话，避免为了标题提前抓取全书。
+  if (parsedTitle && !isFallbackChapterTitle(parsedTitle)) {
+    return withChapterNumber(chapter, parsedTitle);
+  }
+  return withChapterNumber(
+    chapter,
+    titleFromFirstSentence(content) || chapter.title,
   );
 }
 
@@ -151,9 +213,15 @@ export const useEnsureChapterContent = () => {
     let chapters = store.get(chaptersAtom)[bookId];
     let chapter = chapters?.[index];
     if (!chapter) return null;
-    if (chapter.content) return chapter;
 
     const book = store.get(booksAtom).find(b => b.id === bookId);
+    const isBookshuku = book?.source?.name === 'bookshuku';
+    if (
+      chapter.content &&
+      (!isBookshuku || chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION)
+    ) {
+      return chapter;
+    }
     if (!book?.source || !chapter.sourceUrl) return chapter; // 非在线书或缺 URL：按空正文处理
 
     // 注册书源（bookshuku/mingzw…）走 fetch 解析；浏览器识别源（source 为站点 host、
@@ -206,16 +274,28 @@ export const useEnsureChapterContent = () => {
         chapter = refreshed[index];
         if (!chapter?.sourceUrl) return chapter ?? null;
       }
-      content = await source.parseChapterContent(chapter.sourceUrl);
+      const parsed = unpackChapterContent(
+        await source.parseChapterContent(chapter.sourceUrl),
+      );
+      content = parsed.content;
+      chapter = {
+        ...chapter,
+        title: resolveChapterTitle(chapter, parsed.title, content),
+      };
     } else {
       const raw = await fetchRenderedContent(chapter.sourceUrl);
       content = cleanRenderedText(raw, chapter.title);
+      chapter = {
+        ...chapter,
+        title: resolveChapterTitle(chapter, undefined, content),
+      };
     }
 
     const filled: Chapter = {
       ...chapter,
       content,
       wordCount: content.length,
+      contentVersion: isBookshuku ? BOOKSHUKU_CONTENT_VERSION : chapter.contentVersion,
     };
 
     let nextForBook: Chapter[] | undefined;
@@ -283,10 +363,30 @@ export const useCacheWholeBook = () => {
         return { done, total, cancelled: true };
       }
       const ch = store.get(chaptersAtom)[bookId]?.[i];
-      if (!ch || ch.content || !ch.sourceUrl) continue;
+      if (
+        !ch ||
+        !ch.sourceUrl ||
+        (ch.content &&
+          (source.id !== 'bookshuku' ||
+            ch.contentVersion === BOOKSHUKU_CONTENT_VERSION))
+      ) {
+        continue;
+      }
       try {
-        const content = await source.parseChapterContent(ch.sourceUrl);
-        const filled: Chapter = { ...ch, content, wordCount: content.length };
+        const parsed = unpackChapterContent(
+          await source.parseChapterContent(ch.sourceUrl),
+        );
+        const content = parsed.content;
+        const filled: Chapter = {
+          ...ch,
+          title: resolveChapterTitle(ch, parsed.title, content),
+          content,
+          wordCount: content.length,
+          contentVersion:
+            source.id === 'bookshuku'
+              ? BOOKSHUKU_CONTENT_VERSION
+              : ch.contentVersion,
+        };
         store.set(chaptersAtom, prev => {
           const list = prev[bookId];
           if (!list) return prev;

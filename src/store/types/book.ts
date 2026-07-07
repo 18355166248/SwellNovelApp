@@ -33,6 +33,7 @@ export interface Chapter {
   content: string; // 在线书未抓取时为空串，抓取后作为离线缓存
   order: number;
   wordCount?: number;
+  contentVersion?: number; // 在线书正文解析版本：书源修复后可识别旧缓存并按需重拉。
   sourceUrl?: string; // 在线书：该章正文页的绝对 URL
 }
 

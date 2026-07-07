@@ -23,6 +23,14 @@ export interface ParsedChapter {
   url: string;
 }
 
+/** 单章正文解析结果：兼容只返回正文的旧书源，也允许书源顺带回传页面真实章节名。 */
+export type ParsedChapterContent =
+  | string
+  | {
+      content: string;
+      title?: string;
+    };
+
 export interface BookSource {
   id: string; // 书源标识，用作 bookId 前缀，例如 'bookshuku'
   name: string; // 展示名，例如 'TXT图书下载网'
@@ -37,6 +45,6 @@ export interface BookSource {
   parseBookInfo(url: string): Promise<ParsedBookInfo>;
   /** 解析完整目录，返回按顺序排列的章节列表。 */
   parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]>;
-  /** 解析单章正文，返回纯文本（段落以换行分隔）。 */
-  parseChapterContent(url: string): Promise<string>;
+  /** 解析单章正文，返回纯文本（段落以换行分隔），可附带页面真实章节名。 */
+  parseChapterContent(url: string): Promise<ParsedChapterContent>;
 }

@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   FlatList,
+  ActivityIndicator,
   Pressable,
   TextInput,
   Platform,
@@ -51,6 +52,7 @@ import {
   READER_THEMES,
   ReaderThemeKey,
 } from '../theme/readerThemes';
+import type { Chapter } from '../store/types/book';
 import { SERIF_FONT } from '../theme/fonts';
 import { useReaderFontFamily } from '../services/fonts/useReaderFontFamily';
 import { FONTS, DEFAULT_FONT_KEY } from '../theme/fontCatalog';
@@ -79,6 +81,7 @@ import {
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
+type DrawerChapterItem = { c: Chapter; idx: number };
 
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
 const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
@@ -89,6 +92,7 @@ const PAGE_BOTTOM_PADDING = 48;
 const READER_MAX_CONTENT = 680;
 /** 章节边界越界回弹翻章的位移阈值 */
 const CHAPTER_TURN_THRESHOLD = 40;
+const DRAWER_CHAPTER_ROW_HEIGHT = 46;
 
 // react-native-web 透传 CSS scroll-snap，横向列表在 web 获得整页吸附。
 const WEB_SNAP_CONTAINER =
@@ -286,6 +290,7 @@ export default function ReaderScreen() {
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
   const [drawerTab, setDrawerTab] = React.useState<'toc' | 'marks'>('toc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
+  const drawerTocRef = React.useRef<FlatList<DrawerChapterItem>>(null);
   const [status, setStatus] = React.useState<'ready' | 'loading' | 'error'>(
     'ready',
   );
@@ -344,13 +349,55 @@ export default function ReaderScreen() {
   const total = chapters.length;
   const drawerList = React.useMemo(() => {
     let list = chapters.map((c, idx) => ({ c, idx }));
-    if (drawerQuery.trim()) {
-      const q = drawerQuery.trim().toLowerCase();
-      list = list.filter(({ c }) => c.title.toLowerCase().includes(q));
-    }
     if (drawerOrder === 'desc') list = list.slice().reverse();
     return list;
-  }, [chapters, drawerOrder, drawerQuery]);
+  }, [chapters, drawerOrder]);
+
+  const drawerTargetIndex = React.useMemo(() => {
+    const query = drawerQuery.trim().toLowerCase();
+    let targetChapterIndex = chapterIndex;
+    if (query) {
+      const numeric = Number(query.replace(/^第|章$/g, ''));
+      if (Number.isInteger(numeric) && numeric >= 1 && numeric <= total) {
+        targetChapterIndex = numeric - 1;
+      } else {
+        const matchedIndex = chapters.findIndex(c =>
+          c.title.toLowerCase().includes(query),
+        );
+        if (matchedIndex >= 0) targetChapterIndex = matchedIndex;
+      }
+    }
+    return drawerOrder === 'desc'
+      ? total - 1 - targetChapterIndex
+      : targetChapterIndex;
+  }, [chapterIndex, chapters, drawerOrder, drawerQuery, total]);
+
+  const scrollDrawerToIndex = React.useCallback(
+    (index: number, animated: boolean) => {
+      if (index < 0 || index >= drawerList.length) return;
+      requestAnimationFrame(() => {
+        drawerTocRef.current?.scrollToIndex({
+          index,
+          animated,
+          viewPosition: 0.35,
+        });
+      });
+    },
+    [drawerList.length],
+  );
+
+  React.useEffect(() => {
+    if (!drawerOpen || !drawerTransition.mounted || drawerTab !== 'toc') return;
+    // 目录不再按搜索词过滤，输入只驱动滚动定位；打开目录时默认把当前阅读章节带到视野中。
+    scrollDrawerToIndex(drawerTargetIndex, drawerQuery.trim().length > 0);
+  }, [
+    drawerOpen,
+    drawerTab,
+    drawerTargetIndex,
+    drawerQuery,
+    drawerTransition.mounted,
+    scrollDrawerToIndex,
+  ]);
 
   const chapter = chapters[chapterIndex];
   const isNight = settings.theme === 'night';
@@ -540,13 +587,11 @@ export default function ReaderScreen() {
       setDrawerOpen(false);
       setToolbarVisible(false);
       if (transitionRef.current) clearTimeout(transitionRef.current);
-      transitionRef.current = setTimeout(() => {
-        openChapter(bookId, idx);
-        // 在线书正文可能尚未抓取：保持 loading 交给上面的 effect 拉取，别误报 error。
-        if (chapters[idx]?.content) setStatus('ready');
-        else if (isOnline) setStatus('loading');
-        else setStatus('error');
-      }, 260);
+      openChapter(bookId, idx);
+      // 目录点击要立即切章并启动正文抓取；抽屉退场动画不能阻塞网络请求，否则未缓存章节体感会多等一轮。
+      if (chapters[idx]?.content) setStatus('ready');
+      else if (isOnline) setStatus('loading');
+      else setStatus('error');
     },
     [bookId, chapters, isOnline, openChapter, setToolbarVisible, total],
   );
@@ -1062,15 +1107,7 @@ export default function ReaderScreen() {
 
       {status === 'loading' && (
         <View style={styles.centerFill}>
-          <View
-            style={[
-              styles.spinner,
-              {
-                borderColor: display.theme.hair,
-                borderTopColor: NOVEL_ACCENT,
-              },
-            ]}
-          />
+          <ActivityIndicator size="large" color={NOVEL_ACCENT} />
           <Text style={{ color: display.theme.sub, fontSize: 13 }}>
             正在加载{chapters[chapterIndex]?.title || '章节'}…
           </Text>
@@ -1714,15 +1751,15 @@ export default function ReaderScreen() {
               </View>
               )}
             </View>
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{
-                paddingHorizontal: 6,
-                paddingBottom: 20,
-              }}
-            >
-              {drawerTab === 'marks' &&
-                (bookmarks.length === 0 ? (
+            {drawerTab === 'marks' ? (
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{
+                  paddingHorizontal: 6,
+                  paddingBottom: 20,
+                }}
+              >
+                {bookmarks.length === 0 ? (
                   <View style={{ paddingVertical: 48, alignItems: 'center' }}>
                     <Icon
                       name="bookmark-border"
@@ -1785,66 +1822,98 @@ export default function ReaderScreen() {
                         </View>
                       </Pressable>
                     ))
-                ))}
-              {drawerTab === 'toc' &&
-                drawerList.map(({ c, idx }) => {
-                const isCur = idx === chapterIndex;
-                return (
+                )}
+              </ScrollView>
+            ) : (
+              <FlatList
+                ref={drawerTocRef}
+                style={{ flex: 1 }}
+                data={drawerList}
+                keyExtractor={({ c }) => c.id}
+                initialNumToRender={18}
+                maxToRenderPerBatch={16}
+                windowSize={9}
+                removeClippedSubviews={Platform.OS !== 'web'}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{
+                  paddingHorizontal: 6,
+                  paddingBottom: 20,
+                }}
+                getItemLayout={(_, index) => ({
+                  length: DRAWER_CHAPTER_ROW_HEIGHT,
+                  offset: DRAWER_CHAPTER_ROW_HEIGHT * index,
+                  index,
+                })}
+                onScrollToIndexFailed={info => {
+                  drawerTocRef.current?.scrollToOffset({
+                    offset: info.averageItemLength * info.index,
+                    animated: false,
+                  });
+                  setTimeout(() => scrollDrawerToIndex(info.index, true), 50);
+                }}
+                renderItem={({ item: { c, idx } }) => {
+                  const isCur = idx === chapterIndex;
+                  return (
+                    <Pressable
+                      onPress={() => goToChapter(idx)}
+                      style={[
+                        styles.chapterRow,
+                        {
+                          backgroundColor: isCur
+                            ? 'rgba(46,107,94,.1)'
+                            : 'transparent',
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={{
+                          color: isCur
+                            ? NOVEL_ACCENT
+                            : display.chrome.sheetSub,
+                          fontSize: 12,
+                          width: 34,
+                        }}
+                      >
+                        {idx + 1}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          flex: 1,
+                          fontSize: 13.5,
+                          color: isCur
+                            ? NOVEL_ACCENT
+                            : display.chrome.sheetInk,
+                          fontWeight: isCur ? '700' : '400',
+                        }}
+                      >
+                        {c.title}
+                      </Text>
+                      {isCur && (
+                        <Text style={{ color: NOVEL_ACCENT, fontSize: 10 }}>
+                          在读
+                        </Text>
+                      )}
+                    </Pressable>
+                  );
+                }}
+                ListFooterComponent={
                   <Pressable
-                    key={c.id}
-                    onPress={() => goToChapter(idx)}
+                    disabled
                     style={[
-                      styles.chapterRow,
-                      {
-                        backgroundColor: isCur
-                          ? 'rgba(46,107,94,.1)'
-                          : 'transparent',
-                      },
+                      styles.drawerFooterBtn,
+                      { borderColor: display.chrome.hair },
                     ]}
                   >
                     <Text
-                      style={{
-                        color: isCur ? NOVEL_ACCENT : display.chrome.sheetSub,
-                        fontSize: 12,
-                        width: 34,
-                      }}
+                      style={{ color: display.chrome.sheetSub, fontSize: 13 }}
                     >
-                      {idx + 1}
+                      已显示全部章节
                     </Text>
-                    <Text
-                      numberOfLines={1}
-                      style={{
-                        flex: 1,
-                        fontSize: 13.5,
-                        color: isCur ? NOVEL_ACCENT : display.chrome.sheetInk,
-                        fontWeight: isCur ? '700' : '400',
-                      }}
-                    >
-                      {c.title}
-                    </Text>
-                    {isCur && (
-                      <Text style={{ color: NOVEL_ACCENT, fontSize: 10 }}>
-                        在读
-                      </Text>
-                    )}
                   </Pressable>
-                );
-              })}
-              {/* 章节已在本地一次性加载，这里保留设计稿的目录尾部控件但不触发分页。 */}
-              {drawerTab === 'toc' && (
-                <Pressable
-                  disabled
-                  style={[
-                    styles.drawerFooterBtn,
-                    { borderColor: display.chrome.hair },
-                  ]}
-                >
-                  <Text style={{ color: display.chrome.sheetSub, fontSize: 13 }}>
-                    已显示全部章节
-                  </Text>
-                </Pressable>
-              )}
-            </ScrollView>
+                }
+              />
+            )}
           </Animated.View>
         </>
       )}
@@ -1894,7 +1963,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 14,
   },
-  spinner: { width: 34, height: 34, borderRadius: 17, borderWidth: 3 },
   endBlock: {
     marginTop: 38,
     paddingTop: 20,
@@ -2056,13 +2124,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   chapterRow: {
+    height: DRAWER_CHAPTER_ROW_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 8,
-    marginBottom: 1,
   },
   drawerFooterBtn: {
     marginHorizontal: 6,

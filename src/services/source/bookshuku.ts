@@ -15,7 +15,12 @@ import {
   fetchRenderedContent,
   fetchRenderedHtml,
 } from '../browserFetch/bridge';
-import { BookSource, ParsedBookInfo, ParsedChapter } from './types';
+import {
+  BookSource,
+  ParsedBookInfo,
+  ParsedChapter,
+  ParsedChapterContent,
+} from './types';
 import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
 
 const HOST = 'wap.bookshuku.org';
@@ -33,6 +38,8 @@ const KNOWN_TITLES: Record<string, string> = {
 
 /** 章节/正文页标题回显，例如“第一章”，正文里出现时属重复，剔除。 */
 const HEADING_RE = /^第[零一二三四五六七八九十百千两万0-9]+[章节回卷]/;
+const CHAPTER_PAGE_CONCURRENCY = 2;
+const MAX_CHAPTER_PAGES = 20;
 
 function extractBookId(url: string): string | undefined {
   return matchOne(/\/(?:bookinfo|read|down|txt)\/(\d+)/, url);
@@ -76,6 +83,67 @@ function normalizeChapter(parts: string[]): string {
     lines.shift();
   }
   return lines.join('\n');
+}
+
+function normalizeTitle(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const title = decodeEntities(stripTags(raw))
+    .replace(/^\s*正文\s*[:：-]?\s*/i, '')
+    .replace(/\s*[_-]\s*TXT图书下载网.*$/i, '')
+    .replace(/\s*[_-]\s*捞尸人.*$/i, '')
+    .replace(/\s*[_-]\s*.*?bookshuku.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!title || title.length > 60) return undefined;
+  return title;
+}
+
+function extractChapterTitle(html: string): string | undefined {
+  const candidates = [
+    matchOne(/<h1[^>]*>([\s\S]*?)<\/h1>/i, html),
+    matchOne(/<div[^>]+class="[^"]*(?:title|chapter)[^"]*"[^>]*>([\s\S]*?)<\/div>/i, html),
+    matchOne(/<title[^>]*>([\s\S]*?)<\/title>/i, html),
+  ];
+  return candidates.map(normalizeTitle).find(Boolean);
+}
+
+function inferTitleFromContent(content: string): string | undefined {
+  const first = content
+    .split(/\n+/)
+    .map(line => line.trim())
+    .find(Boolean);
+  if (!first) return undefined;
+  const sentenceEnd = first.search(/[。！？!?]/);
+  const sentence = sentenceEnd >= 0 ? first.slice(0, sentenceEnd + 1) : first;
+  return sentence.slice(0, 36).trim();
+}
+
+function hasNextPage(html: string): boolean {
+  return /本章未完|下一页继续阅读|点击下一页/.test(decodeEntities(html));
+}
+
+async function fetchArticleText(url: string): Promise<{ html: string; text: string }> {
+  const html = await fetchBookshukuHtml(url);
+  const text = cleanArticle(html) || cleanRenderedText(await fetchRenderedContent(url));
+  return { html, text };
+}
+
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await task(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function parseCatalogHtml(html: string): ParsedChapter[] {
@@ -214,29 +282,41 @@ export const bookshukuSource: BookSource = {
     return chapters;
   },
 
-  async parseChapterContent(url: string): Promise<string> {
-    const firstHtml = await fetchBookshukuHtml(url);
-    let firstText = cleanArticle(firstHtml);
-    if (!firstText) {
-      firstText = cleanRenderedText(await fetchRenderedContent(url));
-    }
-    const pageInfo = /第(\d+)\/(\d+)页/.exec(firstHtml);
+  async parseChapterContent(url: string): Promise<ParsedChapterContent> {
+    const firstPage = await fetchArticleText(url);
+    const pageInfo = /第(\d+)\/(\d+)页/.exec(firstPage.html);
     const totalPages = pageInfo ? parseInt(pageInfo[2], 10) : 1;
 
-    const parts = [firstText];
+    const parts = [firstPage.text];
     if (totalPages > 1) {
-      const rest = await Promise.all(
-        Array.from({ length: totalPages - 1 }, async (_, i) => {
-          const pageUrl = url.replace(/\.html$/, `_${i + 2}.html`);
-          const html = await fetchBookshukuHtml(pageUrl);
-          const text = cleanArticle(html);
-          return text || cleanRenderedText(await fetchRenderedContent(pageUrl));
-        }),
+      const pageUrls = Array.from({ length: totalPages - 1 }, (_, i) =>
+        url.replace(/\.html$/, `_${i + 2}.html`),
+      );
+      // 分页正文必须完整：任一子页失败都让本章保持 loading/error，不缓存半章，避免读到一半误判“本章完”。
+      const rest = await mapLimit(
+        pageUrls,
+        CHAPTER_PAGE_CONCURRENCY,
+        async pageUrl => (await fetchArticleText(pageUrl)).text,
       );
       parts.push(...rest);
+    } else if (hasNextPage(firstPage.html)) {
+      // 有些页面拿不到“第1/N页”，但正文尾部会提示本章未完；按 URL 规律顺序追页直到提示消失。
+      for (let pageNo = 2; pageNo <= MAX_CHAPTER_PAGES; pageNo++) {
+        const nextPage = await fetchArticleText(
+          url.replace(/\.html$/, `_${pageNo}.html`),
+        );
+        parts.push(nextPage.text);
+        if (!hasNextPage(nextPage.html)) break;
+        if (pageNo === MAX_CHAPTER_PAGES) {
+          throw new Error('章节分页过多，未能完整解析正文');
+        }
+      }
     }
     const content = normalizeChapter(parts);
     if (!content) throw new Error('未能解析到章节正文');
-    return content;
+    return {
+      content,
+      title: extractChapterTitle(firstPage.html) || inferTitleFromContent(content),
+    };
   },
 };
