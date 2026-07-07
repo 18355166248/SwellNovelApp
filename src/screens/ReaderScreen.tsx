@@ -85,6 +85,7 @@ import {
   getBoundaryTurn,
   isStaleScrollSync,
 } from '../utils/readerScrollGuard';
+import { useReaderGuards } from './reader/useReaderGuards';
 import {
   isFullscreenSupported,
   isFullscreen as fsIsFullscreen,
@@ -353,18 +354,6 @@ export default function ReaderScreen() {
   const transitionRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
-  const webScrollIdleRef = React.useRef<
-    ReturnType<typeof setTimeout> | undefined
-  >(undefined);
-  const webProgrammaticScrollRef = React.useRef(false);
-  const webProgrammaticScrollTimerRef = React.useRef<
-    ReturnType<typeof setTimeout> | undefined
-  >(undefined);
-  const webScrollEpochRef = React.useRef(0);
-  const chapterTurnLockRef = React.useRef(false);
-  const chapterTurnUnlockTimerRef = React.useRef<
-    ReturnType<typeof setTimeout> | undefined
-  >(undefined);
   const scrollProgressTimerRef = React.useRef<
     ReturnType<typeof setTimeout> | undefined
   >(undefined);
@@ -375,6 +364,17 @@ export default function ReaderScreen() {
   if (!contentRequestTrackerRef.current) {
     contentRequestTrackerRef.current = createLatestRequestTracker();
   }
+  const {
+    chapterTurnLockRef,
+    invalidateWebScrollSync,
+    lockChapterTurn,
+    markUserWebScroll,
+    markWebProgrammaticScroll,
+    unlockChapterTurnSoon,
+    webProgrammaticScrollRef,
+    webScrollEpochRef,
+    webScrollIdleRef,
+  } = useReaderGuards();
 
   React.useEffect(() => {
     selectBook(bookId);
@@ -383,14 +383,7 @@ export default function ReaderScreen() {
   React.useEffect(
     () => () => {
       if (transitionRef.current) clearTimeout(transitionRef.current);
-      if (webScrollIdleRef.current) clearTimeout(webScrollIdleRef.current);
-      if (webProgrammaticScrollTimerRef.current) {
-        clearTimeout(webProgrammaticScrollTimerRef.current);
-      }
       if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
-      if (chapterTurnUnlockTimerRef.current) {
-        clearTimeout(chapterTurnUnlockTimerRef.current);
-      }
       if (scrollProgressTimerRef.current) {
         clearTimeout(scrollProgressTimerRef.current);
       }
@@ -484,46 +477,6 @@ export default function ReaderScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  const clearWebScrollIdle = React.useCallback(() => {
-    if (webScrollIdleRef.current) {
-      clearTimeout(webScrollIdleRef.current);
-      webScrollIdleRef.current = undefined;
-    }
-  }, []);
-
-  const markWebProgrammaticScroll = React.useCallback(
-    (duration = 220) => {
-      if (Platform.OS !== 'web') return;
-      webScrollEpochRef.current += 1;
-      webProgrammaticScrollRef.current = true;
-      clearWebScrollIdle();
-      if (webProgrammaticScrollTimerRef.current) {
-        clearTimeout(webProgrammaticScrollTimerRef.current);
-      }
-      webProgrammaticScrollTimerRef.current = setTimeout(() => {
-        webProgrammaticScrollRef.current = false;
-        webScrollEpochRef.current += 1;
-      }, duration);
-    },
-    [clearWebScrollIdle],
-  );
-
-  const lockChapterTurn = React.useCallback(() => {
-    chapterTurnLockRef.current = true;
-    if (chapterTurnUnlockTimerRef.current) {
-      clearTimeout(chapterTurnUnlockTimerRef.current);
-    }
-  }, []);
-
-  const unlockChapterTurnSoon = React.useCallback((delay = 180) => {
-    if (chapterTurnUnlockTimerRef.current) {
-      clearTimeout(chapterTurnUnlockTimerRef.current);
-    }
-    chapterTurnUnlockTimerRef.current = setTimeout(() => {
-      chapterTurnLockRef.current = false;
-    }, delay);
-  }, []);
-
   // 阅读列宽度：窄屏铺满，宽屏封顶到 READER_MAX_CONTENT 并居中（两侧多留白）。
   // paddingH 用于渲染时把文本块在整页/滚动容器内居中；textWidth 用于分页断行。
   const readerColumn = React.useMemo(() => {
@@ -600,10 +553,7 @@ export default function ReaderScreen() {
     prevChapterIdRef.current = chapter?.id;
 
     if (chapterChanged) {
-      if (Platform.OS === 'web') {
-        webScrollEpochRef.current += 1;
-        clearWebScrollIdle();
-      }
+      invalidateWebScrollSync();
       // 续读位置只在首个章节尝试一次，消费后清空，避免回到该章又跳回旧偏移。
       const resume = resumeRef.current;
       resumeRef.current = null;
@@ -653,10 +603,7 @@ export default function ReaderScreen() {
     }
 
     // 同章重新分页时，用逻辑字符偏移映射回原段落附近，避免字号/行距调整后跳回首页。
-    if (Platform.OS === 'web') {
-      webScrollEpochRef.current += 1;
-      clearWebScrollIdle();
-    }
+    invalidateWebScrollSync();
     if (settings.pageMode === 'scroll') {
       pendingScrollPositionRef.current = currentOffsetRef.current;
       setScrollPosition(currentOffsetRef.current);
@@ -670,7 +617,7 @@ export default function ReaderScreen() {
   }, [
     chapter?.id,
     chapterTextLength,
-    clearWebScrollIdle,
+    invalidateWebScrollSync,
     pages,
     settings.pageMode,
   ]);
@@ -752,10 +699,7 @@ export default function ReaderScreen() {
     (idx: number) => {
       if (idx < 0 || idx >= total) return;
       lockChapterTurn();
-      if (Platform.OS === 'web') {
-        webScrollEpochRef.current += 1;
-        clearWebScrollIdle();
-      }
+      invalidateWebScrollSync();
       setStatus('loading');
       setSettingsOpen(false);
       setDrawerOpen(false);
@@ -770,7 +714,7 @@ export default function ReaderScreen() {
     [
       bookId,
       chapters,
-      clearWebScrollIdle,
+      invalidateWebScrollSync,
       isOnline,
       lockChapterTurn,
       openChapter,
@@ -1288,10 +1232,7 @@ export default function ReaderScreen() {
               removeClippedSubviews
               getItemLayout={getPageLayout}
               onScrollBeginDrag={() => {
-                if (Platform.OS === 'web') {
-                  webProgrammaticScrollRef.current = false;
-                  webScrollEpochRef.current += 1;
-                }
+                markUserWebScroll();
                 setToolbarVisible(false);
               }}
               onMomentumScrollEnd={handlePageMomentumEnd}
