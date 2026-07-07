@@ -73,6 +73,19 @@ import {
 import { getCharWidthMeasurer } from '../utils/charWidth';
 import { startReadingSession } from '../utils/readingSession';
 import {
+  formatReaderChapterLabel,
+  formatReaderClock,
+} from '../utils/readerChrome';
+import { createLatestRequestTracker } from '../utils/latestRequest';
+import {
+  readingPositionToScrollOffset,
+  scrollOffsetToReadingPosition,
+} from '../utils/readerProgress';
+import {
+  getBoundaryTurn,
+  isStaleScrollSync,
+} from '../utils/readerScrollGuard';
+import {
   isFullscreenSupported,
   isFullscreen as fsIsFullscreen,
   toggleFullscreen,
@@ -184,6 +197,11 @@ export default function ReaderScreen() {
   // web 无状态栏/刘海，顶栏 44 的状态栏预留会变成大片空白，收到 12。
   const topBarPad =
     Platform.OS === 'web' ? 12 : Math.max(insets.top, 12) + 8;
+  const readerStatusTop =
+    Platform.OS === 'web' ? 10 : Math.max(insets.top, 8);
+  const readerTopPadding =
+    PAGE_TOP_PADDING +
+    (Platform.OS === 'web' ? 0 : Math.max(0, insets.top - 12));
   const bottomBarPad =
     Platform.OS === 'web' ? 22 : Math.max(insets.bottom, 8) + 14;
   const progressHintBottom =
@@ -296,6 +314,11 @@ export default function ReaderScreen() {
   );
   const [pageIndex, setPageIndex] = React.useState(0);
   const [measureTick, setMeasureTick] = React.useState(0);
+  const [scrollPosition, setScrollPosition] = React.useState(0);
+  const [scrollMetrics, setScrollMetrics] = React.useState({
+    contentHeight: 0,
+    viewportHeight: 0,
+  });
   // 远距离跳页（换章落到末页/续读远页）时先关掉 scroll-snap，否则强制吸附会把
   // 程序滚动拽回已渲染的邻近页；滚动落定并渲染出目标页后再恢复吸附。
   const [snapEnabled, setSnapEnabled] = React.useState(true);
@@ -303,6 +326,7 @@ export default function ReaderScreen() {
     undefined,
   );
   const flatListRef = React.useRef<FlatList<ReaderPageData>>(null);
+  const scrollViewRef = React.useRef<ScrollView>(null);
   const currentOffsetRef = React.useRef(0);
   const pendingLandRef = React.useRef<'last' | null>(null);
   // 换章/重排版后需要把横向容器定位到的目标页；setPageIndex 只更新页码，
@@ -332,6 +356,25 @@ export default function ReaderScreen() {
   const webScrollIdleRef = React.useRef<
     ReturnType<typeof setTimeout> | undefined
   >(undefined);
+  const webProgrammaticScrollRef = React.useRef(false);
+  const webProgrammaticScrollTimerRef = React.useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
+  const webScrollEpochRef = React.useRef(0);
+  const chapterTurnLockRef = React.useRef(false);
+  const chapterTurnUnlockTimerRef = React.useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
+  const scrollProgressTimerRef = React.useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
+  const pendingScrollPositionRef = React.useRef<number | null>(null);
+  const contentRequestTrackerRef = React.useRef<ReturnType<
+    typeof createLatestRequestTracker
+  > | null>(null);
+  if (!contentRequestTrackerRef.current) {
+    contentRequestTrackerRef.current = createLatestRequestTracker();
+  }
 
   React.useEffect(() => {
     selectBook(bookId);
@@ -341,7 +384,16 @@ export default function ReaderScreen() {
     () => () => {
       if (transitionRef.current) clearTimeout(transitionRef.current);
       if (webScrollIdleRef.current) clearTimeout(webScrollIdleRef.current);
+      if (webProgrammaticScrollTimerRef.current) {
+        clearTimeout(webProgrammaticScrollTimerRef.current);
+      }
       if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
+      if (chapterTurnUnlockTimerRef.current) {
+        clearTimeout(chapterTurnUnlockTimerRef.current);
+      }
+      if (scrollProgressTimerRef.current) {
+        clearTimeout(scrollProgressTimerRef.current);
+      }
     },
     [],
   );
@@ -400,6 +452,9 @@ export default function ReaderScreen() {
   ]);
 
   const chapter = chapters[chapterIndex];
+  const [clockText, setClockText] = React.useState(() =>
+    formatReaderClock(new Date()),
+  );
   const isNight = settings.theme === 'night';
   const hasBookmark = chapter
     ? bookmarks.some(b => b.chapterId === chapter.id)
@@ -413,6 +468,61 @@ export default function ReaderScreen() {
         .filter(p => p.trim().length > 0),
     [chapter?.content, content],
   );
+  const chapterTextLength = React.useMemo(
+    () =>
+      paragraphs.reduce((sum, paragraph) => {
+        return sum + Array.from(paragraph).length;
+      }, 0),
+    [paragraphs],
+  );
+  const topChapterLabel = formatReaderChapterLabel(chapter, chapterIndex);
+
+  React.useEffect(() => {
+    const tick = () => setClockText(formatReaderClock(new Date()));
+    tick();
+    const timer = setInterval(tick, 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const clearWebScrollIdle = React.useCallback(() => {
+    if (webScrollIdleRef.current) {
+      clearTimeout(webScrollIdleRef.current);
+      webScrollIdleRef.current = undefined;
+    }
+  }, []);
+
+  const markWebProgrammaticScroll = React.useCallback(
+    (duration = 220) => {
+      if (Platform.OS !== 'web') return;
+      webScrollEpochRef.current += 1;
+      webProgrammaticScrollRef.current = true;
+      clearWebScrollIdle();
+      if (webProgrammaticScrollTimerRef.current) {
+        clearTimeout(webProgrammaticScrollTimerRef.current);
+      }
+      webProgrammaticScrollTimerRef.current = setTimeout(() => {
+        webProgrammaticScrollRef.current = false;
+        webScrollEpochRef.current += 1;
+      }, duration);
+    },
+    [clearWebScrollIdle],
+  );
+
+  const lockChapterTurn = React.useCallback(() => {
+    chapterTurnLockRef.current = true;
+    if (chapterTurnUnlockTimerRef.current) {
+      clearTimeout(chapterTurnUnlockTimerRef.current);
+    }
+  }, []);
+
+  const unlockChapterTurnSoon = React.useCallback((delay = 180) => {
+    if (chapterTurnUnlockTimerRef.current) {
+      clearTimeout(chapterTurnUnlockTimerRef.current);
+    }
+    chapterTurnUnlockTimerRef.current = setTimeout(() => {
+      chapterTurnLockRef.current = false;
+    }, delay);
+  }, []);
 
   // 阅读列宽度：窄屏铺满，宽屏封顶到 READER_MAX_CONTENT 并居中（两侧多留白）。
   // paddingH 用于渲染时把文本块在整页/滚动容器内居中；textWidth 用于分页断行。
@@ -430,7 +540,7 @@ export default function ReaderScreen() {
     const maxWidth = readerColumn.textWidth;
     const bodyHeight = Math.max(
       1,
-      viewportHeight - PAGE_TOP_PADDING - PAGE_BOTTOM_PADDING,
+      viewportHeight - readerTopPadding - PAGE_BOTTOM_PADDING,
     );
     const lineHeight = display.fontSize * display.lineHeight;
     // 首页扣除标题区（章节名 + meta + 间距）真实占用的高度，消除首页尾部留白。
@@ -449,6 +559,7 @@ export default function ReaderScreen() {
     display.lineHeight,
     display.paraGap,
     display.titleSize,
+    readerTopPadding,
     viewportHeight,
     readerColumn.textWidth,
   ]);
@@ -489,9 +600,34 @@ export default function ReaderScreen() {
     prevChapterIdRef.current = chapter?.id;
 
     if (chapterChanged) {
+      if (Platform.OS === 'web') {
+        webScrollEpochRef.current += 1;
+        clearWebScrollIdle();
+      }
       // 续读位置只在首个章节尝试一次，消费后清空，避免回到该章又跳回旧偏移。
       const resume = resumeRef.current;
       resumeRef.current = null;
+      if (settings.pageMode === 'scroll') {
+        let position = 0;
+        if (pendingLandRef.current === 'last') {
+          pendingLandRef.current = null;
+          position = chapterTextLength;
+          pendingScrollPositionRef.current = Number.MAX_SAFE_INTEGER;
+        } else if (
+          resume &&
+          resume.chapterId === chapter?.id &&
+          resume.position > 0
+        ) {
+          position = resume.position;
+          pendingScrollPositionRef.current = position;
+        } else {
+          pendingScrollPositionRef.current = 0;
+        }
+        currentOffsetRef.current = position;
+        setScrollPosition(position);
+        setPageIndex(0);
+        return;
+      }
       let landing = 0;
       if (pendingLandRef.current === 'last') {
         pendingLandRef.current = null;
@@ -517,22 +653,44 @@ export default function ReaderScreen() {
     }
 
     // 同章重新分页时，用逻辑字符偏移映射回原段落附近，避免字号/行距调整后跳回首页。
+    if (Platform.OS === 'web') {
+      webScrollEpochRef.current += 1;
+      clearWebScrollIdle();
+    }
+    if (settings.pageMode === 'scroll') {
+      pendingScrollPositionRef.current = currentOffsetRef.current;
+      setScrollPosition(currentOffsetRef.current);
+      setPageIndex(0);
+      return;
+    }
     const remapped = findPageByOffset(pages, currentOffsetRef.current);
     setPageIndex(remapped);
     // 页宽随分页变化，容器旧 scrollLeft 会指向错页，重排版后同样需要重定位。
     pendingScrollPageRef.current = remapped > 0 ? remapped : null;
-  }, [chapter?.id, pages, settings.pageMode]);
+  }, [
+    chapter?.id,
+    chapterTextLength,
+    clearWebScrollIdle,
+    pages,
+    settings.pageMode,
+  ]);
 
+  const scrollChapterFraction =
+    settings.pageMode === 'scroll' && chapterTextLength > 0
+      ? Math.max(0, Math.min(1, scrollPosition / chapterTextLength))
+      : 0;
   const pageProgressPct =
-    total > 0 && pages.length > 0
-      ? Math.round(((chapterIndex + pageIndex / pages.length) / total) * 100)
+    total > 0
+      ? settings.pageMode === 'page' && pages.length > 0
+        ? Math.round(((chapterIndex + pageIndex / pages.length) / total) * 100)
+        : Math.round(((chapterIndex + scrollChapterFraction) / total) * 100)
       : progressPct;
   const progressLabel =
     settings.pageMode === 'page'
       ? `本章 ${Math.min(pageIndex + 1, pages.length)} / ${
           pages.length
         } 页 · ${pageProgressPct}%`
-      : `${chapterIndex + 1} / ${total} · ${progressPct}%`;
+      : `本章 ${Math.round(scrollChapterFraction * 100)}% · ${pageProgressPct}%`;
 
   // 翻页/滚动落定后，把当前页内偏移与书籍进度持久化，重开时精确续读。
   React.useEffect(() => {
@@ -544,22 +702,28 @@ export default function ReaderScreen() {
       currentOffsetRef.current,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId, chapter?.id, pageIndex, pageProgressPct, status]);
+  }, [bookId, chapter?.id, pageIndex, pageProgressPct, scrollPosition, status]);
 
   // 在线书：当前章正文尚未抓取时按需拉取并缓存，复用现成的 loading / error 态。
   // 本地书章节已带正文，直接置为 ready。effect 以 chapter.id 为键，换章会自动重跑。
   React.useEffect(() => {
     if (!chapter) return;
+    const tracker = contentRequestTrackerRef.current!;
     if (chapter.content) {
+      tracker.reset();
       setStatus(prev => (prev === 'ready' ? prev : 'ready'));
       return;
     }
-    if (!isOnline) return;
+    if (!isOnline) {
+      tracker.reset();
+      return;
+    }
     let cancelled = false;
+    const requestToken = tracker.start();
     setStatus('loading');
     ensureRef.current(bookId, chapterIndex)
       .then(filled => {
-        if (cancelled) return;
+        if (cancelled || !tracker.isLatest(requestToken)) return;
         if (filled && filled.content) {
           setStatus('ready');
           // 预取下一章，翻章更顺（失败静默）。
@@ -571,17 +735,27 @@ export default function ReaderScreen() {
         }
       })
       .catch(() => {
-        if (!cancelled) setStatus('error');
+        if (!cancelled && tracker.isLatest(requestToken)) setStatus('error');
       });
     return () => {
       cancelled = true;
+      tracker.reset();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, chapter?.id, chapterIndex, isOnline]);
 
+  React.useEffect(() => {
+    if (status === 'ready') unlockChapterTurnSoon();
+  }, [chapter?.id, status, unlockChapterTurnSoon]);
+
   const goToChapter = React.useCallback(
     (idx: number) => {
       if (idx < 0 || idx >= total) return;
+      lockChapterTurn();
+      if (Platform.OS === 'web') {
+        webScrollEpochRef.current += 1;
+        clearWebScrollIdle();
+      }
       setStatus('loading');
       setSettingsOpen(false);
       setDrawerOpen(false);
@@ -593,7 +767,16 @@ export default function ReaderScreen() {
       else if (isOnline) setStatus('loading');
       else setStatus('error');
     },
-    [bookId, chapters, isOnline, openChapter, setToolbarVisible, total],
+    [
+      bookId,
+      chapters,
+      clearWebScrollIdle,
+      isOnline,
+      lockChapterTurn,
+      openChapter,
+      setToolbarVisible,
+      total,
+    ],
   );
 
   // 把横向翻页容器定位到指定页。同章翻页平滑滚动，换章/续读补位用即时定位。
@@ -608,6 +791,7 @@ export default function ReaderScreen() {
         // 直接传 DOM 标准的 {left,behavior} 会被忽略，键盘/点击翻页因此不生效；
         // 调用原生 scrollTo 绕过该补丁，保留平滑滚动。
         if (node) {
+          markWebProgrammaticScroll(smooth ? 420 : 180);
           const nativeScrollTo = HTMLElement.prototype.scrollTo as unknown as (
             this: Element,
             options: { left: number; behavior: ScrollBehavior },
@@ -621,7 +805,7 @@ export default function ReaderScreen() {
         flatListRef.current?.scrollToOffset({ offset, animated: smooth });
       }
     },
-    [viewportWidth],
+    [markWebProgrammaticScroll, viewportWidth],
   );
 
   const goToPage = React.useCallback(
@@ -665,6 +849,10 @@ export default function ReaderScreen() {
         if (Platform.OS === 'web') setSnapEnabled(target <= 0);
         pendingScrollPageRef.current = target > 0 ? target : null;
         setPageIndex(target);
+      } else if (settings.pageMode === 'scroll') {
+        currentOffsetRef.current = position;
+        pendingScrollPositionRef.current = position;
+        setScrollPosition(position);
       }
     },
     [chapters, chapterIndex, goToChapter, pages, settings.pageMode],
@@ -710,6 +898,81 @@ export default function ReaderScreen() {
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [status, pageIndex, pages.length, scrollToPage, viewportWidth]);
+
+  const updateScrollMetrics = React.useCallback(
+    (next: Partial<typeof scrollMetrics>) => {
+      setScrollMetrics(prev => {
+        const merged = { ...prev, ...next };
+        return prev.contentHeight === merged.contentHeight &&
+          prev.viewportHeight === merged.viewportHeight
+          ? prev
+          : merged;
+      });
+    },
+    [],
+  );
+
+  React.useEffect(() => {
+    if (
+      status !== 'ready' ||
+      settings.pageMode !== 'scroll' ||
+      pendingScrollPositionRef.current == null ||
+      scrollMetrics.contentHeight <= 0 ||
+      scrollMetrics.viewportHeight <= 0
+    ) {
+      return;
+    }
+    const position = pendingScrollPositionRef.current;
+    pendingScrollPositionRef.current = null;
+    const rafId = requestAnimationFrame(() => {
+      const y = readingPositionToScrollOffset({
+        position,
+        contentHeight: scrollMetrics.contentHeight,
+        viewportHeight: scrollMetrics.viewportHeight,
+        contentLength: chapterTextLength,
+      });
+      scrollViewRef.current?.scrollTo({ y, animated: false });
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [
+    chapterTextLength,
+    scrollMetrics.contentHeight,
+    scrollMetrics.viewportHeight,
+    settings.pageMode,
+    status,
+  ]);
+
+  const handleScrollModeScroll = React.useCallback(
+    (event: { nativeEvent: { contentOffset: { y: number } } }) => {
+      const position = scrollOffsetToReadingPosition({
+        scrollY: event.nativeEvent.contentOffset.y,
+        contentHeight: scrollMetrics.contentHeight,
+        viewportHeight: scrollMetrics.viewportHeight,
+        contentLength: chapterTextLength,
+      });
+      currentOffsetRef.current = position;
+      if (scrollProgressTimerRef.current) {
+        clearTimeout(scrollProgressTimerRef.current);
+      }
+      scrollProgressTimerRef.current = setTimeout(() => {
+        setScrollPosition(prev => (prev === position ? prev : position));
+      }, 120);
+    },
+    [
+      chapterTextLength,
+      scrollMetrics.contentHeight,
+      scrollMetrics.viewportHeight,
+    ],
+  );
+
+  const flushScrollModeProgress = React.useCallback(() => {
+    if (scrollProgressTimerRef.current) {
+      clearTimeout(scrollProgressTimerRef.current);
+      scrollProgressTimerRef.current = undefined;
+    }
+    const position = currentOffsetRef.current;
+    setScrollPosition(prev => (prev === position ? prev : position));
+  }, []);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web' || settings.pageMode !== 'page') return;
@@ -785,7 +1048,7 @@ export default function ReaderScreen() {
             styles.pagePanel,
             {
               width: viewportWidth,
-              paddingTop: PAGE_TOP_PADDING,
+              paddingTop: readerTopPadding,
               paddingBottom: PAGE_BOTTOM_PADDING,
               paddingHorizontal: readerColumn.paddingH,
             },
@@ -901,32 +1164,46 @@ export default function ReaderScreen() {
     (event: { nativeEvent: { contentOffset: { x: number } } }) => {
       const x = event.nativeEvent.contentOffset.x;
       if (Platform.OS === 'web') {
+        if (webProgrammaticScrollRef.current) return;
+        const scheduledEpoch = webScrollEpochRef.current;
         if (webScrollIdleRef.current) clearTimeout(webScrollIdleRef.current);
         // Web 端滑动期间只记录最后落点，等浏览器惯性 + scroll-snap 落定后再同步页码，避免高频 setState 影响滚动性能。
         webScrollIdleRef.current = setTimeout(() => {
+          if (
+            webProgrammaticScrollRef.current ||
+            isStaleScrollSync(scheduledEpoch, webScrollEpochRef.current)
+          ) {
+            return;
+          }
           syncPageByScrollOffset(x);
         }, 80);
         return;
       }
 
-      if (x < -CHAPTER_TURN_THRESHOLD && pageIndex === 0) {
-        if (chapterIndex > 0) {
-          pendingLandRef.current = 'last';
-          goToChapter(chapterIndex - 1);
-        }
-      } else if (
-        x > (pages.length - 1) * viewportWidth + CHAPTER_TURN_THRESHOLD &&
-        pageIndex === pages.length - 1
-      ) {
-        if (chapterIndex < total - 1) {
-          pendingLandRef.current = null;
-          goToChapter(chapterIndex + 1);
-        }
+      const turn = getBoundaryTurn({
+        offsetX: x,
+        pageIndex,
+        pagesLength: pages.length,
+        viewportWidth,
+        chapterIndex,
+        totalChapters: total,
+        locked: chapterTurnLockRef.current,
+        threshold: CHAPTER_TURN_THRESHOLD,
+      });
+      if (turn === 'prev') {
+        lockChapterTurn();
+        pendingLandRef.current = 'last';
+        goToChapter(chapterIndex - 1);
+      } else if (turn === 'next') {
+        lockChapterTurn();
+        pendingLandRef.current = null;
+        goToChapter(chapterIndex + 1);
       }
     },
     [
       chapterIndex,
       goToChapter,
+      lockChapterTurn,
       pageIndex,
       pages.length,
       syncPageByScrollOffset,
@@ -1010,7 +1287,13 @@ export default function ReaderScreen() {
               windowSize={3}
               removeClippedSubviews
               getItemLayout={getPageLayout}
-              onScrollBeginDrag={() => setToolbarVisible(false)}
+              onScrollBeginDrag={() => {
+                if (Platform.OS === 'web') {
+                  webProgrammaticScrollRef.current = false;
+                  webScrollEpochRef.current += 1;
+                }
+                setToolbarVisible(false);
+              }}
               onMomentumScrollEnd={handlePageMomentumEnd}
               scrollEventThrottle={16}
               onScroll={handlePageScroll}
@@ -1041,13 +1324,26 @@ export default function ReaderScreen() {
           </>
         ) : (
           <ScrollView
+            ref={scrollViewRef}
             style={StyleSheet.absoluteFill}
             contentContainerStyle={{
               paddingHorizontal: readerColumn.paddingH,
-              paddingTop: PAGE_TOP_PADDING,
+              paddingTop: readerTopPadding,
               paddingBottom: PAGE_BOTTOM_PADDING,
             }}
             onScrollBeginDrag={() => setToolbarVisible(false)}
+            onLayout={e =>
+              updateScrollMetrics({
+                viewportHeight: e.nativeEvent.layout.height,
+              })
+            }
+            onContentSizeChange={(_, height) =>
+              updateScrollMetrics({ contentHeight: height })
+            }
+            onScroll={handleScrollModeScroll}
+            onScrollEndDrag={flushScrollModeProgress}
+            onMomentumScrollEnd={flushScrollModeProgress}
+            scrollEventThrottle={120}
           >
             <Pressable onPress={toggleToolbar}>
               <Text
@@ -1177,6 +1473,35 @@ export default function ReaderScreen() {
         </Text>
       </View>
 
+      <View
+        style={[
+          styles.readerStatus,
+          {
+            top: readerStatusTop,
+            paddingHorizontal: readerColumn.paddingH,
+          },
+        ]}
+        pointerEvents="none"
+      >
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.readerStatusChapter,
+            { color: display.theme.sub },
+          ]}
+        >
+          {topChapterLabel}
+        </Text>
+        <Text
+          style={[
+            styles.readerStatusTime,
+            { color: display.theme.sub },
+          ]}
+        >
+          {clockText}
+        </Text>
+      </View>
+
       <Animated.View
         pointerEvents={isToolbarVisible ? 'auto' : 'none'}
         style={[
@@ -1200,7 +1525,7 @@ export default function ReaderScreen() {
         <Pressable onPress={handleBack} style={styles.barBtn}>
           <Icon name="arrow-back" size={20} color={display.chrome.ink} />
         </Pressable>
-        <View style={{ flex: 1, alignItems: 'center' }}>
+        <View style={styles.topTitleWrap}>
           <Text
             numberOfLines={1}
             style={{
@@ -1212,17 +1537,19 @@ export default function ReaderScreen() {
             {book.title}
           </Text>
         </View>
-        {isFullscreenSupported ? (
-          <Pressable onPress={() => toggleFullscreen()} style={styles.barBtn}>
-            <Icon
-              name={isFs ? 'fullscreen-exit' : 'fullscreen'}
-              size={22}
-              color={display.chrome.ink}
-            />
-          </Pressable>
-        ) : (
-          <View style={styles.barBtn} />
-        )}
+        <View style={styles.topRight}>
+          {isFullscreenSupported ? (
+            <Pressable onPress={() => toggleFullscreen()} style={styles.barBtn}>
+              <Icon
+                name={isFs ? 'fullscreen-exit' : 'fullscreen'}
+                size={22}
+                color={display.chrome.ink}
+              />
+            </Pressable>
+          ) : (
+            <View style={styles.barBtn} />
+          )}
+        </View>
       </Animated.View>
 
       <Animated.View
@@ -1984,6 +2311,25 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
   },
+  readerStatus: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    minHeight: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  readerStatusChapter: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 11,
+  },
+  readerStatusTime: {
+    fontSize: 11,
+    fontVariant: ['tabular-nums'],
+  },
   topBar: {
     position: 'absolute',
     top: 0,
@@ -2001,6 +2347,19 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  topTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  topRight: {
+    minWidth: 80,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 2,
   },
   bottomBar: {
     position: 'absolute',

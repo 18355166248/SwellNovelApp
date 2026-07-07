@@ -17,7 +17,7 @@ import {
 
 // 懒加载正文后按书防抖落盘：整册 JSON 重写较重，短时间多次翻章合并成一次写入。
 const CACHE_DEBOUNCE_MS = 1000;
-const BOOKSHUKU_CONTENT_VERSION = 2;
+const BOOKSHUKU_CONTENT_VERSION = 3;
 const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function scheduleCache(bookId: string, chapters: Chapter[]) {

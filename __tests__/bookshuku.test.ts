@@ -26,9 +26,14 @@ const CATALOG = `
 </ul>
 `;
 
-const CH1_P1 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 (第1/3页)<br /><br />&nbsp;&nbsp;&nbsp;&nbsp;第一段正文。<br />第二段正文。<br /></p></div>`;
-const CH1_P2 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;（第2/3页）<br />第三段正文。<br /></p></div>`;
-const CH1_P3 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;（第3/3页）<br />第四段正文。<br /></p></div>`;
+const CH1_P1 = `
+<div class="read-top">
+  <li class="catalogue"><a href="http://wap.bookshuku.org/read/160297.html"><span>目录</span></a></li>
+  <li class="title">捞尸人 第一章</li>
+</div>
+<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 (第1/3页)<br /><br />&nbsp;&nbsp;&nbsp;&nbsp;第一段正文。<br />第二段正文。<br /></p></div>`;
+const CH1_P2 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第2/3页）<br />第三段正文。<br /></p></div>`;
+const CH1_P3 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第3/3页）<br />第四段正文。<br /></p></div>`;
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -63,7 +68,7 @@ describe('bookshukuSource', () => {
     expect(info.catalogUrl).toBe('http://wap.bookshuku.org/read/160297.html');
   });
 
-  it('parseCatalog 解析章节并把相对 URL 转绝对', async () => {
+  it('parseCatalog 解析章节并把相对 URL 转绝对，不能用过期已知总数硬补目录', async () => {
     const info = await bookshukuSource.parseBookInfo(
       'http://wap.bookshuku.org/bookinfo/160297.html',
     );
@@ -77,14 +82,17 @@ describe('bookshukuSource', () => {
   });
 
   it('parseChapterContent 拼接多子页、去分页标记与标题回显', async () => {
-    const content = await bookshukuSource.parseChapterContent(
+    const result = await bookshukuSource.parseChapterContent(
       'http://wap.bookshuku.org/read/160297_1.html',
     );
+    const content = typeof result === 'string' ? result : result.content;
+    const title = typeof result === 'string' ? undefined : result.title;
     expect(content).toBe(
       ['第一段正文。', '第二段正文。', '第三段正文。', '第四段正文。'].join('\n'),
     );
     expect(content).not.toMatch(/第\d+\/\d+页/);
     expect(content).not.toContain('第一章');
+    expect(title).toBe('第一章');
     expect(mockFetch).toHaveBeenCalledWith(
       'http://wap.bookshuku.org/read/160297_1_2.html',
     );

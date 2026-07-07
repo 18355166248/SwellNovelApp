@@ -26,12 +26,6 @@ import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
 const HOST = 'wap.bookshuku.org';
 const ORIGIN = `http://${HOST}`;
 
-// 站点对 RN/Node fetch 会返回 Cloudflare 403。对已验证的热门书保留目录总数兜底，
-// 先保证章节 URL 完整可打开；标题在无法解析目录页时用序号标题补位。
-const KNOWN_TOTAL_CHAPTERS: Record<string, number> = {
-  '160297': 754,
-};
-
 const KNOWN_TITLES: Record<string, string> = {
   '160297': '捞尸人',
 };
@@ -78,10 +72,9 @@ function normalizeChapter(parts: string[]): string {
     .join('\n')
     .split('\n')
     .map(l => l.replace(/ /g, ' ').trim())
-    .filter(l => l.length > 0);
-  if (lines.length > 0 && lines[0].length < 40 && HEADING_RE.test(lines[0])) {
-    lines.shift();
-  }
+    .filter(l => l.length > 0)
+    // 站点每个分页正文开头都会重复章节标题，合并多页时要全部剔除。
+    .filter(l => !(l.length < 40 && HEADING_RE.test(l)));
   return lines.join('\n');
 }
 
@@ -89,6 +82,8 @@ function normalizeTitle(raw?: string): string | undefined {
   if (!raw) return undefined;
   const title = decodeEntities(stripTags(raw))
     .replace(/^\s*正文\s*[:：-]?\s*/i, '')
+    .replace(/\s*[_-]\s*全文阅读.*$/i, '')
+    .replace(/\s*[_-]\s*分节阅读.*$/i, '')
     .replace(/\s*[_-]\s*TXT图书下载网.*$/i, '')
     .replace(/\s*[_-]\s*捞尸人.*$/i, '')
     .replace(/\s*[_-]\s*.*?bookshuku.*$/i, '')
@@ -98,13 +93,30 @@ function normalizeTitle(raw?: string): string | undefined {
   return title;
 }
 
+function normalizeReadTopTitle(raw?: string): string | undefined {
+  const title = normalizeTitle(raw);
+  if (!title) return undefined;
+  const parts = title.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return parts.slice(1).join(' ').trim() || title;
+  }
+  return title;
+}
+
 function extractChapterTitle(html: string): string | undefined {
   const candidates = [
+    normalizeReadTopTitle(
+      matchOne(/<li[^>]+class="[^"]*\btitle\b[^"]*"[^>]*>([\s\S]*?)<\/li>/i, html),
+    ),
     matchOne(/<h1[^>]*>([\s\S]*?)<\/h1>/i, html),
     matchOne(/<div[^>]+class="[^"]*(?:title|chapter)[^"]*"[^>]*>([\s\S]*?)<\/div>/i, html),
     matchOne(/<title[^>]*>([\s\S]*?)<\/title>/i, html),
   ];
-  return candidates.map(normalizeTitle).find(Boolean);
+  return candidates
+    .map(candidate =>
+      typeof candidate === 'string' ? normalizeTitle(candidate) : candidate,
+    )
+    .find(Boolean);
 }
 
 function inferTitleFromContent(content: string): string | undefined {
@@ -174,27 +186,6 @@ function parseCatalogFromScript(html: string): ParsedChapter[] {
   }));
 }
 
-function buildKnownCatalog(id: string): ParsedChapter[] {
-  const total = KNOWN_TOTAL_CHAPTERS[id];
-  if (!total) return [];
-  return Array.from({ length: total }, (_, i) => ({
-    url: `${ORIGIN}/read/${id}_${i + 1}.html`,
-    title: `第${i + 1}章`,
-  }));
-}
-
-function expandWithKnownCatalog(id: string, chapters: ParsedChapter[]): ParsedChapter[] {
-  const known = buildKnownCatalog(id);
-  if (!known.length || chapters.length >= known.length) return chapters;
-  const titleByUrl = new Map(chapters.map(c => [c.url, c.title]));
-  // 详情页/挑战页有时只能解析到“最新章节”11 条；已知总数时，以完整 URL 列表为准，
-  // 并尽量复用已解析到的真实标题，避免把残缺目录当成功结果落盘。
-  return known.map(c => ({
-    ...c,
-    title: titleByUrl.get(c.url) || c.title,
-  }));
-}
-
 function parseTitleFromCatalogHtml(html: string, id: string): string | undefined {
   const fromPath = matchOne(
     new RegExp(`<a[^>]+href=["']https?:\\/\\/wap\\.bookshuku\\.org\\/bookinfo\\/${id}\\.html["'][^>]*>([\\s\\S]*?)<\\/a>`, 'i'),
@@ -204,6 +195,11 @@ function parseTitleFromCatalogHtml(html: string, id: string): string | undefined
   const fromKeywords = matchOne(/<meta name="keywords" content="([^",]+)/i, html);
   const title = fromPath || fromTitle || fromKeywords;
   return title ? decodeEntities(stripTags(title)).trim() : undefined;
+}
+
+function normalizeCatalogUrl(url: string, id: string): string {
+  if (/\/read\/\d+\.html/i.test(url)) return url;
+  return `${ORIGIN}/read/${id}.html`;
 }
 
 export const bookshukuSource: BookSource = {
@@ -268,16 +264,16 @@ export const bookshukuSource: BookSource = {
   },
 
   async parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]> {
-    let html = await fetchBookshukuHtml(info.catalogUrl);
+    const catalogUrl = normalizeCatalogUrl(info.catalogUrl, info.sourceBookId);
+    let html = await fetchBookshukuHtml(catalogUrl);
     let chapters = parseCatalogHtml(html);
     if (chapters.length === 0) chapters = parseCatalogFromScript(html);
     if (chapters.length === 0) {
       // 若拿到的是纯挑战页或脚本未执行完成，再让 WebView 渲染后回传最终 DOM。
-      html = await fetchRenderedHtml(info.catalogUrl);
+      html = await fetchRenderedHtml(catalogUrl);
       chapters = parseCatalogHtml(html);
       if (chapters.length === 0) chapters = parseCatalogFromScript(html);
     }
-    chapters = expandWithKnownCatalog(info.sourceBookId, chapters);
     if (chapters.length === 0) throw new Error('未能解析到章节目录');
     return chapters;
   },
