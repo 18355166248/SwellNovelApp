@@ -10,14 +10,24 @@
 
 /** 抽正文脚本回传的消息类型。 */
 export const CONTENT_MESSAGE = 'nvl-content';
+export type BrowserFetchPriority = 'high' | 'normal' | 'low';
 
 export interface FetchJob {
   id: string;
   url: string;
   script: (id: string) => string;
   waitMs: number;
+  timeoutMs: number;
+  timeoutMessage: string;
+  priority: BrowserFetchPriority;
   resolve: (text: string) => void;
   reject: (err: Error) => void;
+}
+
+export interface BrowserFetchOptions {
+  timeout?: number;
+  waitMs?: number;
+  priority?: BrowserFetchPriority;
 }
 
 type Enqueue = (job: FetchJob) => void;
@@ -40,17 +50,35 @@ let seq = 0;
 /** 取某 URL 渲染后的正文纯文本。超时/失败会 reject，交由阅读器切 error 态。 */
 export function fetchRenderedContent(
   url: string,
-  timeout = 25000,
+  options: BrowserFetchOptions | number = {},
 ): Promise<string> {
-  return fetchRendered(url, extractorJs, 6000, timeout, 'WebView 取正文超时');
+  const normalized =
+    typeof options === 'number' ? { timeout: options } : options;
+  return fetchRendered(
+    url,
+    extractorJs,
+    normalized.waitMs ?? 6000,
+    normalized.timeout ?? 25000,
+    'WebView 取正文超时',
+    normalized.priority ?? 'normal',
+  );
 }
 
 /** 取某 URL 经 WebView 执行 JS/挑战后的完整 HTML，用于详情页/目录页解析兜底。 */
 export function fetchRenderedHtml(
   url: string,
-  timeout = 45000,
+  options: BrowserFetchOptions | number = {},
 ): Promise<string> {
-  return fetchRendered(url, htmlExtractorJs, 12000, timeout, 'WebView 取页面超时');
+  const normalized =
+    typeof options === 'number' ? { timeout: options } : options;
+  return fetchRendered(
+    url,
+    htmlExtractorJs,
+    normalized.waitMs ?? 12000,
+    normalized.timeout ?? 45000,
+    'WebView 取页面超时',
+    normalized.priority ?? 'normal',
+  );
 }
 
 function fetchRendered(
@@ -59,11 +87,15 @@ function fetchRendered(
   waitMs: number,
   timeout: number,
   timeoutMessage: string,
+  priority: BrowserFetchPriority,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const id = `c${++seq}`;
     const timer = setTimeout(
-      () => reject(new Error(timeoutMessage)),
+      () => {
+        console.warn('[browserFetch] timeout', { id, url, timeout });
+        reject(new Error(timeoutMessage));
+      },
       timeout,
     );
     const job: FetchJob = {
@@ -71,17 +103,32 @@ function fetchRendered(
       url,
       script,
       waitMs,
+      timeoutMs: timeout,
+      timeoutMessage,
+      priority,
       resolve: t => {
         clearTimeout(timer);
+        console.info('[browserFetch] done', { id, url, length: t.length });
         resolve(t);
       },
       reject: e => {
         clearTimeout(timer);
+        console.warn('[browserFetch] failed', { id, url, error: e.message });
         reject(e);
       },
     };
+    console.info('[browserFetch] enqueue', {
+      id,
+      url,
+      waitMs,
+      timeout,
+      priority,
+    });
     if (enqueueImpl) enqueueImpl(job);
-    else buffer.push(job);
+    else {
+      buffer.push(job);
+      console.info('[browserFetch] buffered', { id, buffered: buffer.length });
+    }
   });
 }
 

@@ -17,7 +17,20 @@ import {
 
 // 懒加载正文后按书防抖落盘：整册 JSON 重写较重，短时间多次翻章合并成一次写入。
 const CACHE_DEBOUNCE_MS = 1000;
-const BOOKSHUKU_CONTENT_VERSION = 3;
+export const BOOKSHUKU_CONTENT_VERSION = 8;
+const KNOWN_BOOK_TITLES = ['捞尸人'];
+const BAD_CHAPTER_TITLES = new Set([
+  '恭喜',
+  '恭喜!',
+  '恭喜！',
+  '心动时刻',
+  '温馨提醒',
+  '漫画主页',
+  '外围名媛',
+  '约爱社区',
+  '👏💦约爱社区',
+]);
+const ENSURE_CHAPTER_TIMEOUT_MS = 45000;
 const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function scheduleCache(bookId: string, chapters: Chapter[]) {
@@ -37,15 +50,53 @@ function scheduleCache(bookId: string, chapters: Chapter[]) {
 function unpackChapterContent(result: ParsedChapterContent): {
   content: string;
   title?: string;
+  nextPageUrl?: string;
+  complete?: boolean;
 } {
   return typeof result === 'string' ? { content: result } : result;
 }
 
-function isFallbackChapterTitle(title: string): boolean {
+function isBlockedBookshukuText(content: string): boolean {
+  const normalized = content.replace(/\s+/g, '');
   return (
+    /请在浏览器中打开/.test(content) ||
+    /当前环境无法直接下载/.test(content) ||
+    /点击右上角.*按钮/.test(content) ||
+    /复制链接到浏览器/.test(content) ||
+    /Just a moment/i.test(content) ||
+    /Enable JavaScript and cookies/i.test(content) ||
+    /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载|约爱社区/.test(normalized) ||
+    /👁️/.test(content) ||
+    normalized.length < 200
+  );
+}
+
+function titleWithoutChapterPrefix(title: string): string {
+  return title
+    .replace(/^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isBadChapterTitle(title: string): boolean {
+  const normalized = title.replace(/[>»›]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const suffix = titleWithoutChapterPrefix(normalized);
+  return BAD_CHAPTER_TITLES.has(normalized) || BAD_CHAPTER_TITLES.has(suffix);
+}
+
+function isFallbackChapterTitle(title: string): boolean {
+  const normalized = title.replace(/[>»›]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return (
+    // bookshuku 的目录页经常只有阿拉伯数字占位标题；页面 <title> 返回的
+    // “第四百五十章”这类中文数字章名反而是真实标题，不能在这里误判成兜底名。
     /^第\s*\d+\s*章$/.test(title) ||
-    /^第[零一二三四五六七八九十百千两万]+\s*章$/.test(title) ||
-    /^分节阅读\s*\d+$/.test(title)
+    /^分节阅读\s*\d+$/.test(title) ||
+    isBadChapterTitle(normalized) ||
+    KNOWN_BOOK_TITLES.some(
+      bookTitle =>
+        normalized === bookTitle ||
+        new RegExp(`^第\\s*\\d+\\s*章\\s+${bookTitle}$`).test(normalized),
+    )
   );
 }
 
@@ -58,7 +109,7 @@ function titleFromFirstSentence(content: string): string | undefined {
   const sentenceEnd = firstLine.search(/[。！？!?]/);
   const title =
     sentenceEnd >= 0 ? firstLine.slice(0, sentenceEnd + 1) : firstLine;
-  return title.slice(0, 36).trim() || undefined;
+  return sanitizeChapterTitleCandidate(title.slice(0, 36));
 }
 
 function numberPrefix(chapter: Chapter): string {
@@ -66,13 +117,29 @@ function numberPrefix(chapter: Chapter): string {
 }
 
 function withChapterNumber(chapter: Chapter, title: string): string {
-  const normalized = title.replace(/\s+/g, ' ').trim();
+  const normalized = sanitizeChapterTitleCandidate(title);
   if (!normalized) return numberPrefix(chapter);
-  const numbered = normalized.match(
-    /第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章[\s\S]*/,
-  )?.[0];
-  if (numbered) return numbered.replace(/\s+/g, ' ').trim();
+  const chapterHeading =
+    /^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/.exec(
+      normalized,
+    )?.[0];
+  if (chapterHeading) {
+    return normalized.replace(/\s+/g, ' ').trim();
+  }
   return `${numberPrefix(chapter)} ${normalized}`;
+}
+
+function sanitizeChapterTitleCandidate(title?: string): string | undefined {
+  if (!title) return undefined;
+  const normalized = title
+    .replace(/[>»›]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized || normalized.length > 40) return undefined;
+  if (KNOWN_BOOK_TITLES.includes(normalized)) return undefined;
+  if (isBadChapterTitle(normalized)) return undefined;
+  if (/^(目录|首页|上一章|下一章|返回书页)$/.test(normalized)) return undefined;
+  return normalized;
 }
 
 function resolveChapterTitle(
@@ -85,13 +152,28 @@ function resolveChapterTitle(
   }
   // 目录兜底名（第N章/分节阅读N）只在正文加载后修正：优先页面真实标题，
   // 若页面没有标题，再用正文第一句话，避免为了标题提前抓取全书。
-  if (parsedTitle && !isFallbackChapterTitle(parsedTitle)) {
-    return withChapterNumber(chapter, parsedTitle);
+  const cleanParsedTitle = sanitizeChapterTitleCandidate(parsedTitle);
+  if (cleanParsedTitle && !isFallbackChapterTitle(cleanParsedTitle)) {
+    return withChapterNumber(chapter, cleanParsedTitle);
   }
   return withChapterNumber(
     chapter,
     titleFromFirstSentence(content) || chapter.title,
   );
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 /**
@@ -206,20 +288,48 @@ export const useAddRecognizedBook = () => {
  * 确保某章正文已就绪：已有正文直接返回；否则按书源抓取、回填内存并缓存落盘。
  * 抓取失败会抛错，交由调用方（阅读器）切到 error 态。
  */
+interface EnsureChapterOptions {
+  background?: boolean;
+}
+
 export const useEnsureChapterContent = () => {
   const store = useStore();
 
-  return async (bookId: string, index: number): Promise<Chapter | null> => {
+  return async (
+    bookId: string,
+    index: number,
+    options: EnsureChapterOptions = {},
+  ): Promise<Chapter | null> => {
+    const startedAt = Date.now();
     let chapters = store.get(chaptersAtom)[bookId];
     let chapter = chapters?.[index];
     if (!chapter) return null;
 
     const book = store.get(booksAtom).find(b => b.id === bookId);
     const isBookshuku = book?.source?.name === 'bookshuku';
+    console.info('[useOnlineBook] ensure start', {
+      bookId,
+      index,
+      title: chapter.title,
+      source: book?.source?.name,
+      cached: !!chapter.content,
+      contentVersion: chapter.contentVersion,
+      contentComplete: chapter.contentComplete,
+      nextPageUrl: chapter.nextPageUrl,
+    });
     if (
       chapter.content &&
-      (!isBookshuku || chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION)
+      (!isBookshuku ||
+        (chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
+          !isBlockedBookshukuText(chapter.content) &&
+          !isFallbackChapterTitle(chapter.title)))
     ) {
+      console.info('[useOnlineBook] ensure cache hit', {
+        bookId,
+        index,
+        ms: Date.now() - startedAt,
+        length: chapter.content.length,
+      });
       return chapter;
     }
     if (!book?.source || !chapter.sourceUrl) return chapter; // 非在线书或缺 URL：按空正文处理
@@ -228,12 +338,21 @@ export const useEnsureChapterContent = () => {
     // 无注册书源）走隐藏 WebView 取渲染后正文。
     const source = getSourceById(book.source.name);
     let content: string;
+    let parsedMeta: Pick<
+      ReturnType<typeof unpackChapterContent>,
+      'nextPageUrl' | 'complete'
+    > = {};
     if (source) {
       const needsCatalogRefresh =
         source.id === 'bookshuku' &&
         chapters &&
         (chapters.length <= 20 || chapters.some(c => /^分节阅读\s*\d+$/.test(c.title)));
       if (needsCatalogRefresh) {
+        console.info('[useOnlineBook] refresh stale catalog start', {
+          bookId,
+          index,
+          oldCount: chapters.length,
+        });
         const metas = await source.parseCatalog({
           sourceBookId: source.extractId(book.source.bookUrl) ?? '',
           title: book.title,
@@ -270,21 +389,52 @@ export const useEnsureChapterContent = () => {
         saveBookChapters(bookId, refreshed).catch(error => {
           console.warn('[useOnlineBook] refresh stale catalog failed', error);
         });
+        console.info('[useOnlineBook] refresh stale catalog done', {
+          bookId,
+          oldCount: chapters.length,
+          newCount: refreshed.length,
+          ms: Date.now() - startedAt,
+        });
         chapters = refreshed;
         chapter = refreshed[index];
         if (!chapter?.sourceUrl) return chapter ?? null;
       }
+      console.info('[useOnlineBook] parse chapter start', {
+        bookId,
+        index,
+        url: chapter.sourceUrl,
+      });
       const parsed = unpackChapterContent(
-        await source.parseChapterContent(chapter.sourceUrl),
+        await withTimeout(
+          source.parseChapterContent(chapter.sourceUrl, {
+            priority: options.background ? 'low' : 'high',
+          }),
+          ENSURE_CHAPTER_TIMEOUT_MS,
+          `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+        ),
       );
       content = parsed.content;
+      if (source.id === 'bookshuku' && isBlockedBookshukuText(content)) {
+        throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+      }
+      parsedMeta = {
+        nextPageUrl: parsed.nextPageUrl,
+        complete: parsed.complete,
+      };
       chapter = {
         ...chapter,
         title: resolveChapterTitle(chapter, parsed.title, content),
       };
     } else {
-      const raw = await fetchRenderedContent(chapter.sourceUrl);
+      const raw = await withTimeout(
+        fetchRenderedContent(chapter.sourceUrl),
+        ENSURE_CHAPTER_TIMEOUT_MS,
+        `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+      );
       content = cleanRenderedText(raw, chapter.title);
+      if (isBookshuku && isBlockedBookshukuText(content)) {
+        throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+      }
       chapter = {
         ...chapter,
         title: resolveChapterTitle(chapter, undefined, content),
@@ -296,6 +446,8 @@ export const useEnsureChapterContent = () => {
       content,
       wordCount: content.length,
       contentVersion: isBookshuku ? BOOKSHUKU_CONTENT_VERSION : chapter.contentVersion,
+      nextPageUrl: parsedMeta.nextPageUrl,
+      contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
     };
 
     let nextForBook: Chapter[] | undefined;
@@ -309,6 +461,86 @@ export const useEnsureChapterContent = () => {
     });
     if (nextForBook) scheduleCache(bookId, nextForBook);
 
+    console.info('[useOnlineBook] ensure done', {
+      bookId,
+      index,
+      title: filled.title,
+      ms: Date.now() - startedAt,
+      length: filled.content.length,
+      contentComplete: filled.contentComplete,
+      nextPageUrl: filled.nextPageUrl,
+    });
+    return filled;
+  };
+};
+
+/**
+ * 分页章节续载：目录仍是一章，只在读到章尾时按 nextPageUrl 追加下一子页。
+ * 这条路径只处理已缓存当前页的章节，失败时保留已读内容并把错误交给阅读器提示重试。
+ */
+export const useLoadNextChapterPage = () => {
+  const store = useStore();
+
+  return async (bookId: string, index: number): Promise<Chapter | null> => {
+    const startedAt = Date.now();
+    const chapters = store.get(chaptersAtom)[bookId];
+    const chapter = chapters?.[index];
+    const book = store.get(booksAtom).find(b => b.id === bookId);
+    const source = book?.source ? getSourceById(book.source.name) : null;
+    if (!chapter || !chapter.nextPageUrl || !source) return chapter ?? null;
+
+    console.info('[useOnlineBook] load next page start', {
+      bookId,
+      index,
+      title: chapter.title,
+      url: chapter.nextPageUrl,
+      currentLength: chapter.content.length,
+    });
+
+    const parsed = unpackChapterContent(
+      await withTimeout(
+        source.parseChapterContent(chapter.nextPageUrl, { priority: 'high' }),
+        ENSURE_CHAPTER_TIMEOUT_MS,
+        `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+      ),
+    );
+    const content = chapter.content
+      ? `${chapter.content}\n${parsed.content}`
+      : parsed.content;
+    if (source.id === 'bookshuku' && isBlockedBookshukuText(parsed.content)) {
+      throw new Error('书源返回浏览器打开提示页，未拿到章节分页正文');
+    }
+    const filled: Chapter = {
+      ...chapter,
+      title: resolveChapterTitle(chapter, parsed.title, content),
+      content,
+      wordCount: content.length,
+      contentVersion:
+        source.id === 'bookshuku'
+          ? BOOKSHUKU_CONTENT_VERSION
+          : chapter.contentVersion,
+      nextPageUrl: parsed.nextPageUrl,
+      contentComplete: parsed.complete ?? !parsed.nextPageUrl,
+    };
+
+    let nextForBook: Chapter[] | undefined;
+    store.set(chaptersAtom, prev => {
+      const list = prev[bookId];
+      if (!list) return prev;
+      const next = list.map(c => (c.id === filled.id ? filled : c));
+      nextForBook = next;
+      return { ...prev, [bookId]: next };
+    });
+    if (nextForBook) scheduleCache(bookId, nextForBook);
+
+    console.info('[useOnlineBook] load next page done', {
+      bookId,
+      index,
+      ms: Date.now() - startedAt,
+      length: filled.content.length,
+      contentComplete: filled.contentComplete,
+      nextPageUrl: filled.nextPageUrl,
+    });
     return filled;
   };
 };
@@ -368,24 +600,52 @@ export const useCacheWholeBook = () => {
         !ch.sourceUrl ||
         (ch.content &&
           (source.id !== 'bookshuku' ||
-            ch.contentVersion === BOOKSHUKU_CONTENT_VERSION))
+            (ch.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
+              !isBlockedBookshukuText(ch.content))))
       ) {
         continue;
       }
       try {
-        const parsed = unpackChapterContent(
-          await source.parseChapterContent(ch.sourceUrl),
+        let parsed = unpackChapterContent(
+          await source.parseChapterContent(ch.sourceUrl, { priority: 'low' }),
         );
-        const content = parsed.content;
+        if (source.id === 'bookshuku' && isBlockedBookshukuText(parsed.content)) {
+          throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+        }
+        const firstParsedTitle = parsed.title;
+        let fullContent = parsed.content;
+        let nextPageUrl = parsed.nextPageUrl;
+        let contentComplete = parsed.complete ?? !nextPageUrl;
+        while (nextPageUrl && !signal?.aborted) {
+          // 整本缓存需要完整章节；这里沿用分页元数据顺序抓取，阅读器按需加载不受影响。
+          parsed = unpackChapterContent(
+            await source.parseChapterContent(nextPageUrl, { priority: 'low' }),
+          );
+          if (
+            source.id === 'bookshuku' &&
+            isBlockedBookshukuText(parsed.content)
+          ) {
+            throw new Error('书源返回浏览器打开提示页，未拿到章节分页正文');
+          }
+          fullContent = `${fullContent}\n${parsed.content}`;
+          nextPageUrl = parsed.nextPageUrl;
+          contentComplete = parsed.complete ?? !nextPageUrl;
+        }
+        if (signal?.aborted) {
+          if (sinceFlush > 0) await flush();
+          return { done, total, cancelled: true };
+        }
         const filled: Chapter = {
           ...ch,
-          title: resolveChapterTitle(ch, parsed.title, content),
-          content,
-          wordCount: content.length,
+          title: resolveChapterTitle(ch, firstParsedTitle, fullContent),
+          content: fullContent,
+          wordCount: fullContent.length,
           contentVersion:
             source.id === 'bookshuku'
               ? BOOKSHUKU_CONTENT_VERSION
               : ch.contentVersion,
+          nextPageUrl,
+          contentComplete,
         };
         store.set(chaptersAtom, prev => {
           const list = prev[bookId];

@@ -15,6 +15,7 @@ import { LibraryPersistence } from './src/store/LibraryPersistence';
 import { FullscreenController } from './src/components/FullscreenController';
 import { WebViewFetcher } from './src/components/WebViewFetcher';
 import { useReaderSettings } from './src/store';
+import { BookshukuSelfTest } from './src/dev/BookshukuSelfTest';
 
 function AppContent() {
   const { isDarkMode } = useTheme();
@@ -31,6 +32,7 @@ function AppContent() {
       <LibraryPersistence />
       <FullscreenController />
       <WebViewFetcher />
+      <BookshukuSelfTest />
       <AppNavigator />
     </>
   );

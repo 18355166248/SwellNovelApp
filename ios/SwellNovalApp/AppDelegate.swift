@@ -40,7 +40,14 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 
   override func bundleURL() -> URL? {
 #if DEBUG
-    RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
+    // 本项目固定使用 8082 作为 Metro 端口，避免与其它 RN 项目的默认 8081 冲突。
+    RCTBundleURLProvider.jsBundleURL(
+      forBundleRoot: "index",
+      packagerHost: "localhost:8082",
+      enableDev: true,
+      enableMinification: false,
+      inlineSourceMap: false
+    )
 #else
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif

@@ -29,7 +29,14 @@ export type ParsedChapterContent =
   | {
       content: string;
       title?: string;
+      nextPageUrl?: string;
+      complete?: boolean;
     };
+
+export interface ParseChapterOptions {
+  /** 当前阅读正文用 high，后台目录标题补全用 low，避免后台任务阻塞用户点击。 */
+  priority?: 'high' | 'normal' | 'low';
+}
 
 export interface BookSource {
   id: string; // 书源标识，用作 bookId 前缀，例如 'bookshuku'
@@ -46,5 +53,8 @@ export interface BookSource {
   /** 解析完整目录，返回按顺序排列的章节列表。 */
   parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]>;
   /** 解析单章正文，返回纯文本（段落以换行分隔），可附带页面真实章节名。 */
-  parseChapterContent(url: string): Promise<ParsedChapterContent>;
+  parseChapterContent(
+    url: string,
+    options?: ParseChapterOptions,
+  ): Promise<ParsedChapterContent>;
 }

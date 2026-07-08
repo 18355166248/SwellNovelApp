@@ -16,9 +16,12 @@ const MOBILE_UA =
 // 超时后 abort 抛错，交由调用方切到 error 态并提供重试。
 const TIMEOUT_MS = 15000;
 
-export async function fetchHtml(url: string): Promise<string> {
+export async function fetchHtml(
+  url: string,
+  timeoutMs: number = TIMEOUT_MS,
+): Promise<string> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': MOBILE_UA },

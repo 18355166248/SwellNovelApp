@@ -42,7 +42,9 @@ import {
   useReaderState,
   useBookmarks,
   useToggleBookmark,
+  BOOKSHUKU_CONTENT_VERSION,
   useEnsureChapterContent,
+  useLoadNextChapterPage,
   useAddReadingTime,
 } from '../store';
 import {
@@ -96,6 +98,51 @@ import {
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
 type DrawerChapterItem = { c: Chapter; idx: number };
+
+function isBlockedBookshukuText(content?: string): boolean {
+  const normalized = (content || '').replace(/\s+/g, '');
+  return !!(
+    content &&
+    (/请在浏览器中打开/.test(content) ||
+      /当前环境无法直接下载/.test(content) ||
+      /点击右上角.*按钮/.test(content) ||
+      /复制链接到浏览器/.test(content) ||
+      /Just a moment/i.test(content) ||
+      /Enable JavaScript and cookies/i.test(content) ||
+      /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载|约爱社区/.test(normalized) ||
+      /👁️/.test(content) ||
+      normalized.length < 200)
+  );
+}
+
+function displayChapterTitle(chapter: Chapter, index: number): string {
+  const fallback = `第${index + 1}章`;
+  const title = chapter.title.replace(/\s+/g, ' ').trim();
+  const suffix = title
+    .replace(/^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/, '')
+    .trim();
+  if (
+    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(title) ||
+    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(suffix)
+  ) {
+    return fallback;
+  }
+  return title || fallback;
+}
+
+function needsDrawerTitleResolve(chapter: Chapter): boolean {
+  const title = chapter.title.replace(/\s+/g, ' ').trim();
+  const suffix = title
+    .replace(/^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/, '')
+    .trim();
+  return (
+    chapter.contentVersion !== BOOKSHUKU_CONTENT_VERSION ||
+    /^第\s*\d+\s*章$/.test(title) ||
+    /^分节阅读\s*\d+$/.test(title) ||
+    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(title) ||
+    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(suffix)
+  );
+}
 
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
 const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
@@ -225,6 +272,11 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     ensureRef.current = ensureChapterContent;
   });
+  const loadNextChapterPage = useLoadNextChapterPage();
+  const loadNextPageRef = React.useRef(loadNextChapterPage);
+  React.useEffect(() => {
+    loadNextPageRef.current = loadNextChapterPage;
+  });
 
   const settings = useReaderSettings();
   const display = useReaderDisplay();
@@ -309,10 +361,30 @@ export default function ReaderScreen() {
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
   const [drawerTab, setDrawerTab] = React.useState<'toc' | 'marks'>('toc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
+  const [drawerVisibleIndices, setDrawerVisibleIndices] = React.useState<
+    number[]
+  >([]);
   const drawerTocRef = React.useRef<FlatList<DrawerChapterItem>>(null);
+  const drawerViewabilityConfigRef = React.useRef({
+    itemVisiblePercentThreshold: 40,
+  });
+  const onDrawerViewableItemsChangedRef = React.useRef(
+    ({
+      viewableItems,
+    }: {
+      viewableItems: Array<{ item?: DrawerChapterItem }>;
+    }) => {
+      setDrawerVisibleIndices(
+        viewableItems
+          .map(item => item.item?.idx)
+          .filter((idx): idx is number => typeof idx === 'number'),
+      );
+    },
+  );
   const [status, setStatus] = React.useState<'ready' | 'loading' | 'error'>(
     'ready',
   );
+  const [contentReloadKey, setContentReloadKey] = React.useState(0);
   const [pageIndex, setPageIndex] = React.useState(0);
   const [measureTick, setMeasureTick] = React.useState(0);
   const [scrollPosition, setScrollPosition] = React.useState(0);
@@ -358,6 +430,7 @@ export default function ReaderScreen() {
     ReturnType<typeof setTimeout> | undefined
   >(undefined);
   const pendingScrollPositionRef = React.useRef<number | null>(null);
+  const resolvingDrawerTitlesRef = React.useRef<Set<string>>(new Set());
   const contentRequestTrackerRef = React.useRef<ReturnType<
     typeof createLatestRequestTracker
   > | null>(null);
@@ -442,6 +515,65 @@ export default function ReaderScreen() {
     drawerQuery,
     drawerTransition.mounted,
     scrollDrawerToIndex,
+  ]);
+
+  const drawerVisibleKey = drawerVisibleIndices.join(',');
+  React.useEffect(() => {
+    if (
+      !drawerOpen ||
+      drawerTab !== 'toc' ||
+      book?.source?.name !== 'bookshuku' ||
+      drawerVisibleIndices.length === 0
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const targets = drawerVisibleIndices
+      .map(idx => ({ idx, chapter: chapters[idx] }))
+      .filter(
+        item =>
+          item.chapter?.sourceUrl &&
+          needsDrawerTitleResolve(item.chapter) &&
+          !resolvingDrawerTitlesRef.current.has(item.chapter.id),
+      )
+      .slice(0, 2);
+    if (targets.length === 0) return;
+
+    // 浮层目录只解析当前可见项的真实标题；分批串行，避免打开目录时一次性抓完整本。
+    targets.forEach(({ chapter }) =>
+      resolvingDrawerTitlesRef.current.add(chapter.id),
+    );
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      (async () => {
+        for (const { idx, chapter } of targets) {
+          if (cancelled) return;
+          try {
+            await ensureRef.current(bookId, idx, { background: true });
+          } catch (error) {
+            console.warn('[ReaderScreen] resolve drawer title failed', {
+              bookId,
+              index: idx,
+              title: chapter.title,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          } finally {
+            resolvingDrawerTitlesRef.current.delete(chapter.id);
+          }
+        }
+      })();
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    book?.source?.name,
+    bookId,
+    chapters,
+    drawerOpen,
+    drawerTab,
+    drawerVisibleKey,
   ]);
 
   const chapter = chapters[chapterIndex];
@@ -656,7 +788,12 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     if (!chapter) return;
     const tracker = contentRequestTrackerRef.current!;
-    if (chapter.content) {
+    const hasUsableCachedContent =
+      !!chapter.content &&
+      (book?.source?.name !== 'bookshuku' ||
+        (chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
+          !isBlockedBookshukuText(chapter.content)));
+    if (hasUsableCachedContent) {
       tracker.reset();
       setStatus(prev => (prev === 'ready' ? prev : 'ready'));
       return;
@@ -673,15 +810,23 @@ export default function ReaderScreen() {
         if (cancelled || !tracker.isLatest(requestToken)) return;
         if (filled && filled.content) {
           setStatus('ready');
-          // 预取下一章，翻章更顺（失败静默）。
-          if (chapterIndex + 1 < chapters.length) {
-            ensureRef.current(bookId, chapterIndex + 1).catch(() => {});
+          // 分页章节先保证本章后续页按需续载；只有本章完整后才预取下一章。
+          if (!filled.nextPageUrl && chapterIndex + 1 < chapters.length) {
+            ensureRef
+              .current(bookId, chapterIndex + 1, { background: true })
+              .catch(() => {});
           }
         } else {
           setStatus('error');
         }
       })
-      .catch(() => {
+      .catch(error => {
+        console.warn('[ReaderScreen] ensure chapter failed', {
+          bookId,
+          chapterIndex,
+          title: chapter.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
         if (!cancelled && tracker.isLatest(requestToken)) setStatus('error');
       });
     return () => {
@@ -689,7 +834,16 @@ export default function ReaderScreen() {
       tracker.reset();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId, chapter?.id, chapterIndex, isOnline]);
+  }, [
+    book?.source?.name,
+    bookId,
+    chapter?.content,
+    chapter?.contentVersion,
+    chapter?.id,
+    chapterIndex,
+    contentReloadKey,
+    isOnline,
+  ]);
 
   React.useEffect(() => {
     if (status === 'ready') unlockChapterTurnSoon();
@@ -705,14 +859,25 @@ export default function ReaderScreen() {
       setDrawerOpen(false);
       setToolbarVisible(false);
       if (transitionRef.current) clearTimeout(transitionRef.current);
+      // 同一章节重试/重开时 chapter.id 不变；显式触发正文加载 effect，
+      // 避免只进入 loading 覆盖层但没有重新发起 ensure 请求。
+      setContentReloadKey(key => key + 1);
       openChapter(bookId, idx);
       // 目录点击要立即切章并启动正文抓取；抽屉退场动画不能阻塞网络请求，否则未缓存章节体感会多等一轮。
-      if (chapters[idx]?.content) setStatus('ready');
+      if (
+        chapters[idx]?.content &&
+        (book?.source?.name !== 'bookshuku' ||
+          (chapters[idx]?.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
+            !isBlockedBookshukuText(chapters[idx]?.content)))
+      ) {
+        setStatus('ready');
+      }
       else if (isOnline) setStatus('loading');
       else setStatus('error');
     },
     [
       bookId,
+      book?.source?.name,
       chapters,
       invalidateWebScrollSync,
       isOnline,
@@ -722,6 +887,55 @@ export default function ReaderScreen() {
       total,
     ],
   );
+
+  const loadCurrentChapterNextPage = React.useCallback(() => {
+    if (!chapter?.nextPageUrl || status === 'loading') return false;
+    const tracker = contentRequestTrackerRef.current!;
+    const requestToken = tracker.start();
+    const resumePosition = chapterTextLength;
+    lockChapterTurn();
+    invalidateWebScrollSync();
+    setStatus('loading');
+    setSettingsOpen(false);
+    setDrawerOpen(false);
+    setToolbarVisible(false);
+    currentOffsetRef.current = resumePosition;
+    pendingScrollPositionRef.current = resumePosition;
+    pendingScrollPageRef.current = null;
+    // 分页章续载只追加正文，不切换目录章节；加载完成后用旧正文末尾偏移定位到新分页开头。
+    loadNextPageRef.current(bookId, chapterIndex)
+      .then(filled => {
+        if (!tracker.isLatest(requestToken)) return;
+        if (filled?.content) {
+          currentOffsetRef.current = resumePosition;
+          pendingScrollPositionRef.current = resumePosition;
+          setStatus('ready');
+        } else {
+          setStatus('error');
+        }
+      })
+      .catch(error => {
+        console.warn('[ReaderScreen] load chapter next page failed', {
+          bookId,
+          chapterIndex,
+          title: chapter.title,
+          url: chapter.nextPageUrl,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (tracker.isLatest(requestToken)) setStatus('error');
+      });
+    return true;
+  }, [
+    bookId,
+    chapter?.nextPageUrl,
+    chapter?.title,
+    chapterIndex,
+    chapterTextLength,
+    invalidateWebScrollSync,
+    lockChapterTurn,
+    setToolbarVisible,
+    status,
+  ]);
 
   // 把横向翻页容器定位到指定页。同章翻页平滑滚动，换章/续读补位用即时定位。
   const scrollToPage = React.useCallback(
@@ -763,6 +977,7 @@ export default function ReaderScreen() {
         return;
       }
       if (target >= pages.length) {
+        if (loadCurrentChapterNextPage()) return;
         if (chapterIndex < total - 1) {
           pendingLandRef.current = null;
           goToChapter(chapterIndex + 1);
@@ -773,7 +988,15 @@ export default function ReaderScreen() {
       currentOffsetRef.current = pages[target]?.startOffset ?? 0;
       setPageIndex(target);
     },
-    [chapterIndex, goToChapter, pageIndex, pages, scrollToPage, total],
+    [
+      chapterIndex,
+      goToChapter,
+      loadCurrentChapterNextPage,
+      pageIndex,
+      pages,
+      scrollToPage,
+      total,
+    ],
   );
 
   // 跳转到书签：跨章用 resumeRef 复用换章落点逻辑；同章直接定位到偏移对应页。
@@ -1050,7 +1273,7 @@ export default function ReaderScreen() {
           )}
           {isLastPage && (
             <Text style={[styles.pageEndText, { color: display.theme.sub }]}>
-              本章完
+              {chapter?.nextPageUrl ? '本页完' : '本章完'}
             </Text>
           )}
         </Pressable>
@@ -1061,6 +1284,7 @@ export default function ReaderScreen() {
       book?.title,
       bodyFont,
       chapter?.title,
+      chapter?.nextPageUrl,
       display.fontSize,
       display.lineHeight,
       display.paraGap,
@@ -1141,12 +1365,13 @@ export default function ReaderScreen() {
       } else if (turn === 'next') {
         lockChapterTurn();
         pendingLandRef.current = null;
-        goToChapter(chapterIndex + 1);
+        if (!loadCurrentChapterNextPage()) goToChapter(chapterIndex + 1);
       }
     },
     [
       chapterIndex,
       goToChapter,
+      loadCurrentChapterNextPage,
       lockChapterTurn,
       pageIndex,
       pages.length,
@@ -1312,16 +1537,23 @@ export default function ReaderScreen() {
                 ]}
               >
                 <Text style={{ color: display.theme.sub, fontSize: 12 }}>
-                  本章完
+                  {chapter?.nextPageUrl ? '本页完' : '本章完'}
                 </Text>
                 <Pressable
-                  onPress={() => goToChapter(chapterIndex + 1)}
-                  disabled={chapterIndex >= total - 1}
+                  onPress={() => {
+                    if (!loadCurrentChapterNextPage()) {
+                      goToChapter(chapterIndex + 1);
+                    }
+                  }}
+                  disabled={!chapter?.nextPageUrl && chapterIndex >= total - 1}
                   style={[
                     styles.nextBtn,
                     {
                       borderColor: display.theme.text,
-                      opacity: chapterIndex >= total - 1 ? 0.4 : 1,
+                      opacity:
+                        !chapter?.nextPageUrl && chapterIndex >= total - 1
+                          ? 0.4
+                          : 1,
                     },
                   ]}
                 >
@@ -1332,9 +1564,11 @@ export default function ReaderScreen() {
                       fontFamily: SERIF_FONT,
                     }}
                   >
-                    {chapterIndex >= total - 1
-                      ? '已是最新章节'
-                      : `下一章 · ${chapters[chapterIndex + 1]?.title}`}
+                    {chapter?.nextPageUrl
+                      ? '继续本章 · 下一页'
+                      : chapterIndex >= total - 1
+                        ? '已是最新章节'
+                        : `下一章 · ${chapters[chapterIndex + 1]?.title}`}
                   </Text>
                 </Pressable>
               </View>
@@ -1538,17 +1772,22 @@ export default function ReaderScreen() {
             <View style={[styles.sliderThumb, { left: `${progressPct}%` }]} />
           </View>
           <Pressable
-            onPress={() => goToChapter(chapterIndex + 1)}
-            disabled={chapterIndex >= total - 1}
+            onPress={() => {
+              if (!loadCurrentChapterNextPage()) {
+                goToChapter(chapterIndex + 1);
+              }
+            }}
+            disabled={!chapter?.nextPageUrl && chapterIndex >= total - 1}
           >
             <Text
               style={{
                 color: display.chrome.ink,
                 fontSize: 12.5,
-                opacity: chapterIndex >= total - 1 ? 0.4 : 1,
+                opacity:
+                  !chapter?.nextPageUrl && chapterIndex >= total - 1 ? 0.4 : 1,
               }}
             >
-              下一章
+              {chapter?.nextPageUrl ? '下一页' : '下一章'}
             </Text>
           </Pressable>
         </View>
@@ -2103,6 +2342,8 @@ export default function ReaderScreen() {
                 windowSize={9}
                 removeClippedSubviews={Platform.OS !== 'web'}
                 keyboardShouldPersistTaps="handled"
+                viewabilityConfig={drawerViewabilityConfigRef.current}
+                onViewableItemsChanged={onDrawerViewableItemsChangedRef.current}
                 contentContainerStyle={{
                   paddingHorizontal: 6,
                   paddingBottom: 20,
@@ -2155,7 +2396,7 @@ export default function ReaderScreen() {
                           fontWeight: isCur ? '700' : '400',
                         }}
                       >
-                        {c.title}
+                        {displayChapterTitle(c, idx)}
                       </Text>
                       {isCur && (
                         <Text style={{ color: NOVEL_ACCENT, fontSize: 10 }}>

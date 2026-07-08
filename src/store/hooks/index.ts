@@ -47,8 +47,10 @@ export { useOpenChapter } from './useOpenChapter';
 
 // 网络书源相关
 export {
+  BOOKSHUKU_CONTENT_VERSION,
   useAddOnlineBook,
   useEnsureChapterContent,
+  useLoadNextChapterPage,
   useCacheWholeBook,
   useCheckBookUpdate,
   useAddRecognizedBook,
