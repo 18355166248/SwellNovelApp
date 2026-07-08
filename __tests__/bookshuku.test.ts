@@ -1,9 +1,18 @@
 import { bookshukuSource } from '../src/services/source/bookshuku';
 import { fetchHtml } from '../src/services/http/fetchHtml';
+import { fetchRenderedHtml } from '../src/services/browserFetch/bridge';
 
 jest.mock('../src/services/http/fetchHtml', () => ({ fetchHtml: jest.fn() }));
+jest.mock('../src/services/browserFetch/bridge', () => ({
+  cleanRenderedText: jest.fn((text: string) => text),
+  fetchRenderedContent: jest.fn(),
+  fetchRenderedHtml: jest.fn(),
+}));
 
 const mockFetch = fetchHtml as jest.MockedFunction<typeof fetchHtml>;
+const mockFetchRenderedHtml = fetchRenderedHtml as jest.MockedFunction<
+  typeof fetchRenderedHtml
+>;
 
 // 贴近真实站点结构的最小 fixture。
 const BOOKINFO = `
@@ -26,17 +35,28 @@ const CATALOG = `
 </ul>
 `;
 
+const FULL_CATALOG = `
+<ul class="chapter">
+<li><a href="http://wap.bookshuku.org/read/160297_1.html">第一章</a></li>
+<li><a href="http://wap.bookshuku.org/read/160297_101.html">第九十三章</a></li>
+<li><a href="http://wap.bookshuku.org/read/160297_491.html">第四百五十章</a></li>
+</ul>
+`;
+
+const LONG = '这一段正文用于测试章节分页加载完整，避免因为测试正文太短被当成无效页面。'.repeat(8);
 const CH1_P1 = `
 <div class="read-top">
   <li class="catalogue"><a href="http://wap.bookshuku.org/read/160297.html"><span>目录</span></a></li>
   <li class="title">捞尸人 第一章</li>
 </div>
-<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 (第1/3页)<br /><br />&nbsp;&nbsp;&nbsp;&nbsp;第一段正文。<br />第二段正文。<br /></p></div>`;
-const CH1_P2 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第2/3页）<br />第三段正文。<br /></p></div>`;
-const CH1_P3 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第3/3页）<br />第四段正文。<br /></p></div>`;
+<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 (第1/3页)<br /><br />&nbsp;&nbsp;&nbsp;&nbsp;第一段正文。${LONG}<br />第二段正文。<br /></p></div>`;
+const CH1_P2 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第2/3页）<br />第三段正文。${LONG}<br /></p></div>`;
+const CH1_P3 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第3/3页）<br />第四段正文。${LONG}<br /></p></div>`;
 
 beforeEach(() => {
   mockFetch.mockReset();
+  mockFetchRenderedHtml.mockReset();
+  mockFetchRenderedHtml.mockResolvedValue(CATALOG);
   mockFetch.mockImplementation(async (url: string) => {
     if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
     if (url.endsWith('/read/160297.html')) return CATALOG;
@@ -81,6 +101,29 @@ describe('bookshukuSource', () => {
     expect(chapters[1].url).toBe('http://wap.bookshuku.org/read/160297_2.html');
   });
 
+  it('parseCatalog 目录重试后保留站点真实章号，不能按 URL 序号或数组顺序命名', async () => {
+    mockFetchRenderedHtml.mockResolvedValueOnce(FULL_CATALOG);
+    const info = await bookshukuSource.parseBookInfo(
+      'http://wap.bookshuku.org/bookinfo/160297.html',
+    );
+    const chapters = await bookshukuSource.parseCatalog(info);
+
+    expect(chapters).toEqual([
+      {
+        title: '第一章',
+        url: 'http://wap.bookshuku.org/read/160297_1.html',
+      },
+      {
+        title: '第九十三章',
+        url: 'http://wap.bookshuku.org/read/160297_101.html',
+      },
+      {
+        title: '第四百五十章',
+        url: 'http://wap.bookshuku.org/read/160297_491.html',
+      },
+    ]);
+  });
+
   it('parseChapterContent 拼接多子页、去分页标记与标题回显', async () => {
     const result = await bookshukuSource.parseChapterContent(
       'http://wap.bookshuku.org/read/160297_1.html',
@@ -88,13 +131,19 @@ describe('bookshukuSource', () => {
     const content = typeof result === 'string' ? result : result.content;
     const title = typeof result === 'string' ? undefined : result.title;
     expect(content).toBe(
-      ['第一段正文。', '第二段正文。', '第三段正文。', '第四段正文。'].join('\n'),
+      [
+        `第一段正文。${LONG}`,
+        '第二段正文。',
+        `第三段正文。${LONG}`,
+        `第四段正文。${LONG}`,
+      ].join('\n'),
     );
     expect(content).not.toMatch(/第\d+\/\d+页/);
     expect(content).not.toContain('第一章');
     expect(title).toBe('第一章');
     expect(mockFetch).toHaveBeenCalledWith(
       'http://wap.bookshuku.org/read/160297_1_2.html',
+      6000,
     );
   });
 });

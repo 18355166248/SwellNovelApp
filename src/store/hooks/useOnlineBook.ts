@@ -112,13 +112,9 @@ function titleFromFirstSentence(content: string): string | undefined {
   return sanitizeChapterTitleCandidate(title.slice(0, 36));
 }
 
-function numberPrefix(chapter: Chapter): string {
-  return `第${chapter.order + 1}章`;
-}
-
 function withChapterNumber(chapter: Chapter, title: string): string {
   const normalized = sanitizeChapterTitleCandidate(title);
-  if (!normalized) return numberPrefix(chapter);
+  if (!normalized) return sanitizeChapterTitleCandidate(chapter.title) || '章节';
   const chapterHeading =
     /^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/.exec(
       normalized,
@@ -126,7 +122,7 @@ function withChapterNumber(chapter: Chapter, title: string): string {
   if (chapterHeading) {
     return normalized.replace(/\s+/g, ' ').trim();
   }
-  return `${numberPrefix(chapter)} ${normalized}`;
+  return normalized;
 }
 
 function sanitizeChapterTitleCandidate(title?: string): string | undefined {

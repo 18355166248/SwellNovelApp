@@ -27,10 +27,11 @@ import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
 const HOST = 'wap.bookshuku.org';
 const ORIGIN = `http://${HOST}`;
 
-// bookshuku 在 Cloudflare/移动页降级时可能只返回最新 11 条章节；对已验证书籍保留
-// 章节总数兜底，保证目录 URL 完整，真实标题在打开章节后按需修正。
-const KNOWN_TOTAL_CHAPTERS: Record<string, number> = {
-  '160297': 754,
+// bookshuku 在 Cloudflare/移动页降级时可能只返回最新少量章节；已验证书籍的
+// 大致章节量只用于判断“短目录需要重试”，绝不能用来硬补目录，否则 URL 序号
+// 会被误当成真实章号（例如 160297_491 实际标题是“第四百五十章”）。
+const KNOWN_MIN_CATALOG_COUNTS: Record<string, number> = {
+  '160297': 700,
 };
 
 const KNOWN_TITLES: Record<string, string> = {
@@ -404,25 +405,12 @@ function normalizeCatalogUrl(url: string, id: string): string {
   return `${ORIGIN}/read/${id}.html`;
 }
 
-function buildKnownCatalog(id: string): ParsedChapter[] {
-  const total = KNOWN_TOTAL_CHAPTERS[id];
-  if (!total) return [];
-  return Array.from({ length: total }, (_, index) => ({
-    url: `${ORIGIN}/read/${id}_${index + 1}.html`,
-    title: `第${index + 1}章`,
-  }));
-}
-
-function expandWithKnownCatalog(id: string, chapters: ParsedChapter[]): ParsedChapter[] {
-  const known = buildKnownCatalog(id);
-  if (!known.length || chapters.length >= known.length) return chapters;
-  const titleByUrl = new Map(chapters.map(chapter => [chapter.url, chapter.title]));
-  // 页面只吐“最新章节”时，不能把 11 条当完整目录；以已知 URL 序列补齐，
-  // 命中的真实标题保留，其余用第 N 章占位，打开章节后再按正文页修正标题。
-  return known.map(chapter => ({
-    ...chapter,
-    title: titleByUrl.get(chapter.url) || chapter.title,
-  }));
+function isSuspiciousPartialCatalog(
+  id: string,
+  chapters: ParsedChapter[],
+): boolean {
+  const min = KNOWN_MIN_CATALOG_COUNTS[id];
+  return !!min && chapters.length > 0 && chapters.length < min;
 }
 
 export const bookshukuSource: BookSource = {
@@ -491,13 +479,21 @@ export const bookshukuSource: BookSource = {
     let html = await fetchBookshukuHtml(catalogUrl);
     let chapters = parseCatalogHtml(html);
     if (chapters.length === 0) chapters = parseCatalogFromScript(html);
-    if (chapters.length === 0) {
-      // 若拿到的是纯挑战页或脚本未执行完成，再让 WebView 渲染后回传最终 DOM。
+    if (
+      chapters.length === 0 ||
+      isSuspiciousPartialCatalog(info.sourceBookId, chapters)
+    ) {
+      // 若拿到的是纯挑战页、脚本未执行完成、或只吐“最新章节”，再让 WebView
+      // 渲染后回传最终 DOM。只有渲染结果更完整时才替换，避免伪造章节。
       html = await fetchRenderedHtml(catalogUrl);
-      chapters = parseCatalogHtml(html);
-      if (chapters.length === 0) chapters = parseCatalogFromScript(html);
+      let renderedChapters = parseCatalogHtml(html);
+      if (renderedChapters.length === 0) {
+        renderedChapters = parseCatalogFromScript(html);
+      }
+      if (renderedChapters.length > chapters.length) {
+        chapters = renderedChapters;
+      }
     }
-    chapters = expandWithKnownCatalog(info.sourceBookId, chapters);
     if (chapters.length === 0) throw new Error('未能解析到章节目录');
     return chapters;
   },
@@ -525,23 +521,30 @@ export const bookshukuSource: BookSource = {
       length: firstPage.text.length,
     });
 
-    // 分页章只解析当前子页；下一子页 URL 随章节缓存保存，阅读器翻到章尾时再续拉，
-    // 避免一次性抓完整章导致等待过长，且任一子页失败拖垮当前页阅读。
-    const content = normalizeChapter([firstPage.text]);
+    const parts = [firstPage.text];
+    let cursor = nextPageUrl;
+    let guard = 0;
+    while (cursor && guard < 20) {
+      guard += 1;
+      const nextPage = await fetchArticleText(cursor, options);
+      parts.push(nextPage.text);
+      cursor = getNextReadPageUrl(cursor, `${nextPage.html}\n${nextPage.text}`);
+    }
+    const content = normalizeChapter(parts);
     if (!content) throw new Error('未能解析到章节正文');
     console.info('[bookshuku] chapter done', {
       url,
       ms: Date.now() - startedAt,
       currentPage,
       totalPages,
-      nextPageUrl,
+      nextPageUrl: cursor,
       length: content.length,
     });
     return {
       content,
       title: extractChapterTitle(firstPage.html) || inferTitleFromContent(content),
-      nextPageUrl,
-      complete: !nextPageUrl,
+      nextPageUrl: cursor,
+      complete: !cursor,
     };
   },
 };
