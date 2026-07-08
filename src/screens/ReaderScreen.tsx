@@ -951,17 +951,23 @@ export default function ReaderScreen() {
       if (Platform.OS === 'web') {
         const node = findReaderPageScrollNode();
         // RNW 会把 ScrollView DOM 节点的 scrollTo 覆写成 {x,y,animated} 签名，
-        // 直接传 DOM 标准的 {left,behavior} 会被忽略，键盘/点击翻页因此不生效；
-        // 调用原生 scrollTo 绕过该补丁，保留平滑滚动。
+        // 直接传 DOM 标准的 {left,behavior} 会被忽略，键盘/点击翻页因此不生效。
+        // Web 程序翻页必须即时定位：浏览器 smooth scroll + scroll-snap 的结束时机
+        // 不稳定，迟到的滚动事件会把页码同步回旧的末页。
         if (node) {
-          markWebProgrammaticScroll(smooth ? 420 : 180);
+          markWebProgrammaticScroll(260);
           const nativeScrollTo = HTMLElement.prototype.scrollTo as unknown as (
             this: Element,
             options: { left: number; behavior: ScrollBehavior },
           ) => void;
           nativeScrollTo.call(node, {
             left: offset,
-            behavior: smooth ? 'smooth' : 'auto',
+            behavior: 'auto',
+          });
+          requestAnimationFrame(() => {
+            if (Math.abs(node.scrollLeft - offset) > 1) {
+              nativeScrollTo.call(node, { left: offset, behavior: 'auto' });
+            }
           });
         }
       } else {
