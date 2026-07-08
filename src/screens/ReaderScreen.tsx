@@ -727,8 +727,9 @@ export default function ReaderScreen() {
         currentOffsetRef.current = 0;
       }
       setPageIndex(landing);
-      // 落点非首页时，等新章布局完成后把容器滚到对应页（首页 scrollLeft 本就为 0）。
-      pendingScrollPageRef.current = landing > 0 ? landing : null;
+      // 换章会复用同一个横向滚动容器。即使目标是首页，也要在新内容布局完成后
+      // 显式滚到 0，否则上一章末页的 scrollLeft 会被浏览器夹到新章最后一页。
+      pendingScrollPageRef.current = landing;
       // 远距离落点先关吸附，避免程序滚动被 mandatory-snap 拽回；首页无需处理。
       if (Platform.OS === 'web') setSnapEnabled(landing <= 0);
       return;
@@ -745,7 +746,7 @@ export default function ReaderScreen() {
     const remapped = findPageByOffset(pages, currentOffsetRef.current);
     setPageIndex(remapped);
     // 页宽随分页变化，容器旧 scrollLeft 会指向错页，重排版后同样需要重定位。
-    pendingScrollPageRef.current = remapped > 0 ? remapped : null;
+    pendingScrollPageRef.current = remapped;
   }, [
     chapter?.id,
     chapterTextLength,
