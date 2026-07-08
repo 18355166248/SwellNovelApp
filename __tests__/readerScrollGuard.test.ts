@@ -1,4 +1,5 @@
 import {
+  getChapterLanding,
   getBoundaryTurn,
   isStaleScrollSync,
 } from '../src/utils/readerScrollGuard';
@@ -63,5 +64,11 @@ describe('readerScrollGuard', () => {
   it('treats old web scroll sync epochs as stale', () => {
     expect(isStaleScrollSync(3, 4)).toBe(true);
     expect(isStaleScrollSync(4, 4)).toBe(false);
+  });
+
+  it('lands on the previous chapter last page only for backward boundary navigation', () => {
+    expect(getChapterLanding('prev')).toBe('last');
+    expect(getChapterLanding('next')).toBe('first');
+    expect(getChapterLanding('direct')).toBe('first');
   });
 });

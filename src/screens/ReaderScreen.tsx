@@ -84,6 +84,8 @@ import {
   scrollOffsetToReadingPosition,
 } from '../utils/readerProgress';
 import {
+  ChapterNavigationIntent,
+  getChapterLanding,
   getBoundaryTurn,
   isStaleScrollSync,
 } from '../utils/readerScrollGuard';
@@ -851,8 +853,10 @@ export default function ReaderScreen() {
   }, [chapter?.id, status, unlockChapterTurnSoon]);
 
   const goToChapter = React.useCallback(
-    (idx: number) => {
+    (idx: number, intent: ChapterNavigationIntent = 'direct') => {
       if (idx < 0 || idx >= total) return;
+      pendingLandRef.current =
+        getChapterLanding(intent) === 'last' ? 'last' : null;
       lockChapterTurn();
       invalidateWebScrollSync();
       setStatus('loading');
@@ -972,16 +976,14 @@ export default function ReaderScreen() {
       const target = pageIndex + delta;
       if (target < 0) {
         if (chapterIndex > 0) {
-          pendingLandRef.current = 'last';
-          goToChapter(chapterIndex - 1);
+          goToChapter(chapterIndex - 1, 'prev');
         }
         return;
       }
       if (target >= pages.length) {
         if (loadCurrentChapterNextPage()) return;
         if (chapterIndex < total - 1) {
-          pendingLandRef.current = null;
-          goToChapter(chapterIndex + 1);
+          goToChapter(chapterIndex + 1, 'next');
         }
         return;
       }
@@ -1361,12 +1363,10 @@ export default function ReaderScreen() {
       });
       if (turn === 'prev') {
         lockChapterTurn();
-        pendingLandRef.current = 'last';
-        goToChapter(chapterIndex - 1);
+        goToChapter(chapterIndex - 1, 'prev');
       } else if (turn === 'next') {
         lockChapterTurn();
-        pendingLandRef.current = null;
-        if (!loadCurrentChapterNextPage()) goToChapter(chapterIndex + 1);
+        if (!loadCurrentChapterNextPage()) goToChapter(chapterIndex + 1, 'next');
       }
     },
     [
@@ -1543,7 +1543,7 @@ export default function ReaderScreen() {
                 <Pressable
                   onPress={() => {
                     if (!loadCurrentChapterNextPage()) {
-                      goToChapter(chapterIndex + 1);
+                      goToChapter(chapterIndex + 1, 'next');
                     }
                   }}
                   disabled={!chapter?.nextPageUrl && chapterIndex >= total - 1}
@@ -1750,7 +1750,7 @@ export default function ReaderScreen() {
       >
         <View style={styles.chapterNav}>
           <Pressable
-            onPress={() => goToChapter(chapterIndex - 1)}
+            onPress={() => goToChapter(chapterIndex - 1, 'prev')}
             disabled={chapterIndex <= 0}
           >
             <Text
@@ -1775,7 +1775,7 @@ export default function ReaderScreen() {
           <Pressable
             onPress={() => {
               if (!loadCurrentChapterNextPage()) {
-                goToChapter(chapterIndex + 1);
+                goToChapter(chapterIndex + 1, 'next');
               }
             }}
             disabled={!chapter?.nextPageUrl && chapterIndex >= total - 1}

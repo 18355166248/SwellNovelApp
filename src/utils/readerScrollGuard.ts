@@ -1,4 +1,6 @@
 export type BoundaryTurn = 'prev' | 'next';
+export type ChapterNavigationIntent = BoundaryTurn | 'direct';
+export type ChapterLanding = 'first' | 'last';
 
 export type BoundaryTurnInput = {
   offsetX: number;
@@ -45,4 +47,10 @@ export function isStaleScrollSync(
   currentEpoch: number,
 ): boolean {
   return scheduledEpoch !== currentEpoch;
+}
+
+export function getChapterLanding(
+  intent: ChapterNavigationIntent = 'direct',
+): ChapterLanding {
+  return intent === 'prev' ? 'last' : 'first';
 }
