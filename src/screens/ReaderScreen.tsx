@@ -1461,7 +1461,9 @@ export default function ReaderScreen() {
                 markUserWebScroll();
                 setToolbarVisible(false);
               }}
-              onMomentumScrollEnd={handlePageMomentumEnd}
+              onMomentumScrollEnd={
+                Platform.OS === 'web' ? undefined : handlePageMomentumEnd
+              }
               scrollEventThrottle={16}
               onScroll={handlePageScroll}
             />
