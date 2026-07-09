@@ -49,11 +49,34 @@ const CATALOG = `
 </ul>
 `;
 
+// 密集全量目录：序号 1..491 连续，条数≈最大序号，不会被残目录启发式误杀。
+// 保留几条“URL 序号 ≠ 真实章号”的代表项，验证标题按站点原文保留、不被序号/顺序改名。
 const FULL_CATALOG = `
 <ul class="chapter">
-<li><a href="http://wap.bookshuku.org/read/160297_1.html">第一章</a></li>
-<li><a href="http://wap.bookshuku.org/read/160297_101.html">第九十三章</a></li>
-<li><a href="http://wap.bookshuku.org/read/160297_491.html">第四百五十章</a></li>
+${Array.from({ length: 491 }, (_, i) => {
+  const seq = i + 1;
+  const title =
+    seq === 1
+      ? '第一章'
+      : seq === 101
+        ? '第九十三章'
+        : seq === 491
+          ? '第四百五十章'
+          : `第${seq}章`;
+  return `<li><a href="http://wap.bookshuku.org/read/160297_${seq}.html">${title}</a></li>`;
+}).join('')}
+</ul>
+`;
+
+// 站点降级只返回最新少量章节：条数(11)远小于最大 URL 序号(700)，应判残目录。
+// 标题是正常章号(非“分节阅读”占位)，专门验证“条数 vs 序号”比例信号在起作用。
+const SPARSE_LATEST_CATALOG = `
+<ul class="chapter">
+${Array.from(
+  { length: 11 },
+  (_, i) =>
+    `<li><a href="http://wap.bookshuku.org/read/160297_${690 + i}.html">第${690 + i}章</a></li>`,
+).join('')}
 </ul>
 `;
 
@@ -154,20 +177,39 @@ describe('bookshukuSource', () => {
       catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
     });
 
-    expect(chapters).toEqual([
-      {
-        title: '第一章',
-        url: 'http://wap.bookshuku.org/read/160297_1.html',
-      },
-      {
-        title: '第九十三章',
-        url: 'http://wap.bookshuku.org/read/160297_101.html',
-      },
-      {
-        title: '第四百五十章',
-        url: 'http://wap.bookshuku.org/read/160297_491.html',
-      },
-    ]);
+    // 密集全量目录整份保留；代表项标题按站点原文，不被 URL 序号或数组下标改名。
+    expect(chapters).toHaveLength(491);
+    expect(chapters[0]).toEqual({
+      title: '第一章',
+      url: 'http://wap.bookshuku.org/read/160297_1.html',
+    });
+    expect(chapters[100]).toEqual({
+      title: '第九十三章',
+      url: 'http://wap.bookshuku.org/read/160297_101.html',
+    });
+    expect(chapters[490]).toEqual({
+      title: '第四百五十章',
+      url: 'http://wap.bookshuku.org/read/160297_491.html',
+    });
+  });
+
+  it('parseCatalog 拒绝只有最新少量章节的残目录（条数远小于最大 URL 序号）', async () => {
+    // 所有来源都只返回“最新 11 章”，最大序号 700、条数 11，比例远低于阈值 → 判残拒绝。
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/read/160297.html')) return SPARSE_LATEST_CATALOG;
+      if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
+      throw new Error(`unexpected url ${url}`);
+    });
+    mockFetchWebViewHttpText.mockResolvedValue(SPARSE_LATEST_CATALOG);
+
+    await expect(
+      bookshukuSource.parseCatalog({
+        sourceBookId: '160297',
+        title: '捞尸人',
+        author: '纯洁滴小龙',
+        catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+      }),
+    ).rejects.toThrow('目录解析不完整');
   });
 
   it('parseCatalog 拒绝分节阅读占位目录，避免把坏目录写进缓存', async () => {

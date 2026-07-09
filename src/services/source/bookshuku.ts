@@ -35,12 +35,12 @@ const HOST = 'wap.bookshuku.org';
 const ORIGIN = `http://${HOST}`;
 const DESKTOP_ORIGIN = 'http://www.bookshuku.org';
 
-// bookshuku 在 Cloudflare/移动页降级时可能只返回最新少量章节；已验证书籍的
-// 大致章节量只用于判断“短目录需要重试”，绝不能用来硬补目录，否则 URL 序号
-// 会被误当成真实章号（例如 160297_491 实际标题是“第四百五十章”）。
-const KNOWN_MIN_CATALOG_COUNTS: Record<string, number> = {
-  '160297': 700,
-};
+// bookshuku 在 Cloudflare/移动页降级时可能只返回最新少量章节。判断“目录被截短”
+// 不再依赖 per-book 写死的章节量，改用目录自身的最大 URL 序号估规模（见
+// isSuspiciousPartialCatalog）：站点正常返回时序号大致连续、最大序号 ≈ 章节数，
+// 降级短目录只给最新少量章却仍带很大序号，两者比例即残目录信号。
+/** 章节条数至少要覆盖到最大 URL 序号所暗示规模的这个比例，否则判为残目录。 */
+const CATALOG_COVERAGE_RATIO = 0.5;
 
 const KNOWN_TITLES: Record<string, string> = {
   '160297': '捞尸人',
@@ -493,12 +493,25 @@ function normalizeCatalogUrl(url: string, id: string): string {
   return `${ORIGIN}/read/${id}.html`;
 }
 
-function isSuspiciousPartialCatalog(
-  id: string,
-  chapters: ParsedChapter[],
-): boolean {
-  const min = KNOWN_MIN_CATALOG_COUNTS[id];
-  return !!min && chapters.length > 0 && chapters.length < min;
+/** 取 read/{id}_{n}.html 里最大的序号 n，作为目录应有规模的估计（书更新增章后自动跟随）。 */
+function maxChapterSeq(chapters: ParsedChapter[]): number {
+  let max = 0;
+  for (const chapter of chapters) {
+    const seq = matchOne(/\/read\/\d+_(\d+)\.html/i, chapter.url);
+    const n = seq ? parseInt(seq, 10) : NaN;
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max;
+}
+
+/**
+ * 目录是否疑似被站点降级成短目录：实际条数远低于最大 URL 序号所暗示的规模。
+ * 纯启发式、不依赖 per-book 配置。仅在能取到序号时判断，取不到序号则不拦截。
+ */
+function isSuspiciousPartialCatalog(chapters: ParsedChapter[]): boolean {
+  const maxSeq = maxChapterSeq(chapters);
+  if (maxSeq <= 0) return false;
+  return chapters.length < maxSeq * CATALOG_COVERAGE_RATIO;
 }
 
 export const bookshukuSource: BookSource = {
@@ -697,7 +710,7 @@ export const bookshukuSource: BookSource = {
     debug.push(`wapParsed=${chapters.length}`);
     if (
       chapters.length === 0 ||
-      isSuspiciousPartialCatalog(sourceBookId, chapters) ||
+      isSuspiciousPartialCatalog(chapters) ||
       hasBadCatalogTitles(chapters)
     ) {
       try {
@@ -813,7 +826,7 @@ export const bookshukuSource: BookSource = {
       throw new Error(`未能解析到章节目录（${debug.join(', ')}）`);
     }
     if (
-      isSuspiciousPartialCatalog(sourceBookId, chapters) ||
+      isSuspiciousPartialCatalog(chapters) ||
       hasBadCatalogTitles(chapters)
     ) {
       // 目录是书籍入库的基础数据，宁可提示重试，也不能把“分节阅读 11”
