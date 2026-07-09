@@ -86,6 +86,7 @@ const CH1_P1 = `
 <div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 (第1/3页)<br /><br />&nbsp;&nbsp;&nbsp;&nbsp;第一段正文。${LONG}<br />第二段正文。<br /></p></div>`;
 const CH1_P2 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第2/3页）<br />第三段正文。${LONG}<br /></p></div>`;
 const CH1_P3 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第3/3页）<br />第四段正文。${LONG}<br /></p></div>`;
+const CH_PROXY = `<div class="read-top"><li class="title">捞尸人 第四百一十九章</li></div><div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第四百一十九章 (第1/1页)<br />代理桥正文。${LONG}<br /></p></div>`;
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -237,6 +238,24 @@ describe('bookshukuSource', () => {
       'http://wap.bookshuku.org/read/160297_1_2.html',
       30000,
       { preferLocalProxy: true, requireLocalProxy: true, localProxyRetries: 2 },
+    );
+  });
+
+  it('parseChapterContent 在 RN fetch 代理失败时走 WebView 同源代理正文', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('Network request failed'));
+    mockFetchWebViewHttpText.mockResolvedValueOnce(CH_PROXY);
+
+    const result = await bookshukuSource.parseChapterContent(
+      'http://wap.bookshuku.org/read/160297_456.html',
+    );
+    const content = typeof result === 'string' ? result : result.content;
+
+    expect(content).toContain('代理桥正文。');
+    expect(content).not.toContain('第四百一十九章');
+    expect(mockFetchWebViewHttpText).toHaveBeenCalledWith(
+      'http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/160297_456.html',
+      'http://101.43.11.224:11008',
+      expect.objectContaining({ priority: 'normal' }),
     );
   });
 });

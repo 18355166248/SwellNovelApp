@@ -338,17 +338,33 @@ async function fetchArticleText(
       length: html.length,
     });
   } catch (error) {
-    console.info('[bookshuku] article direct failed, fallback WebView', {
+    console.info('[bookshuku] article direct failed, fallback source proxy WebView', {
       url,
       ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     });
-    html = await fetchRenderedHtml(url, {
-      timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
-      waitMs: ARTICLE_WEBVIEW_WAIT_MS,
-      priority: options.priority ?? 'normal',
-    });
-    usedRenderedHtml = true;
+    try {
+      // 正文和目录保持同一条真机可用链路：通过代理首页里的同源 fetch 拿 curl HTML，
+      // 避免 RN fetch 代理失败后又退回书源直连，导致章节页拿到提示页或超时。
+      html = await fetchBookshukuProxyRenderedHtml(url, {
+        timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
+        waitMs: 500,
+        priority: options.priority ?? 'normal',
+      });
+      usedRenderedHtml = true;
+    } catch (proxyError) {
+      console.info('[bookshuku] article proxy WebView failed, fallback source WebView', {
+        url,
+        ms: Date.now() - startedAt,
+        error: proxyError instanceof Error ? proxyError.message : String(proxyError),
+      });
+      html = await fetchRenderedHtml(url, {
+        timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
+        waitMs: ARTICLE_WEBVIEW_WAIT_MS,
+        priority: options.priority ?? 'normal',
+      });
+      usedRenderedHtml = true;
+    }
   }
   let directText = cleanArticle(html);
   if (directText && !isInvalidArticleText(directText)) {
@@ -368,11 +384,24 @@ async function fetchArticleText(
         length: html.length,
         challenge: isCloudflareChallenge(html),
       });
-      html = await fetchRenderedHtml(url, {
-        timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
-        waitMs: ARTICLE_WEBVIEW_WAIT_MS,
-        priority: options.priority ?? 'normal',
-      });
+      try {
+        html = await fetchBookshukuProxyRenderedHtml(url, {
+          timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
+          waitMs: 500,
+          priority: options.priority ?? 'normal',
+        });
+      } catch (proxyError) {
+        console.info('[bookshuku] article proxy WebView html retry failed', {
+          url,
+          ms: Date.now() - startedAt,
+          error: proxyError instanceof Error ? proxyError.message : String(proxyError),
+        });
+        html = await fetchRenderedHtml(url, {
+          timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
+          waitMs: ARTICLE_WEBVIEW_WAIT_MS,
+          priority: options.priority ?? 'normal',
+        });
+      }
       usedRenderedHtml = true;
       directText = cleanArticle(html);
       if (directText && !isInvalidArticleText(directText)) {
