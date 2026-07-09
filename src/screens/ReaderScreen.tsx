@@ -845,6 +845,14 @@ export default function ReaderScreen() {
     if (status === 'ready') unlockChapterTurnSoon();
   }, [chapter?.id, status, unlockChapterTurnSoon]);
 
+  const closeReadingChrome = React.useCallback(() => {
+    // 翻页动作应回到沉浸阅读态：无论当前开的是上下栏、设置面板还是目录抽屉，
+    // 都先收起，避免用户点左右翻页后旧浮层继续遮挡正文。
+    setSettingsOpen(false);
+    setDrawerOpen(false);
+    setToolbarVisible(false);
+  }, [setToolbarVisible]);
+
   const goToChapter = React.useCallback(
     (idx: number, intent: ChapterNavigationIntent = 'direct') => {
       if (idx < 0 || idx >= total) return;
@@ -853,9 +861,7 @@ export default function ReaderScreen() {
       lockChapterTurn();
       invalidateWebScrollSync();
       setStatus('loading');
-      setSettingsOpen(false);
-      setDrawerOpen(false);
-      setToolbarVisible(false);
+      closeReadingChrome();
       if (transitionRef.current) clearTimeout(transitionRef.current);
       // 同一章节重试/重开时 chapter.id 不变；显式触发正文加载 effect，
       // 避免只进入 loading 覆盖层但没有重新发起 ensure 请求。
@@ -877,6 +883,7 @@ export default function ReaderScreen() {
       bookId,
       book?.source?.name,
       chapters,
+      closeReadingChrome,
       invalidateWebScrollSync,
       isOnline,
       lockChapterTurn,
@@ -894,9 +901,7 @@ export default function ReaderScreen() {
     lockChapterTurn();
     invalidateWebScrollSync();
     setStatus('loading');
-    setSettingsOpen(false);
-    setDrawerOpen(false);
-    setToolbarVisible(false);
+    closeReadingChrome();
     currentOffsetRef.current = resumePosition;
     pendingScrollPositionRef.current = resumePosition;
     pendingScrollPageRef.current = null;
@@ -929,9 +934,9 @@ export default function ReaderScreen() {
     chapter?.title,
     chapterIndex,
     chapterTextLength,
+    closeReadingChrome,
     invalidateWebScrollSync,
     lockChapterTurn,
-    setToolbarVisible,
     status,
   ]);
 
@@ -972,6 +977,7 @@ export default function ReaderScreen() {
 
   const goToPage = React.useCallback(
     (delta: number) => {
+      closeReadingChrome();
       const target = pageIndex + delta;
       if (target < 0) {
         if (chapterIndex > 0) {
@@ -992,6 +998,7 @@ export default function ReaderScreen() {
     },
     [
       chapterIndex,
+      closeReadingChrome,
       goToChapter,
       loadCurrentChapterNextPage,
       pageIndex,
