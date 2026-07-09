@@ -20,7 +20,15 @@ const PORT = Number(process.env.PORT) || 3000;
 const DIST = path.resolve(__dirname, 'dist');
 
 // ── Gzip / Brotli 压缩 ─────────────────────────────────────
-app.use(compression());
+// 书源代理返回给 React Native fetch 时不要压缩：RN 的 arrayBuffer 在部分 iOS
+// 环境会把 gzip 二进制直接交给 JS，导致后续按 HTML 解码后解析不到目录。
+app.use(
+  compression({
+    filter: (req, res) =>
+      !(req.originalUrl || req.url || '').startsWith('/proxy') &&
+      compression.filter(req, res),
+  }),
+);
 
 // ── 书源代理 ────────────────────────────────────────────────
 // 通用前缀 /proxy/<host>/<path>：浏览器直连书源被 CORS 拦截，前端改写到此转发。
@@ -51,12 +59,13 @@ app.use('/proxy', (req, res) => {
     [
       '-s', '-L', '--max-redirs', '3',
       '--connect-timeout', '10',
-      '--max-time', '15',
+      '--max-time', '25',
       '-H', `User-Agent: ${MOBILE_UA}`,
       '-H', 'Accept: text/html',
+      '-H', 'Accept-Encoding:',
       target,
     ],
-    { timeout: 20000, maxBuffer: 10 * 1024 * 1024 },
+    { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
     (err, stdout) => {
       if (err) {
         console.error('[source-proxy]', err.message);

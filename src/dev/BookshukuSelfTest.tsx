@@ -99,6 +99,7 @@ export function BookshukuSelfTest() {
           chapter11: chapters[10],
           chapter492: chapters[491],
           chapter493: chapters[492],
+          chapter496: chapters[495],
           chapter754: chapters[753],
         };
       });
@@ -121,7 +122,7 @@ export function BookshukuSelfTest() {
       }
       if (cancelled) return;
 
-      for (const order of [1, 491, 492, 493]) {
+      for (const order of [1, 496]) {
         await push({
           name: `parseChapter:${order}`,
           ok: 'running',

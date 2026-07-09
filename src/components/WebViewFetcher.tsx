@@ -1,5 +1,5 @@
 /**
- * 常驻隐藏 WebView 取正文器（原生）。挂在 App 根部，0×0 不可见。
+ * 常驻隐藏 WebView 取正文器（原生）。挂在 App 根部，离屏不可见。
  *
  * 从 bridge 领取任务（章节 URL），导航到该页 → onLoadEnd 后稍等再注入抽正文脚本
  * → onMessage 回传纯文本 → resolve。一次只处理一个任务，串行防止相互干扰；WebView
@@ -22,6 +22,8 @@ const WebView = RNWebView as unknown as React.ComponentType<any>;
 
 // iOS 的 RNCWebView 会把 about:blank 走到 loadFileURL 分支并触发崩溃；空闲态用空 HTML 占位即可。
 const EMPTY_SOURCE = { html: '<!doctype html><html><head></head><body></body></html>' };
+const MOBILE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
 
 export function WebViewFetcher() {
   const ref = React.useRef<any>(null);
@@ -112,13 +114,24 @@ export function WebViewFetcher() {
     setJob(null);
   };
 
+  const failCurrentJob = (message: string) => {
+    const cur = jobRef.current;
+    if (!cur) return;
+    console.warn('[WebViewFetcher] load failed', {
+      id: cur.id,
+      url: cur.url,
+      error: message,
+    });
+    cur.reject(new Error(message));
+    setJob(null);
+  };
+
   return (
-    <View
-      style={{ width: 0, height: 0, position: 'absolute', opacity: 0 }}
-      pointerEvents="none"
-    >
+    <View style={styles.hiddenHost} pointerEvents="none">
       <WebView
         ref={ref}
+        originWhitelist={['*']}
+        userAgent={MOBILE_UA}
         source={job ? { uri: job.url } : EMPTY_SOURCE}
         onLoadEnd={() => {
           const cur = jobRef.current;
@@ -136,6 +149,19 @@ export function WebViewFetcher() {
             ref.current?.injectJavaScript(cur.script(cur.id));
           }, cur.waitMs);
         }}
+        onError={(e: any) => {
+          failCurrentJob(
+            e?.nativeEvent?.description ||
+              e?.nativeEvent?.domain ||
+              'WebView 页面加载失败',
+          );
+        }}
+        onHttpError={(e: any) => {
+          failCurrentJob(
+            `HTTP ${e?.nativeEvent?.statusCode || ''}`.trim() ||
+              'WebView 页面请求失败',
+          );
+        }}
         onMessage={onMessage}
         javaScriptEnabled
         domStorageEnabled
@@ -145,3 +171,15 @@ export function WebViewFetcher() {
     </View>
   );
 }
+
+const styles = {
+  hiddenHost: {
+    width: 360,
+    height: 640,
+    position: 'absolute' as const,
+    left: -1000,
+    top: -1000,
+    opacity: 0.02,
+    overflow: 'hidden' as const,
+  },
+};

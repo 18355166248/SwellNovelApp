@@ -100,6 +100,13 @@ function isFallbackChapterTitle(title: string): boolean {
   );
 }
 
+function isBadBookshukuCatalog(chapters: Chapter[]): boolean {
+  return (
+    chapters.length <= 20 ||
+    chapters.some(c => /^分节阅读\s*\d+$/i.test(c.title.trim()))
+  );
+}
+
 function titleFromFirstSentence(content: string): string | undefined {
   const firstLine = content
     .split(/\n+/)
@@ -342,7 +349,7 @@ export const useEnsureChapterContent = () => {
       const needsCatalogRefresh =
         source.id === 'bookshuku' &&
         chapters &&
-        (chapters.length <= 20 || chapters.some(c => /^分节阅读\s*\d+$/.test(c.title)));
+        isBadBookshukuCatalog(chapters);
       if (needsCatalogRefresh) {
         console.info('[useOnlineBook] refresh stale catalog start', {
           bookId,
@@ -673,25 +680,51 @@ export const useCheckBookUpdate = () => {
     const book = store.get(booksAtom).find(b => b.id === bookId);
     const source = book?.source ? getSourceById(book.source.name) : null;
     if (!source || !book?.source) return 0;
+    const sourceBookId = source.extractId(book.source.bookUrl) ?? '';
 
     const metas = await source.parseCatalog({
-      sourceBookId: '',
+      sourceBookId,
       title: book.title,
       author: book.author,
       catalogUrl: book.source.bookUrl,
     });
     const existing = store.get(chaptersAtom)[bookId] ?? [];
-    if (metas.length <= existing.length) return 0;
+    const shouldReplaceCatalog =
+      source.id === 'bookshuku' && isBadBookshukuCatalog(existing);
+    if (!shouldReplaceCatalog && metas.length <= existing.length) return 0;
 
-    const added: Chapter[] = metas.slice(existing.length).map((m, i) => ({
-      id: `${bookId}-${existing.length + i}`,
-      bookId,
-      title: m.title,
-      content: '',
-      order: existing.length + i,
-      sourceUrl: m.url,
-    }));
-    const next = [...existing, ...added];
+    const contentBySource = new Map(
+      existing
+        .filter(c => c.content && c.sourceUrl)
+        .map(c => [c.sourceUrl!, c]),
+    );
+    const next: Chapter[] = shouldReplaceCatalog
+      ? metas.map((m, i) => {
+          const cached = contentBySource.get(m.url);
+          return {
+            id: `${bookId}-${i}`,
+            bookId,
+            title: m.title,
+            content: cached?.content ?? '',
+            order: i,
+            sourceUrl: m.url,
+            wordCount: cached?.wordCount,
+            contentVersion: cached?.contentVersion,
+            nextPageUrl: cached?.nextPageUrl,
+            contentComplete: cached?.contentComplete,
+          };
+        })
+      : [
+          ...existing,
+          ...metas.slice(existing.length).map((m, i) => ({
+            id: `${bookId}-${existing.length + i}`,
+            bookId,
+            title: m.title,
+            content: '',
+            order: existing.length + i,
+            sourceUrl: m.url,
+          })),
+        ];
 
     store.set(chaptersAtom, prev => ({ ...prev, [bookId]: next }));
     store.set(booksAtom, prev =>
@@ -704,6 +737,6 @@ export const useCheckBookUpdate = () => {
     await saveBookChapters(bookId, next).catch(error => {
       console.warn('[useCheckBookUpdate] save failed', error);
     });
-    return added.length;
+    return next.length - existing.length;
   };
 };

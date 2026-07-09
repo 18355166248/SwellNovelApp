@@ -26,6 +26,7 @@ import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
 
 const HOST = 'wap.bookshuku.org';
 const ORIGIN = `http://${HOST}`;
+const DESKTOP_ORIGIN = 'http://www.bookshuku.org';
 
 // bookshuku 在 Cloudflare/移动页降级时可能只返回最新少量章节；已验证书籍的
 // 大致章节量只用于判断“短目录需要重试”，绝不能用来硬补目录，否则 URL 序号
@@ -48,7 +49,7 @@ const BAD_TITLE_CANDIDATES = new Set([
   '约爱社区',
   '👏💦约爱社区',
 ]);
-const ARTICLE_DIRECT_TIMEOUT_MS = 6000;
+const ARTICLE_DIRECT_TIMEOUT_MS = 30000;
 const ARTICLE_WEBVIEW_TIMEOUT_MS = 22000;
 const ARTICLE_WEBVIEW_WAIT_MS = 8000;
 const ARTICLE_TEXT_WEBVIEW_TIMEOUT_MS = 12000;
@@ -64,22 +65,44 @@ function extractBookId(url: string): string | undefined {
 function isCloudflareChallenge(html: string): boolean {
   return (
     /<title>\s*Just a moment/i.test(html) ||
-    /Enable JavaScript and cookies to continue/i.test(html) ||
-    /\/cdn-cgi\/challenge-platform\//i.test(html)
+    /Enable JavaScript and cookies to continue/i.test(html)
   );
 }
 
-async function fetchBookshukuHtml(url: string): Promise<string> {
+async function fetchBookshukuHtml(
+  url: string,
+  options: {
+    timeout?: number;
+    renderedFallback?: boolean;
+    renderedTimeout?: number;
+    renderedWaitMs?: number;
+    priority?: ParseChapterOptions['priority'];
+    preferLocalProxy?: boolean;
+    localProxyRetries?: number;
+  } = {},
+): Promise<string> {
+  const renderedFallback = options.renderedFallback ?? true;
   const startedAt = Date.now();
   try {
-    const html = await fetchHtml(url);
+    const html = await fetchHtml(url, options.timeout, {
+      preferLocalProxy: options.preferLocalProxy,
+      localProxyRetries: options.localProxyRetries,
+    });
+    if (!html.trim()) {
+      throw new Error('empty html');
+    }
     if (isCloudflareChallenge(html)) {
-      console.warn('[bookshuku] fetch html got challenge, fallback WebView', {
+      if (!renderedFallback) return html;
+      console.info('[bookshuku] fetch html got challenge, fallback WebView', {
         url,
         ms: Date.now() - startedAt,
         length: html.length,
       });
-      const renderedHtml = await fetchRenderedHtml(url);
+      const renderedHtml = await fetchRenderedHtml(url, {
+        timeout: options.renderedTimeout,
+        waitMs: options.renderedWaitMs,
+        priority: options.priority,
+      });
       console.warn('[bookshuku] WebView html ok after challenge', {
         url,
         ms: Date.now() - startedAt,
@@ -96,12 +119,17 @@ async function fetchBookshukuHtml(url: string): Promise<string> {
   } catch (error) {
     // 原生 fetch 可能被站点 403、ATS 或网络层拒绝，下面统一走 WebView 兜底。
     // 注意：bookshuku 的正常页面底部也会带 Cloudflare 脚本，不能只凭脚本特征丢弃 HTML。
-    console.warn('[bookshuku] fetch html fallback WebView', {
+    console.info('[bookshuku] fetch html fallback WebView', {
       url,
       ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     });
-    const html = await fetchRenderedHtml(url);
+    if (!renderedFallback) throw error;
+    const html = await fetchRenderedHtml(url, {
+      timeout: options.renderedTimeout,
+      waitMs: options.renderedWaitMs,
+      priority: options.priority,
+    });
     console.info('[bookshuku] WebView html ok', {
       url,
       ms: Date.now() - startedAt,
@@ -261,7 +289,10 @@ async function fetchArticleText(
   try {
     // 正文页先做一次短直连：大多数成功页 1~2 秒能拿到，失败再走 WebView。
     // 这样不会每次点击章节都先占用隐藏 WebView 等完整挑战流程。
-    html = await fetchHtml(url, ARTICLE_DIRECT_TIMEOUT_MS);
+    html = await fetchHtml(url, ARTICLE_DIRECT_TIMEOUT_MS, {
+      preferLocalProxy: true,
+      localProxyRetries: 2,
+    });
     console.info('[bookshuku] article html ok', {
       url,
       mode: 'direct',
@@ -269,7 +300,7 @@ async function fetchArticleText(
       length: html.length,
     });
   } catch (error) {
-    console.warn('[bookshuku] article direct failed, fallback WebView', {
+    console.info('[bookshuku] article direct failed, fallback WebView', {
       url,
       ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
@@ -293,7 +324,7 @@ async function fetchArticleText(
   }
   if (!usedRenderedHtml) {
     try {
-      console.warn('[bookshuku] direct html has no valid article, retry WebView html', {
+      console.info('[bookshuku] direct html has no valid article, retry WebView html', {
         url,
         ms: Date.now() - startedAt,
         length: html.length,
@@ -316,7 +347,7 @@ async function fetchArticleText(
         return { html, text: directText, usedRenderedText: true };
       }
     } catch (error) {
-      console.warn('[bookshuku] article WebView html retry failed', {
+      console.info('[bookshuku] article WebView html retry failed', {
         url,
         ms: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error),
@@ -324,7 +355,7 @@ async function fetchArticleText(
     }
   }
   if (directText) {
-    console.warn('[bookshuku] article text invalid, fallback WebView text', {
+    console.info('[bookshuku] article text invalid, fallback WebView text', {
       url,
       mode: usedRenderedHtml ? 'webview-html' : 'html',
       ms: Date.now() - startedAt,
@@ -332,7 +363,7 @@ async function fetchArticleText(
       head: directText.slice(0, 80),
     });
   }
-  console.warn('[bookshuku] article text fallback WebView', {
+  console.info('[bookshuku] article text fallback WebView', {
     url,
     ms: Date.now() - startedAt,
   });
@@ -361,17 +392,48 @@ async function fetchArticleText(
   return { html, text: renderedText, usedRenderedText: true };
 }
 
-function parseCatalogHtml(html: string): ParsedChapter[] {
-  const re = /<li>\s*<a[^>]+href="([^"]*\/read\/\d+_\d+\.html)"[^>]*>([\s\S]*?)<\/a>\s*<\/li>/g;
+function normalizeCatalogChapterTitle(raw: string, bookTitle?: string): string {
+  let title = decodeEntities(stripTags(raw)).replace(/\s+/g, ' ').trim();
+  if (bookTitle) {
+    const escaped = bookTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    title = title.replace(new RegExp(`^${escaped}\\s+`), '').trim();
+  }
+  return title;
+}
+
+function normalizeReadUrl(raw: string): string {
+  const absolute = toAbsolute(ORIGIN, raw);
+  const path = /\/read\/(\d+_\d+(?:_\d+)?)\.html/i.exec(absolute)?.[1];
+  return path ? `${ORIGIN}/read/${path}.html` : absolute;
+}
+
+function parseCatalogHtml(html: string, bookTitle?: string): ParsedChapter[] {
+  const re = /<a[^>]+href=["']([^"']*\/read\/\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/g;
   const chapters: ParsedChapter[] = [];
+  const seen = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
+    const url = normalizeReadUrl(m[1]);
+    if (seen.has(url)) continue;
+    seen.add(url);
     chapters.push({
-      url: toAbsolute(ORIGIN, m[1]),
-      title: decodeEntities(stripTags(m[2])).trim(),
+      url,
+      title: normalizeCatalogChapterTitle(m[2], bookTitle),
     });
   }
   return chapters;
+}
+
+function isSyntheticSplitTitle(title: string): boolean {
+  return /^分节阅读\s*\d+$/i.test(title.replace(/\s+/g, ' ').trim());
+}
+
+function hasBadCatalogTitles(chapters: ParsedChapter[]): boolean {
+  return chapters.some(chapter => isSyntheticSplitTitle(chapter.title));
+}
+
+function getBadCatalogTitle(chapters: ParsedChapter[]): string | undefined {
+  return chapters.find(chapter => isSyntheticSplitTitle(chapter.title))?.title;
 }
 
 function parseCatalogFromScript(html: string): ParsedChapter[] {
@@ -383,7 +445,7 @@ function parseCatalogFromScript(html: string): ParsedChapter[] {
     .map(x => x.trim())
     .filter(Boolean);
   return ids.map((cid, index) => ({
-    url: pageUrl.replace('{page}', cid),
+    url: normalizeReadUrl(pageUrl.replace('{page}', cid)),
     // 当站点脚本延迟导致 li 未完整渲染时，用序号标题兜底，至少保证目录数量和正文 URL 正确。
     title: `第${index + 1}章`,
   }));
@@ -434,22 +496,60 @@ export const bookshukuSource: BookSource = {
     const id = extractBookId(url);
     if (!id) throw new Error('无法从链接中识别书籍编号');
     const detailUrl = `${ORIGIN}/bookinfo/${id}.html`;
-    let html = await fetchBookshukuHtml(detailUrl);
+    let html = '';
+    try {
+      // 添加书籍的关键路径先走短直连：详情页被拦时不要立刻等 WebView，
+      // 目录页通常也能解析出书名，避免用户在弹窗里卡到“WebView 取页面超时”。
+      html = await fetchBookshukuHtml(detailUrl, {
+        timeout: 8000,
+        renderedFallback: false,
+        preferLocalProxy: true,
+        localProxyRetries: 2,
+      });
+    } catch (error) {
+      console.warn('[bookshuku] detail direct failed, try catalog title', {
+        url: detailUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     let title =
       matchOne(/<div class="detail">[\s\S]*?<b>([\s\S]*?)<\/b>/, html)?.trim() ||
       matchOne(/<meta name="keywords" content="([^",]+)/, html)?.trim();
     if (!title) {
-      // 兜底再强制走一次 WebView：有些挑战页特征不明显，但最终 DOM 才有详情结构。
-      html = await fetchRenderedHtml(detailUrl);
-      title =
-        matchOne(/<div class="detail">[\s\S]*?<b>([\s\S]*?)<\/b>/, html)?.trim() ||
-        matchOne(/<meta name="keywords" content="([^",]+)/, html)?.trim();
+      try {
+        // 详情页更容易触发挑战；目录页通常能直接返回，并且 path/title/meta 都带书名。
+        const catalogHtml = await fetchBookshukuHtml(`${ORIGIN}/read/${id}.html`, {
+          timeout: 8000,
+          renderedFallback: false,
+          preferLocalProxy: true,
+          localProxyRetries: 2,
+        });
+        title = parseTitleFromCatalogHtml(catalogHtml, id);
+      } catch (error) {
+        console.warn('[bookshuku] catalog title direct failed', {
+          url: `${ORIGIN}/read/${id}.html`,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     if (!title) {
-      // 详情页更容易触发挑战；目录页通常能直接返回，并且 path/title/meta 都带书名。
-      const catalogHtml = await fetchBookshukuHtml(`${ORIGIN}/read/${id}.html`);
-      title = parseTitleFromCatalogHtml(catalogHtml, id);
+      try {
+        // 最后一层才走 WebView 取详情 DOM，并且给较短超时；失败后仍可落到已知书名兜底。
+        html = await fetchRenderedHtml(detailUrl, {
+          timeout: 15000,
+          waitMs: 5000,
+          priority: 'high',
+        });
+        title =
+          matchOne(/<div class="detail">[\s\S]*?<b>([\s\S]*?)<\/b>/, html)?.trim() ||
+          matchOne(/<meta name="keywords" content="([^",]+)/, html)?.trim();
+      } catch (error) {
+        console.warn('[bookshuku] detail WebView title failed', {
+          url: detailUrl,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     if (!title) title = KNOWN_TITLES[id];
     if (!title) throw new Error('未能解析到书名，可能不是书籍详情页');
@@ -475,26 +575,184 @@ export const bookshukuSource: BookSource = {
   },
 
   async parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]> {
-    const catalogUrl = normalizeCatalogUrl(info.catalogUrl, info.sourceBookId);
-    let html = await fetchBookshukuHtml(catalogUrl);
-    let chapters = parseCatalogHtml(html);
+    const sourceBookId = info.sourceBookId || extractBookId(info.catalogUrl) || '';
+    const catalogUrl = normalizeCatalogUrl(info.catalogUrl, sourceBookId);
+    let html = await fetchBookshukuHtml(catalogUrl, {
+      timeout: 45000,
+      preferLocalProxy: true,
+      localProxyRetries: 2,
+    });
+    const debug: string[] = [`wapHtml=${html.length}`];
+    let chapters = parseCatalogHtml(html, info.title);
+    debug.push(`wapParsed=${chapters.length}`);
     if (chapters.length === 0) chapters = parseCatalogFromScript(html);
+    debug.push(`wapAfterScript=${chapters.length}`);
     if (
       chapters.length === 0 ||
-      isSuspiciousPartialCatalog(info.sourceBookId, chapters)
+      isSuspiciousPartialCatalog(sourceBookId, chapters) ||
+      hasBadCatalogTitles(chapters)
+    ) {
+      try {
+        // bookshuku 偶发把 wap 目录请求降级成空页/短目录；目录是入库关键数据，
+        // 先用同一 URL 再拉一次代理结果，避免一次上游抖动就落到 WebView 超时。
+        const retryHtml = await fetchBookshukuHtml(catalogUrl, {
+          timeout: 45000,
+          renderedFallback: false,
+          preferLocalProxy: true,
+          localProxyRetries: 2,
+        });
+        debug.push(`wapRetryHtml=${retryHtml.length}`);
+        const retryChapters = parseCatalogHtml(retryHtml, info.title);
+        debug.push(`wapRetryParsed=${retryChapters.length}`);
+        if (
+          retryChapters.length > chapters.length &&
+          !hasBadCatalogTitles(retryChapters)
+        ) {
+          chapters = retryChapters;
+        }
+      } catch (error) {
+        console.info('[bookshuku] wap catalog retry failed', {
+          url: catalogUrl,
+          directCount: chapters.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        debug.push(
+          `wapRetryError=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const desktopUrl = `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`;
+      try {
+        // iOS 模拟器/代理环境下 wap 目录可能返回不完整 DOM；桌面域名同源同书，
+        // curl 与真机自测都更稳定。先走它，成功后避免再等待 WebView。
+        const desktopHtml = await fetchBookshukuHtml(desktopUrl, {
+          timeout: 45000,
+          renderedFallback: false,
+          preferLocalProxy: true,
+          localProxyRetries: 2,
+        });
+        debug.push(`desktopHtml=${desktopHtml.length}`);
+        debug.push(`desktopHead=${desktopHtml.slice(0, 80).replace(/\s+/g, ' ')}`);
+        const desktopChapters = parseCatalogHtml(desktopHtml, info.title);
+        debug.push(`desktopParsed=${desktopChapters.length}`);
+        if (
+          desktopChapters.length > chapters.length &&
+          !hasBadCatalogTitles(desktopChapters)
+        ) {
+          chapters = desktopChapters;
+        }
+      } catch (error) {
+        console.info('[bookshuku] desktop catalog fallback failed', {
+          url: `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`,
+          directCount: chapters.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        debug.push(
+          `desktopError=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (
+        chapters.length === 0 ||
+        isSuspiciousPartialCatalog(sourceBookId, chapters) ||
+        hasBadCatalogTitles(chapters)
+      ) {
+        try {
+          const desktopRenderedHtml = await fetchRenderedHtml(desktopUrl, {
+            timeout: 30000,
+            waitMs: 5000,
+            priority: 'high',
+          });
+          debug.push(`desktopWebviewHtml=${desktopRenderedHtml.length}`);
+          debug.push(
+            `desktopWebviewHead=${desktopRenderedHtml
+              .slice(0, 80)
+              .replace(/\s+/g, ' ')}`,
+          );
+          const desktopRenderedChapters = parseCatalogHtml(
+            desktopRenderedHtml,
+            info.title,
+          );
+          debug.push(`desktopWebviewParsed=${desktopRenderedChapters.length}`);
+          if (
+            desktopRenderedChapters.length > chapters.length &&
+            !hasBadCatalogTitles(desktopRenderedChapters)
+          ) {
+            chapters = desktopRenderedChapters;
+          }
+        } catch (error) {
+          console.info('[bookshuku] desktop WebView catalog fallback failed', {
+            url: desktopUrl,
+            directCount: chapters.length,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          debug.push(
+            `desktopWebviewError=${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
+    if (
+      chapters.length === 0 ||
+      isSuspiciousPartialCatalog(sourceBookId, chapters) ||
+      hasBadCatalogTitles(chapters)
     ) {
       // 若拿到的是纯挑战页、脚本未执行完成、或只吐“最新章节”，再让 WebView
       // 渲染后回传最终 DOM。只有渲染结果更完整时才替换，避免伪造章节。
-      html = await fetchRenderedHtml(catalogUrl);
-      let renderedChapters = parseCatalogHtml(html);
-      if (renderedChapters.length === 0) {
-        renderedChapters = parseCatalogFromScript(html);
-      }
-      if (renderedChapters.length > chapters.length) {
-        chapters = renderedChapters;
+      try {
+        html = await fetchRenderedHtml(catalogUrl, {
+          timeout: 18000,
+          waitMs: 5000,
+          priority: 'high',
+        });
+        debug.push(`webviewHtml=${html.length}`);
+        let renderedChapters = parseCatalogHtml(html, info.title);
+        debug.push(`webviewParsed=${renderedChapters.length}`);
+        if (renderedChapters.length === 0) {
+          renderedChapters = parseCatalogFromScript(html);
+        }
+        debug.push(`webviewAfterScript=${renderedChapters.length}`);
+        if (
+          renderedChapters.length > chapters.length &&
+          !hasBadCatalogTitles(renderedChapters)
+        ) {
+          chapters = renderedChapters;
+        }
+      } catch (error) {
+        console.info('[bookshuku] catalog WebView refresh failed', {
+          url: catalogUrl,
+          directCount: chapters.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        debug.push(
+          `webviewError=${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
-    if (chapters.length === 0) throw new Error('未能解析到章节目录');
+    if (chapters.length === 0) {
+      throw new Error(`未能解析到章节目录（${debug.join(', ')}）`);
+    }
+    if (
+      isSuspiciousPartialCatalog(sourceBookId, chapters) ||
+      hasBadCatalogTitles(chapters)
+    ) {
+      // 目录是书籍入库的基础数据，宁可提示重试，也不能把“分节阅读 11”
+      // 这类站点分页占位写进本地缓存，后续会污染详情页和阅读入口。
+      const badTitle = getBadCatalogTitle(chapters);
+      const reason = [
+        `count=${chapters.length}`,
+        badTitle ? `badTitle=${badTitle}` : undefined,
+        `first=${chapters[0]?.title || ''}`,
+        `ch496=${chapters[495]?.title || ''}`,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      const detail =
+        typeof __DEV__ !== 'undefined' && __DEV__
+          ? `（${reason}; ${debug.join(', ')}）`
+          : '';
+      throw new Error(`目录解析不完整，请检查网络后重试${detail}`);
+    }
     return chapters;
   },
 

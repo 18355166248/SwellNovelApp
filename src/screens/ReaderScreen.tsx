@@ -89,6 +89,7 @@ import {
   getBoundaryTurn,
   isStaleScrollSync,
 } from '../utils/readerScrollGuard';
+import { resolveChapterSearchIndex } from '../utils/chapterSearch';
 import { useReaderGuards } from './reader/useReaderGuards';
 import {
   isFullscreenSupported,
@@ -474,19 +475,11 @@ export default function ReaderScreen() {
   }, [chapters, drawerOrder]);
 
   const drawerTargetIndex = React.useMemo(() => {
-    const query = drawerQuery.trim().toLowerCase();
-    let targetChapterIndex = chapterIndex;
-    if (query) {
-      const numeric = Number(query.replace(/^第|章$/g, ''));
-      if (Number.isInteger(numeric) && numeric >= 1 && numeric <= total) {
-        targetChapterIndex = numeric - 1;
-      } else {
-        const matchedIndex = chapters.findIndex(c =>
-          c.title.toLowerCase().includes(query),
-        );
-        if (matchedIndex >= 0) targetChapterIndex = matchedIndex;
-      }
-    }
+    const targetChapterIndex = resolveChapterSearchIndex(
+      chapters,
+      drawerQuery,
+      chapterIndex,
+    );
     return drawerOrder === 'desc'
       ? total - 1 - targetChapterIndex
       : targetChapterIndex;

@@ -43,6 +43,26 @@ const FULL_CATALOG = `
 </ul>
 `;
 
+const BAD_SPLIT_CATALOG = `
+<ul class="chapter">
+${Array.from(
+  { length: 11 },
+  (_, i) =>
+    `<li><a href="http://wap.bookshuku.org/read/160297_${i + 1}.html">分节阅读 ${i + 1}</a></li>`,
+).join('')}
+</ul>
+`;
+
+const DESKTOP_FULL_CATALOG = `
+<ul class="chapter">
+${Array.from(
+  { length: 701 },
+  (_, i) =>
+    `<li><a href="http://www.bookshuku.org/read/160297_${i + 1}.html">捞尸人 第${i + 1}章</a></li>`,
+).join('')}
+</ul>
+`;
+
 const LONG = '这一段正文用于测试章节分页加载完整，避免因为测试正文太短被当成无效页面。'.repeat(8);
 const CH1_P1 = `
 <div class="read-top">
@@ -89,10 +109,12 @@ describe('bookshukuSource', () => {
   });
 
   it('parseCatalog 解析章节并把相对 URL 转绝对，不能用过期已知总数硬补目录', async () => {
-    const info = await bookshukuSource.parseBookInfo(
-      'http://wap.bookshuku.org/bookinfo/160297.html',
-    );
-    const chapters = await bookshukuSource.parseCatalog(info);
+    const chapters = await bookshukuSource.parseCatalog({
+      sourceBookId: 'unknown',
+      title: '测试书',
+      author: '佚名',
+      catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+    });
     expect(chapters).toHaveLength(2);
     expect(chapters[0]).toEqual({
       title: '第一章',
@@ -102,11 +124,18 @@ describe('bookshukuSource', () => {
   });
 
   it('parseCatalog 目录重试后保留站点真实章号，不能按 URL 序号或数组顺序命名', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith('/read/160297.html')) return '<html></html>';
+      if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
+      throw new Error(`unexpected url ${url}`);
+    });
     mockFetchRenderedHtml.mockResolvedValueOnce(FULL_CATALOG);
-    const info = await bookshukuSource.parseBookInfo(
-      'http://wap.bookshuku.org/bookinfo/160297.html',
-    );
-    const chapters = await bookshukuSource.parseCatalog(info);
+    const chapters = await bookshukuSource.parseCatalog({
+      sourceBookId: 'unknown',
+      title: '测试书',
+      author: '佚名',
+      catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+    });
 
     expect(chapters).toEqual([
       {
@@ -122,6 +151,53 @@ describe('bookshukuSource', () => {
         url: 'http://wap.bookshuku.org/read/160297_491.html',
       },
     ]);
+  });
+
+  it('parseCatalog 拒绝分节阅读占位目录，避免把坏目录写进缓存', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith('/read/160297.html')) return BAD_SPLIT_CATALOG;
+      if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
+      throw new Error(`unexpected url ${url}`);
+    });
+    mockFetchRenderedHtml.mockRejectedValueOnce(new Error('webview timeout'));
+
+    await expect(
+      bookshukuSource.parseCatalog({
+        sourceBookId: '160297',
+        title: '捞尸人',
+        author: '纯洁滴小龙',
+        catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+      }),
+    ).rejects.toThrow('目录解析不完整');
+  });
+
+  it('parseCatalog wap 占位目录失败时用桌面域名完整目录兜底，并转回 wap URL', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('http://www.bookshuku.org/read/160297.html')) {
+        return DESKTOP_FULL_CATALOG;
+      }
+      if (url.endsWith('/read/160297.html')) return BAD_SPLIT_CATALOG;
+      if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
+      throw new Error(`unexpected url ${url}`);
+    });
+    mockFetchRenderedHtml.mockRejectedValueOnce(new Error('webview timeout'));
+
+    const chapters = await bookshukuSource.parseCatalog({
+      sourceBookId: '160297',
+      title: '捞尸人',
+      author: '纯洁滴小龙',
+      catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+    });
+
+    expect(chapters).toHaveLength(701);
+    expect(chapters[0]).toEqual({
+      title: '第1章',
+      url: 'http://wap.bookshuku.org/read/160297_1.html',
+    });
+    expect(chapters[10]).toEqual({
+      title: '第11章',
+      url: 'http://wap.bookshuku.org/read/160297_11.html',
+    });
   });
 
   it('parseChapterContent 拼接多子页、去分页标记与标题回显', async () => {
@@ -143,7 +219,8 @@ describe('bookshukuSource', () => {
     expect(title).toBe('第一章');
     expect(mockFetch).toHaveBeenCalledWith(
       'http://wap.bookshuku.org/read/160297_1_2.html',
-      6000,
+      30000,
+      { preferLocalProxy: true, localProxyRetries: 2 },
     );
   });
 });

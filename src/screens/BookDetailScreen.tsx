@@ -51,6 +51,18 @@ function coverTitleFontSize(title: string, base: number) {
   return title.length >= 3 ? base - 2 : base;
 }
 
+function isBadBookshukuCatalog(
+  sourceName: string | undefined,
+  chapterTitles: string[],
+) {
+  if (sourceName !== 'bookshuku') return false;
+  return (
+    chapterTitles.length > 0 &&
+    (chapterTitles.length <= 20 ||
+      chapterTitles.some(title => /^分节阅读\s*\d+$/i.test(title.trim())))
+  );
+}
+
 export default function BookDetailScreen() {
   const { theme } = useTheme();
   const navigation = useNavigation<NavigationProp>();
@@ -71,6 +83,7 @@ export default function BookDetailScreen() {
   const [checking, setChecking] = React.useState(false);
   const [caching, setCaching] = React.useState({ active: false, done: 0, total: 0 });
   const [onlineMsg, setOnlineMsg] = React.useState('');
+  const autoRepairCatalogRef = React.useRef(false);
   // 缓存全本可中断：离开页面或点“停止”时 abort，避免后台继续抓取。
   const cacheAbortRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => cacheAbortRef.current?.abort(), []);
@@ -91,6 +104,34 @@ export default function BookDetailScreen() {
       setChecking(false);
     }
   };
+
+  const chapterTitlesKey = chapters.map(c => c.title).join('|');
+  React.useEffect(() => {
+    if (
+      !book ||
+      autoRepairCatalogRef.current ||
+      !isBadBookshukuCatalog(
+        book.source?.name,
+        chapters.map(c => c.title),
+      )
+    ) {
+      return;
+    }
+    autoRepairCatalogRef.current = true;
+    setChecking(true);
+    setOnlineMsg('正在修复目录…');
+    // 兼容旧版本已落盘的坏目录：详情页发现“分节阅读 N”等占位目录时，
+    // 自动重拉完整目录并整表替换，避免用户必须删书重加。
+    checkBookUpdate(book.id)
+      .then(n => {
+        setOnlineMsg(n > 0 ? `已修复目录，更新 ${n} 章` : '目录已是最新');
+      })
+      .catch(() => {
+        autoRepairCatalogRef.current = false;
+        setOnlineMsg('目录修复失败，请稍后重试');
+      })
+      .finally(() => setChecking(false));
+  }, [book, chapterTitlesKey, chapters, checkBookUpdate]);
 
   const onCacheAll = async () => {
     // 已在缓存时，再次点击即停止。
