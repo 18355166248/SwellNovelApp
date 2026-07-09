@@ -80,6 +80,17 @@ ${Array.from(
 </ul>
 `;
 
+// 与 FULL_CATALOG 等长(491)但标题全是“分节阅读 N”占位。用于验证等长时也能被好标题目录顶替。
+const EQUAL_LEN_BAD_CATALOG = `
+<ul class="chapter">
+${Array.from(
+  { length: 491 },
+  (_, i) =>
+    `<li><a href="http://wap.bookshuku.org/read/160297_${i + 1}.html">分节阅读 ${i + 1}</a></li>`,
+).join('')}
+</ul>
+`;
+
 const BAD_SPLIT_CATALOG = `
 <ul class="chapter">
 ${Array.from(
@@ -210,6 +221,30 @@ describe('bookshukuSource', () => {
         catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
       }),
     ).rejects.toThrow('目录解析不完整');
+  });
+
+  it('parseCatalog 等长时用好标题目录顶替坏标题目录（不再只比长度）', async () => {
+    // wap 给等长(491)但全是“分节阅读”占位标题；桌面域名给等长的正常标题目录。
+    // 旧逻辑判据是“更长才替换”，等长不会替换 → 会抛错；新判据“当前坏就替换”应采纳好目录。
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('http://www.bookshuku.org/read/160297.html')) {
+        return FULL_CATALOG;
+      }
+      if (url.includes('/read/160297.html')) return EQUAL_LEN_BAD_CATALOG;
+      if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const chapters = await bookshukuSource.parseCatalog({
+      sourceBookId: '160297',
+      title: '捞尸人',
+      author: '纯洁滴小龙',
+      catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+    });
+
+    expect(chapters).toHaveLength(491);
+    expect(chapters[0].title).toBe('第一章');
+    expect(chapters.some(c => /^分节阅读/.test(c.title))).toBe(false);
   });
 
   it('parseCatalog 拒绝分节阅读占位目录，避免把坏目录写进缓存', async () => {

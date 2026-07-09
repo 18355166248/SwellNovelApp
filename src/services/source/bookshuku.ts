@@ -514,6 +514,84 @@ function isSuspiciousPartialCatalog(chapters: ParsedChapter[]): boolean {
   return chapters.length < maxSeq * CATALOG_COVERAGE_RATIO;
 }
 
+function errMsg(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 抓一次目录并解析：curl 代理 → 退代理页内同源 fetch。allowDirectSource 时（仅首个
+ * 来源）再兜底直连书源，应对真机蜂窝网络访问不了自建代理端口。任一层解析成功即返回，
+ * 全失败给空数组。过程写入 debug 供 __DEV__ 下排查。
+ */
+async function attemptCatalog(
+  url: string,
+  bookTitle: string | undefined,
+  label: string,
+  debug: string[],
+  options: { allowDirectSource?: boolean } = {},
+): Promise<ParsedChapter[]> {
+  try {
+    const html = await fetchBookshukuHtml(url, {
+      timeout: 45000,
+      renderedFallback: false,
+      preferLocalProxy: true,
+      requireLocalProxy: true,
+      localProxyRetries: 2,
+    });
+    const chapters = parseCatalogHtml(html, bookTitle);
+    debug.push(`${label}Html=${html.length}`, `${label}Parsed=${chapters.length}`);
+    return chapters;
+  } catch (error) {
+    debug.push(`${label}Error=${errMsg(error)}`);
+  }
+  try {
+    const html = await fetchBookshukuProxyRenderedHtml(url, {
+      timeout: 45000,
+      waitMs: 1000,
+      priority: 'high',
+    });
+    const chapters = parseCatalogHtml(html, bookTitle);
+    debug.push(
+      `${label}WebViewHtml=${html.length}`,
+      `${label}WebViewParsed=${chapters.length}`,
+    );
+    return chapters;
+  } catch (error) {
+    debug.push(`${label}WebViewError=${errMsg(error)}`);
+  }
+  if (options.allowDirectSource) {
+    try {
+      const html = await fetchBookshukuHtml(url, {
+        timeout: 45000,
+        renderedFallback: false,
+      });
+      const chapters = parseCatalogHtml(html, bookTitle);
+      debug.push(
+        `${label}DirectHtml=${html.length}`,
+        `${label}DirectParsed=${chapters.length}`,
+      );
+      return chapters;
+    } catch (error) {
+      debug.push(`${label}DirectError=${errMsg(error)}`);
+    }
+  }
+  return [];
+}
+
+/**
+ * 采纳判据（唯一一份）：候选无坏标题、且（当前是坏目录 或 候选更长）才替换。
+ * “当前坏 → 即便不更长也换”修掉旧逻辑只比长度、等长时好目录顶不掉坏目录的边界。
+ */
+function pickBetterCatalog(
+  current: ParsedChapter[],
+  candidate: ParsedChapter[],
+): ParsedChapter[] {
+  if (candidate.length === 0 || hasBadCatalogTitles(candidate)) return current;
+  const currentBad = current.length === 0 || hasBadCatalogTitles(current);
+  if (currentBad || candidate.length > current.length) return candidate;
+  return current;
+}
+
 export const bookshukuSource: BookSource = {
   id: 'bookshuku',
   name: 'TXT图书下载网',
@@ -653,173 +731,24 @@ export const bookshukuSource: BookSource = {
     const sourceBookId = info.sourceBookId || extractBookId(info.catalogUrl) || '';
     const catalogUrl = normalizeCatalogUrl(info.catalogUrl, sourceBookId);
     const debug: string[] = [];
-    let html = '';
-    try {
-      html = await fetchBookshukuHtml(catalogUrl, {
-        timeout: 45000,
-        preferLocalProxy: true,
-        requireLocalProxy: true,
-        localProxyRetries: 2,
-      });
-      debug.push(`proxyWapHtml=${html.length}`);
-    } catch (error) {
-      debug.push(
-        `proxyWapError=${error instanceof Error ? error.message : String(error)}`,
-      );
-      try {
-        html = await fetchBookshukuProxyRenderedHtml(catalogUrl, {
-          timeout: 45000,
-          waitMs: 1000,
-          priority: 'high',
-        });
-        debug.push(`proxyWebViewWapHtml=${html.length}`);
-      } catch (proxyWebViewError) {
-        debug.push(
-          `proxyWebViewWapError=${
-            proxyWebViewError instanceof Error
-              ? proxyWebViewError.message
-              : String(proxyWebViewError)
-          }`,
-        );
-      }
-      // 真机蜂窝网络可能无法访问自建代理的 11008 端口；这时允许最后尝试书源直连，
-      // 但后续仍用完整性校验兜底，短目录不会被写入本地缓存。
-      if (!html) {
-        try {
-          html = await fetchBookshukuHtml(catalogUrl, {
-            timeout: 45000,
-            renderedFallback: false,
-          });
-          debug.push(`directWapHtml=${html.length}`);
-        } catch (directError) {
-          debug.push(
-            `directWapError=${
-              directError instanceof Error
-                ? directError.message
-                : String(directError)
-            }`,
-          );
-        }
-      }
-    }
-    // wap 直连偶发拿到超大 HTML 却解析不到目录（疑似运营商对明文 HTTP 注入）；
-    // 打印开头与“是否仍含 /read 链接”，区分是内容被替换还是仅正则未命中。
-    debug.push(`wapHead=${html.slice(0, 100).replace(/\s+/g, ' ')}`);
-    debug.push(`wapHasRead=${/\/read\/\d+_\d+\.html/.test(html)}`);
-    let chapters = parseCatalogHtml(html, info.title);
-    debug.push(`wapParsed=${chapters.length}`);
+    const desktopUrl = `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`;
+
+    // 首个来源额外允许直连书源（真机蜂窝网络可能访问不了自建代理端口）。
+    let chapters = await attemptCatalog(catalogUrl, info.title, 'wap', debug, {
+      allowDirectSource: true,
+    });
     if (
       chapters.length === 0 ||
       isSuspiciousPartialCatalog(chapters) ||
       hasBadCatalogTitles(chapters)
     ) {
-      try {
-        // bookshuku 偶发把 wap 目录请求降级成空页/短目录；目录是入库关键数据，
-        // 先用同一 URL 再拉一次代理结果，避免一次上游抖动就落到 WebView 超时。
-        const retryHtml = await fetchBookshukuHtml(catalogUrl, {
-          timeout: 45000,
-          renderedFallback: false,
-          preferLocalProxy: true,
-          requireLocalProxy: true,
-          localProxyRetries: 2,
-        });
-        debug.push(`wapRetryHtml=${retryHtml.length}`);
-        const retryChapters = parseCatalogHtml(retryHtml, info.title);
-        debug.push(`wapRetryParsed=${retryChapters.length}`);
-        if (
-          retryChapters.length > chapters.length &&
-          !hasBadCatalogTitles(retryChapters)
-        ) {
-          chapters = retryChapters;
-        }
-      } catch (error) {
-        devInfo('[bookshuku] wap catalog retry failed', {
-          url: catalogUrl,
-          directCount: chapters.length,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        debug.push(
-          `wapRetryError=${error instanceof Error ? error.message : String(error)}`,
-        );
-        try {
-          const retryHtml = await fetchBookshukuProxyRenderedHtml(catalogUrl, {
-            timeout: 45000,
-            waitMs: 1000,
-            priority: 'high',
-          });
-          debug.push(`wapRetryWebViewHtml=${retryHtml.length}`);
-          const retryChapters = parseCatalogHtml(retryHtml, info.title);
-          debug.push(`wapRetryWebViewParsed=${retryChapters.length}`);
-          if (
-            retryChapters.length > chapters.length &&
-            !hasBadCatalogTitles(retryChapters)
-          ) {
-            chapters = retryChapters;
-          }
-        } catch (proxyWebViewError) {
-          debug.push(
-            `wapRetryWebViewError=${
-              proxyWebViewError instanceof Error
-                ? proxyWebViewError.message
-                : String(proxyWebViewError)
-            }`,
-          );
-        }
-      }
-      const desktopUrl = `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`;
-      try {
-        // iOS 模拟器/代理环境下 wap 目录可能返回不完整 DOM；桌面域名同源同书，
-        // curl 与真机自测都更稳定。先走它，成功后避免再等待 WebView。
-        const desktopHtml = await fetchBookshukuHtml(desktopUrl, {
-          timeout: 45000,
-          renderedFallback: false,
-          preferLocalProxy: true,
-          requireLocalProxy: true,
-          localProxyRetries: 2,
-        });
-        debug.push(`desktopHtml=${desktopHtml.length}`);
-        debug.push(`desktopHead=${desktopHtml.slice(0, 80).replace(/\s+/g, ' ')}`);
-        const desktopChapters = parseCatalogHtml(desktopHtml, info.title);
-        debug.push(`desktopParsed=${desktopChapters.length}`);
-        if (
-          desktopChapters.length > chapters.length &&
-          !hasBadCatalogTitles(desktopChapters)
-        ) {
-          chapters = desktopChapters;
-        }
-      } catch (error) {
-        devInfo('[bookshuku] desktop catalog fallback failed', {
-          url: `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`,
-          directCount: chapters.length,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        debug.push(
-          `desktopError=${error instanceof Error ? error.message : String(error)}`,
-        );
-        try {
-          const desktopHtml = await fetchBookshukuProxyRenderedHtml(desktopUrl, {
-            timeout: 45000,
-            waitMs: 1000,
-            priority: 'high',
-          });
-          debug.push(`desktopWebViewHtml=${desktopHtml.length}`);
-          const desktopChapters = parseCatalogHtml(desktopHtml, info.title);
-          debug.push(`desktopWebViewParsed=${desktopChapters.length}`);
-          if (
-            desktopChapters.length > chapters.length &&
-            !hasBadCatalogTitles(desktopChapters)
-          ) {
-            chapters = desktopChapters;
-          }
-        } catch (proxyWebViewError) {
-          debug.push(
-            `desktopWebViewError=${
-              proxyWebViewError instanceof Error
-                ? proxyWebViewError.message
-                : String(proxyWebViewError)
-            }`,
-          );
-        }
+      // 目录被降级成空页/短目录/占位标题时，依次再试同 URL 与桌面域名，取最好的一份。
+      for (const [url, label] of [
+        [catalogUrl, 'wapRetry'],
+        [desktopUrl, 'desktop'],
+      ] as const) {
+        const candidate = await attemptCatalog(url, info.title, label, debug);
+        chapters = pickBetterCatalog(chapters, candidate);
       }
     }
     if (chapters.length === 0) {
