@@ -32,6 +32,8 @@
 		     IP 字面量），故放开明文加载；书源域名例外仍保留作为文档说明。 -->
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 		<key>NSExceptionDomains</key>

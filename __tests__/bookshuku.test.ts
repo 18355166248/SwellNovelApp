@@ -1,17 +1,31 @@
 import { bookshukuSource } from '../src/services/source/bookshuku';
 import { fetchHtml } from '../src/services/http/fetchHtml';
-import { fetchRenderedHtml } from '../src/services/browserFetch/bridge';
+import {
+  fetchRenderedHtml,
+  fetchWebViewHttpText,
+} from '../src/services/browserFetch/bridge';
 
-jest.mock('../src/services/http/fetchHtml', () => ({ fetchHtml: jest.fn() }));
+jest.mock('../src/services/http/fetchHtml', () => ({
+  fetchHtml: jest.fn(),
+  getSourceProxyOrigin: jest.fn(() => 'http://101.43.11.224:11008'),
+  getSourceProxyUrl: jest.fn(
+    (url: string) =>
+      `http://101.43.11.224:11008/proxy/${url.replace('://', '/')}`,
+  ),
+}));
 jest.mock('../src/services/browserFetch/bridge', () => ({
   cleanRenderedText: jest.fn((text: string) => text),
   fetchRenderedContent: jest.fn(),
   fetchRenderedHtml: jest.fn(),
+  fetchWebViewHttpText: jest.fn(),
 }));
 
 const mockFetch = fetchHtml as jest.MockedFunction<typeof fetchHtml>;
 const mockFetchRenderedHtml = fetchRenderedHtml as jest.MockedFunction<
   typeof fetchRenderedHtml
+>;
+const mockFetchWebViewHttpText = fetchWebViewHttpText as jest.MockedFunction<
+  typeof fetchWebViewHttpText
 >;
 
 // 贴近真实站点结构的最小 fixture。
@@ -76,7 +90,9 @@ const CH1_P3 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;�
 beforeEach(() => {
   mockFetch.mockReset();
   mockFetchRenderedHtml.mockReset();
+  mockFetchWebViewHttpText.mockReset();
   mockFetchRenderedHtml.mockResolvedValue(CATALOG);
+  mockFetchWebViewHttpText.mockResolvedValue(CATALOG);
   mockFetch.mockImplementation(async (url: string) => {
     if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
     if (url.endsWith('/read/160297.html')) return CATALOG;
@@ -129,7 +145,7 @@ describe('bookshukuSource', () => {
       if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
       throw new Error(`unexpected url ${url}`);
     });
-    mockFetchRenderedHtml.mockResolvedValueOnce(FULL_CATALOG);
+    mockFetchWebViewHttpText.mockResolvedValueOnce(FULL_CATALOG);
     const chapters = await bookshukuSource.parseCatalog({
       sourceBookId: 'unknown',
       title: '测试书',
@@ -159,7 +175,7 @@ describe('bookshukuSource', () => {
       if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
       throw new Error(`unexpected url ${url}`);
     });
-    mockFetchRenderedHtml.mockRejectedValueOnce(new Error('webview timeout'));
+    mockFetchWebViewHttpText.mockRejectedValueOnce(new Error('webview timeout'));
 
     await expect(
       bookshukuSource.parseCatalog({
@@ -180,7 +196,7 @@ describe('bookshukuSource', () => {
       if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
       throw new Error(`unexpected url ${url}`);
     });
-    mockFetchRenderedHtml.mockRejectedValueOnce(new Error('webview timeout'));
+    mockFetchWebViewHttpText.mockRejectedValueOnce(new Error('webview timeout'));
 
     const chapters = await bookshukuSource.parseCatalog({
       sourceBookId: '160297',
@@ -220,7 +236,7 @@ describe('bookshukuSource', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'http://wap.bookshuku.org/read/160297_1_2.html',
       30000,
-      { preferLocalProxy: true, localProxyRetries: 2 },
+      { preferLocalProxy: true, requireLocalProxy: true, localProxyRetries: 2 },
     );
   });
 });

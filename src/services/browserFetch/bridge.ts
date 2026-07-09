@@ -81,6 +81,28 @@ export function fetchRenderedHtml(
   );
 }
 
+/**
+ * 在 WebView 已加载的同源桥页里发起 fetch，再把文本回传给 RN。
+ * 用于 iOS 真机对 HTTP IP:端口主导航或 RN fetch 不稳定时，仍复用 Safari/WKWebView
+ * 可访问该地址的能力；调用方应传入与目标 URL 同源的 bridgeUrl，避免 CORS。
+ */
+export function fetchWebViewHttpText(
+  url: string,
+  bridgeUrl: string,
+  options: BrowserFetchOptions | number = {},
+): Promise<string> {
+  const normalized =
+    typeof options === 'number' ? { timeout: options } : options;
+  return fetchRendered(
+    bridgeUrl,
+    id => httpFetchExtractorJs(id, url),
+    normalized.waitMs ?? 500,
+    normalized.timeout ?? 45000,
+    'WebView 网络请求超时',
+    normalized.priority ?? 'normal',
+  );
+}
+
 function fetchRendered(
   url: string,
   script: (id: string) => string,
@@ -169,6 +191,40 @@ export function htmlExtractorJs(id: string): string {
       window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:html }));
     } catch(e){
       window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) }));
+    }
+  })(); true;`.replace(/__ID__/g, id);
+}
+
+function jsString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function httpFetchExtractorJs(id: string, url: string): string {
+  return `(function(){
+    var target=${jsString(url)};
+    function done(ok, text, error){
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type:'${CONTENT_MESSAGE}',
+        id:'__ID__',
+        ok:ok,
+        text:text||'',
+        error:error||''
+      }));
+    }
+    try {
+      fetch(target, {
+        cache:'no-store',
+        headers:{ 'Cache-Control':'no-cache', 'Pragma':'no-cache' }
+      }).then(function(res){
+        if(!res.ok){ throw new Error('HTTP '+res.status); }
+        return res.text();
+      }).then(function(text){
+        done(true, text, '');
+      }).catch(function(e){
+        done(false, '', String(e && e.message ? e.message : e));
+      });
+    } catch(e){
+      done(false, '', String(e && e.message ? e.message : e));
     }
   })(); true;`.replace(/__ID__/g, id);
 }

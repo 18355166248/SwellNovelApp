@@ -47,6 +47,14 @@ export async function fetchRenderedHtml(
   return fetchHtml(url, timeout);
 }
 
+export async function fetchWebViewHttpText(
+  url: string,
+  _bridgeUrl: string,
+  options: BrowserFetchOptions | number = {},
+): Promise<string> {
+  return fetchRenderedHtml(url, options);
+}
+
 export async function fetchRenderedContent(
   url: string,
   options: BrowserFetchOptions | number = {},

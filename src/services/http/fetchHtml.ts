@@ -47,11 +47,13 @@ function toProxyUrl(url: string, origin: string): string | null {
 }
 
 export function getSourceProxyUrl(url: string): string | null {
-  const proxyOrigin =
-    typeof __DEV__ !== 'undefined' && __DEV__
-      ? DEV_PROXY_ORIGIN
-      : PROD_PROXY_ORIGIN;
-  return toProxyUrl(url, proxyOrigin);
+  return toProxyUrl(url, getSourceProxyOrigin());
+}
+
+export function getSourceProxyOrigin(): string {
+  return typeof __DEV__ !== 'undefined' && __DEV__
+    ? DEV_PROXY_ORIGIN
+    : PROD_PROXY_ORIGIN;
 }
 
 function isChallengeHtml(html: string): boolean {

@@ -9,11 +9,16 @@
  *   正文在 <div class="articlecon …">，段落 <br /> 分隔、&nbsp; 缩进，含 第X/Y页 标记。
  */
 
-import { fetchHtml, getSourceProxyUrl } from '../http/fetchHtml';
+import {
+  fetchHtml,
+  getSourceProxyOrigin,
+  getSourceProxyUrl,
+} from '../http/fetchHtml';
 import {
   cleanRenderedText,
   fetchRenderedContent,
   fetchRenderedHtml,
+  fetchWebViewHttpText,
 } from '../browserFetch/bridge';
 import {
   BookSource,
@@ -161,11 +166,12 @@ async function fetchBookshukuProxyRenderedHtml(
 ): Promise<string> {
   const proxyUrl = getSourceProxyUrl(url);
   if (!proxyUrl) throw new Error('source proxy url unavailable');
-  // iOS 真机上 RN fetch 对明文 IP:端口可能直接 Network request failed，
-  // 但 Safari/WKWebView 能打开同一地址；这里仍访问自建 curl 代理，只换传输通道。
-  return fetchRenderedHtml(proxyUrl, {
+  // iOS 真机上 RN fetch 对明文 IP:端口可能直接 Network request failed；
+  // 先让 WebView 打开同源代理首页，再在页面内 fetch /proxy，复用 WKWebView
+  // 对该地址的可达性，同时避免把大 HTML 当主文档导航导致 onHttpError 误杀任务。
+  return fetchWebViewHttpText(proxyUrl, getSourceProxyOrigin(), {
     timeout: options.timeout ?? 45000,
-    waitMs: options.waitMs ?? 1000,
+    waitMs: options.waitMs ?? 500,
     priority: options.priority ?? 'high',
   });
 }
