@@ -46,6 +46,14 @@ function toProxyUrl(url: string, origin: string): string | null {
   return `${origin}/proxy/${m[1].toLowerCase()}/${m[2].toLowerCase()}${path}${sep}__nvl_proxy_ts=${Date.now()}`;
 }
 
+export function getSourceProxyUrl(url: string): string | null {
+  const proxyOrigin =
+    typeof __DEV__ !== 'undefined' && __DEV__
+      ? DEV_PROXY_ORIGIN
+      : PROD_PROXY_ORIGIN;
+  return toProxyUrl(url, proxyOrigin);
+}
+
 function isChallengeHtml(html: string): boolean {
   return (
     /<title>\s*Just a moment/i.test(html) ||
@@ -58,11 +66,7 @@ export async function fetchHtml(
   timeoutMs: number = TIMEOUT_MS,
   options: FetchHtmlOptions = {},
 ): Promise<string> {
-  const proxyOrigin =
-    typeof __DEV__ !== 'undefined' && __DEV__
-      ? DEV_PROXY_ORIGIN
-      : PROD_PROXY_ORIGIN;
-  const proxyUrl = toProxyUrl(url, proxyOrigin);
+  const proxyUrl = getSourceProxyUrl(url);
   if (options.preferLocalProxy && proxyUrl) {
     const retries = Math.max(1, options.localProxyRetries ?? 1);
     let lastProxyError: unknown;

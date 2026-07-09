@@ -101,9 +101,16 @@ function isFallbackChapterTitle(title: string): boolean {
 }
 
 function isBadBookshukuCatalog(chapters: Chapter[]): boolean {
+  const fallbackTitleCount = chapters.filter(c =>
+    /^第\s*\d+\s*章$/i.test(c.title.trim()),
+  ).length;
+  // 旧版本曾用“第 N 章”批量占位目录；数量占比高时必须整表重拉真实目录。
+  const tooManyFallbackTitles =
+    fallbackTitleCount >= Math.min(20, Math.ceil(chapters.length * 0.5));
   return (
     chapters.length <= 20 ||
-    chapters.some(c => /^分节阅读\s*\d+$/i.test(c.title.trim()))
+    chapters.some(c => /^分节阅读\s*\d+$/i.test(c.title.trim())) ||
+    tooManyFallbackTitles
   );
 }
 

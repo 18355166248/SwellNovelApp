@@ -9,7 +9,7 @@
  *   正文在 <div class="articlecon …">，段落 <br /> 分隔、&nbsp; 缩进，含 第X/Y页 标记。
  */
 
-import { fetchHtml } from '../http/fetchHtml';
+import { fetchHtml, getSourceProxyUrl } from '../http/fetchHtml';
 import {
   cleanRenderedText,
   fetchRenderedContent,
@@ -149,6 +149,25 @@ async function fetchBookshukuHtml(
     });
     return html;
   }
+}
+
+async function fetchBookshukuProxyRenderedHtml(
+  url: string,
+  options: {
+    timeout?: number;
+    waitMs?: number;
+    priority?: ParseChapterOptions['priority'];
+  } = {},
+): Promise<string> {
+  const proxyUrl = getSourceProxyUrl(url);
+  if (!proxyUrl) throw new Error('source proxy url unavailable');
+  // iOS 真机上 RN fetch 对明文 IP:端口可能直接 Network request failed，
+  // 但 Safari/WKWebView 能打开同一地址；这里仍访问自建 curl 代理，只换传输通道。
+  return fetchRenderedHtml(proxyUrl, {
+    timeout: options.timeout ?? 45000,
+    waitMs: options.waitMs ?? 1000,
+    priority: options.priority ?? 'high',
+  });
 }
 
 /** 抽取并清洗单个正文子页的纯文本。 */
@@ -449,21 +468,6 @@ function getBadCatalogTitle(chapters: ParsedChapter[]): string | undefined {
   return chapters.find(chapter => isSyntheticSplitTitle(chapter.title))?.title;
 }
 
-function parseCatalogFromScript(html: string): ParsedChapter[] {
-  const idsRaw = matchOne(/var\s+arr_cid\s*=\s*\[([\s\S]*?)\]\s*;/, html);
-  const pageUrl = matchOne(/var\s+pageurl\s*=\s*'([^']+)';/, html);
-  if (!idsRaw || !pageUrl) return [];
-  const ids = idsRaw
-    .split(',')
-    .map(x => x.trim())
-    .filter(Boolean);
-  return ids.map((cid, index) => ({
-    url: normalizeReadUrl(pageUrl.replace('{page}', cid)),
-    // 当站点脚本延迟导致 li 未完整渲染时，用序号标题兜底，至少保证目录数量和正文 URL 正确。
-    title: `第${index + 1}章`,
-  }));
-}
-
 function parseTitleFromCatalogHtml(html: string, id: string): string | undefined {
   const fromPath = matchOne(
     new RegExp(`<a[^>]+href=["']https?:\\/\\/wap\\.bookshuku\\.org\\/bookinfo\\/${id}\\.html["'][^>]*>([\\s\\S]*?)<\\/a>`, 'i'),
@@ -521,10 +525,25 @@ export const bookshukuSource: BookSource = {
         localProxyRetries: 2,
       });
     } catch (error) {
-      console.warn('[bookshuku] detail direct failed, try catalog title', {
+      console.warn('[bookshuku] detail proxy fetch failed, try proxy WebView', {
         url: detailUrl,
         error: error instanceof Error ? error.message : String(error),
       });
+      try {
+        html = await fetchBookshukuProxyRenderedHtml(detailUrl, {
+          timeout: 12000,
+          waitMs: 1000,
+          priority: 'high',
+        });
+      } catch (proxyWebViewError) {
+        console.warn('[bookshuku] detail proxy WebView failed, try catalog title', {
+          url: detailUrl,
+          error:
+            proxyWebViewError instanceof Error
+              ? proxyWebViewError.message
+              : String(proxyWebViewError),
+        });
+      }
     }
 
     let title =
@@ -542,10 +561,29 @@ export const bookshukuSource: BookSource = {
         });
         title = parseTitleFromCatalogHtml(catalogHtml, id);
       } catch (error) {
-        console.warn('[bookshuku] catalog title direct failed', {
+        console.warn('[bookshuku] catalog title proxy fetch failed', {
           url: `${ORIGIN}/read/${id}.html`,
           error: error instanceof Error ? error.message : String(error),
         });
+        try {
+          const catalogHtml = await fetchBookshukuProxyRenderedHtml(
+            `${ORIGIN}/read/${id}.html`,
+            {
+              timeout: 12000,
+              waitMs: 1000,
+              priority: 'high',
+            },
+          );
+          title = parseTitleFromCatalogHtml(catalogHtml, id);
+        } catch (proxyWebViewError) {
+          console.warn('[bookshuku] catalog title proxy WebView failed', {
+            url: `${ORIGIN}/read/${id}.html`,
+            error:
+              proxyWebViewError instanceof Error
+                ? proxyWebViewError.message
+                : String(proxyWebViewError),
+          });
+        }
       }
     }
     if (!title) {
@@ -592,21 +630,62 @@ export const bookshukuSource: BookSource = {
   async parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]> {
     const sourceBookId = info.sourceBookId || extractBookId(info.catalogUrl) || '';
     const catalogUrl = normalizeCatalogUrl(info.catalogUrl, sourceBookId);
-    let html = await fetchBookshukuHtml(catalogUrl, {
-      timeout: 45000,
-      preferLocalProxy: true,
-      requireLocalProxy: true,
-      localProxyRetries: 2,
-    });
-    const debug: string[] = [`wapHtml=${html.length}`];
+    const debug: string[] = [];
+    let html = '';
+    try {
+      html = await fetchBookshukuHtml(catalogUrl, {
+        timeout: 45000,
+        preferLocalProxy: true,
+        requireLocalProxy: true,
+        localProxyRetries: 2,
+      });
+      debug.push(`proxyWapHtml=${html.length}`);
+    } catch (error) {
+      debug.push(
+        `proxyWapError=${error instanceof Error ? error.message : String(error)}`,
+      );
+      try {
+        html = await fetchBookshukuProxyRenderedHtml(catalogUrl, {
+          timeout: 45000,
+          waitMs: 1000,
+          priority: 'high',
+        });
+        debug.push(`proxyWebViewWapHtml=${html.length}`);
+      } catch (proxyWebViewError) {
+        debug.push(
+          `proxyWebViewWapError=${
+            proxyWebViewError instanceof Error
+              ? proxyWebViewError.message
+              : String(proxyWebViewError)
+          }`,
+        );
+      }
+      // 真机蜂窝网络可能无法访问自建代理的 11008 端口；这时允许最后尝试书源直连，
+      // 但后续仍用完整性校验兜底，短目录不会被写入本地缓存。
+      if (!html) {
+        try {
+          html = await fetchBookshukuHtml(catalogUrl, {
+            timeout: 45000,
+            renderedFallback: false,
+          });
+          debug.push(`directWapHtml=${html.length}`);
+        } catch (directError) {
+          debug.push(
+            `directWapError=${
+              directError instanceof Error
+                ? directError.message
+                : String(directError)
+            }`,
+          );
+        }
+      }
+    }
     // wap 直连偶发拿到超大 HTML 却解析不到目录（疑似运营商对明文 HTTP 注入）；
     // 打印开头与“是否仍含 /read 链接”，区分是内容被替换还是仅正则未命中。
     debug.push(`wapHead=${html.slice(0, 100).replace(/\s+/g, ' ')}`);
     debug.push(`wapHasRead=${/\/read\/\d+_\d+\.html/.test(html)}`);
     let chapters = parseCatalogHtml(html, info.title);
     debug.push(`wapParsed=${chapters.length}`);
-    if (chapters.length === 0) chapters = parseCatalogFromScript(html);
-    debug.push(`wapAfterScript=${chapters.length}`);
     if (
       chapters.length === 0 ||
       isSuspiciousPartialCatalog(sourceBookId, chapters) ||
@@ -640,6 +719,30 @@ export const bookshukuSource: BookSource = {
         debug.push(
           `wapRetryError=${error instanceof Error ? error.message : String(error)}`,
         );
+        try {
+          const retryHtml = await fetchBookshukuProxyRenderedHtml(catalogUrl, {
+            timeout: 45000,
+            waitMs: 1000,
+            priority: 'high',
+          });
+          debug.push(`wapRetryWebViewHtml=${retryHtml.length}`);
+          const retryChapters = parseCatalogHtml(retryHtml, info.title);
+          debug.push(`wapRetryWebViewParsed=${retryChapters.length}`);
+          if (
+            retryChapters.length > chapters.length &&
+            !hasBadCatalogTitles(retryChapters)
+          ) {
+            chapters = retryChapters;
+          }
+        } catch (proxyWebViewError) {
+          debug.push(
+            `wapRetryWebViewError=${
+              proxyWebViewError instanceof Error
+                ? proxyWebViewError.message
+                : String(proxyWebViewError)
+            }`,
+          );
+        }
       }
       const desktopUrl = `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`;
       try {
@@ -671,6 +774,30 @@ export const bookshukuSource: BookSource = {
         debug.push(
           `desktopError=${error instanceof Error ? error.message : String(error)}`,
         );
+        try {
+          const desktopHtml = await fetchBookshukuProxyRenderedHtml(desktopUrl, {
+            timeout: 45000,
+            waitMs: 1000,
+            priority: 'high',
+          });
+          debug.push(`desktopWebViewHtml=${desktopHtml.length}`);
+          const desktopChapters = parseCatalogHtml(desktopHtml, info.title);
+          debug.push(`desktopWebViewParsed=${desktopChapters.length}`);
+          if (
+            desktopChapters.length > chapters.length &&
+            !hasBadCatalogTitles(desktopChapters)
+          ) {
+            chapters = desktopChapters;
+          }
+        } catch (proxyWebViewError) {
+          debug.push(
+            `desktopWebViewError=${
+              proxyWebViewError instanceof Error
+                ? proxyWebViewError.message
+                : String(proxyWebViewError)
+            }`,
+          );
+        }
       }
     }
     if (chapters.length === 0) {

@@ -56,10 +56,16 @@ function isBadBookshukuCatalog(
   chapterTitles: string[],
 ) {
   if (sourceName !== 'bookshuku') return false;
+  const fallbackTitleCount = chapterTitles.filter(title =>
+    /^第\s*\d+\s*章$/i.test(title.trim()),
+  ).length;
+  const tooManyFallbackTitles =
+    fallbackTitleCount >= Math.min(20, Math.ceil(chapterTitles.length * 0.5));
   return (
     chapterTitles.length > 0 &&
     (chapterTitles.length <= 20 ||
-      chapterTitles.some(title => /^分节阅读\s*\d+$/i.test(title.trim())))
+      chapterTitles.some(title => /^分节阅读\s*\d+$/i.test(title.trim())) ||
+      tooManyFallbackTitles)
   );
 }
 
@@ -120,8 +126,8 @@ export default function BookDetailScreen() {
     autoRepairCatalogRef.current = true;
     setChecking(true);
     setOnlineMsg('正在修复目录…');
-    // 兼容旧版本已落盘的坏目录：详情页发现“分节阅读 N”等占位目录时，
-    // 自动重拉完整目录并整表替换，避免用户必须删书重加。
+    // 兼容旧版本已落盘的坏目录：详情页发现“分节阅读 N”或大量“第 N 章”
+    // 占位目录时，自动重拉完整目录并整表替换，避免用户必须删书重加。
     checkBookUpdate(book.id)
       .then(n => {
         setOnlineMsg(n > 0 ? `已修复目录，更新 ${n} 章` : '目录已是最新');

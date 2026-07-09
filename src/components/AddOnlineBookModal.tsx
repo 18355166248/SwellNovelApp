@@ -25,6 +25,14 @@ interface Props {
 
 const PLACEHOLDER = 'http://wap.bookshuku.org/bookinfo/160297.html';
 
+function formatAddBookError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/source proxy exhausted|Network request failed/i.test(message)) {
+    return '网络代理暂时不可达，请切换网络或稍后重试';
+  }
+  return message || '解析失败，请检查链接后重试';
+}
+
 export function AddOnlineBookModal({ visible, onClose, onAdded }: Props) {
   const { theme } = useTheme();
   const addOnlineBook = useAddOnlineBook();
@@ -59,7 +67,7 @@ export function AddOnlineBookModal({ visible, onClose, onAdded }: Props) {
       onClose();
       onAdded(book.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '解析失败，请检查链接后重试');
+      setError(formatAddBookError(e));
       setBusy(false);
     }
   };
