@@ -28,8 +28,10 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
+		<!-- 书源与自建 curl 代理均为明文 HTTP，且代理用 IP:端口访问（ATS 例外域不支持
+		     IP 字面量），故放开明文加载；书源域名例外仍保留作为文档说明。 -->
 		<key>NSAllowsArbitraryLoads</key>
-		<false/>
+		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 		<key>NSExceptionDomains</key>

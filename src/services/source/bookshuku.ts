@@ -78,6 +78,7 @@ async function fetchBookshukuHtml(
     renderedWaitMs?: number;
     priority?: ParseChapterOptions['priority'];
     preferLocalProxy?: boolean;
+    requireLocalProxy?: boolean;
     localProxyRetries?: number;
   } = {},
 ): Promise<string> {
@@ -86,6 +87,7 @@ async function fetchBookshukuHtml(
   try {
     const html = await fetchHtml(url, options.timeout, {
       preferLocalProxy: options.preferLocalProxy,
+      requireLocalProxy: options.requireLocalProxy,
       localProxyRetries: options.localProxyRetries,
     });
     if (!html.trim()) {
@@ -117,6 +119,16 @@ async function fetchBookshukuHtml(
     });
     return html;
   } catch (error) {
+    if (options.requireLocalProxy) {
+      // bookshuku 的 WebView/原生直连会稳定返回分页短目录；既然调用方声明必须走
+      // curl 代理，代理失败就直接抛错，避免继续用 WebView 结果污染入库目录。
+      console.info('[bookshuku] required source proxy failed', {
+        url,
+        ms: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     // 原生 fetch 可能被站点 403、ATS 或网络层拒绝，下面统一走 WebView 兜底。
     // 注意：bookshuku 的正常页面底部也会带 Cloudflare 脚本，不能只凭脚本特征丢弃 HTML。
     console.info('[bookshuku] fetch html fallback WebView', {
@@ -291,6 +303,7 @@ async function fetchArticleText(
     // 这样不会每次点击章节都先占用隐藏 WebView 等完整挑战流程。
     html = await fetchHtml(url, ARTICLE_DIRECT_TIMEOUT_MS, {
       preferLocalProxy: true,
+      requireLocalProxy: true,
       localProxyRetries: 2,
     });
     console.info('[bookshuku] article html ok', {
@@ -504,6 +517,7 @@ export const bookshukuSource: BookSource = {
         timeout: 8000,
         renderedFallback: false,
         preferLocalProxy: true,
+        requireLocalProxy: true,
         localProxyRetries: 2,
       });
     } catch (error) {
@@ -523,6 +537,7 @@ export const bookshukuSource: BookSource = {
           timeout: 8000,
           renderedFallback: false,
           preferLocalProxy: true,
+          requireLocalProxy: true,
           localProxyRetries: 2,
         });
         title = parseTitleFromCatalogHtml(catalogHtml, id);
@@ -580,9 +595,14 @@ export const bookshukuSource: BookSource = {
     let html = await fetchBookshukuHtml(catalogUrl, {
       timeout: 45000,
       preferLocalProxy: true,
+      requireLocalProxy: true,
       localProxyRetries: 2,
     });
     const debug: string[] = [`wapHtml=${html.length}`];
+    // wap 直连偶发拿到超大 HTML 却解析不到目录（疑似运营商对明文 HTTP 注入）；
+    // 打印开头与“是否仍含 /read 链接”，区分是内容被替换还是仅正则未命中。
+    debug.push(`wapHead=${html.slice(0, 100).replace(/\s+/g, ' ')}`);
+    debug.push(`wapHasRead=${/\/read\/\d+_\d+\.html/.test(html)}`);
     let chapters = parseCatalogHtml(html, info.title);
     debug.push(`wapParsed=${chapters.length}`);
     if (chapters.length === 0) chapters = parseCatalogFromScript(html);
@@ -599,6 +619,7 @@ export const bookshukuSource: BookSource = {
           timeout: 45000,
           renderedFallback: false,
           preferLocalProxy: true,
+          requireLocalProxy: true,
           localProxyRetries: 2,
         });
         debug.push(`wapRetryHtml=${retryHtml.length}`);
@@ -628,6 +649,7 @@ export const bookshukuSource: BookSource = {
           timeout: 45000,
           renderedFallback: false,
           preferLocalProxy: true,
+          requireLocalProxy: true,
           localProxyRetries: 2,
         });
         debug.push(`desktopHtml=${desktopHtml.length}`);
@@ -648,84 +670,6 @@ export const bookshukuSource: BookSource = {
         });
         debug.push(
           `desktopError=${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      if (
-        chapters.length === 0 ||
-        isSuspiciousPartialCatalog(sourceBookId, chapters) ||
-        hasBadCatalogTitles(chapters)
-      ) {
-        try {
-          const desktopRenderedHtml = await fetchRenderedHtml(desktopUrl, {
-            timeout: 30000,
-            waitMs: 5000,
-            priority: 'high',
-          });
-          debug.push(`desktopWebviewHtml=${desktopRenderedHtml.length}`);
-          debug.push(
-            `desktopWebviewHead=${desktopRenderedHtml
-              .slice(0, 80)
-              .replace(/\s+/g, ' ')}`,
-          );
-          const desktopRenderedChapters = parseCatalogHtml(
-            desktopRenderedHtml,
-            info.title,
-          );
-          debug.push(`desktopWebviewParsed=${desktopRenderedChapters.length}`);
-          if (
-            desktopRenderedChapters.length > chapters.length &&
-            !hasBadCatalogTitles(desktopRenderedChapters)
-          ) {
-            chapters = desktopRenderedChapters;
-          }
-        } catch (error) {
-          console.info('[bookshuku] desktop WebView catalog fallback failed', {
-            url: desktopUrl,
-            directCount: chapters.length,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          debug.push(
-            `desktopWebviewError=${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-      }
-    }
-    if (
-      chapters.length === 0 ||
-      isSuspiciousPartialCatalog(sourceBookId, chapters) ||
-      hasBadCatalogTitles(chapters)
-    ) {
-      // 若拿到的是纯挑战页、脚本未执行完成、或只吐“最新章节”，再让 WebView
-      // 渲染后回传最终 DOM。只有渲染结果更完整时才替换，避免伪造章节。
-      try {
-        html = await fetchRenderedHtml(catalogUrl, {
-          timeout: 18000,
-          waitMs: 5000,
-          priority: 'high',
-        });
-        debug.push(`webviewHtml=${html.length}`);
-        let renderedChapters = parseCatalogHtml(html, info.title);
-        debug.push(`webviewParsed=${renderedChapters.length}`);
-        if (renderedChapters.length === 0) {
-          renderedChapters = parseCatalogFromScript(html);
-        }
-        debug.push(`webviewAfterScript=${renderedChapters.length}`);
-        if (
-          renderedChapters.length > chapters.length &&
-          !hasBadCatalogTitles(renderedChapters)
-        ) {
-          chapters = renderedChapters;
-        }
-      } catch (error) {
-        console.info('[bookshuku] catalog WebView refresh failed', {
-          url: catalogUrl,
-          directCount: chapters.length,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        debug.push(
-          `webviewError=${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }

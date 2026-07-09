@@ -3,7 +3,11 @@ import { Platform } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { RootStackParamList, MainTabParamList } from '../types/navigation';
 import { useTheme } from '../theme/ThemeContext';
 import { darkTheme } from '../theme/themes';
@@ -23,6 +27,9 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 
 function MainTabs() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const tabBottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 0);
+  const tabContentHeight = 60;
 
   return (
     <SafeAreaView
@@ -35,16 +42,16 @@ function MainTabs() {
           tabBarActiveTintColor: theme.colors.accentDark,
           tabBarInactiveTintColor: theme.colors.textSecondary,
           tabBarStyle: {
-            height: 72,
+            height: tabContentHeight + tabBottomInset,
             backgroundColor: theme.colors.tabBar,
             borderTopColor: theme.colors.border,
             borderTopWidth: 1,
             paddingTop: 6,
-            paddingBottom: 12,
+            paddingBottom: tabBottomInset,
           },
-          // Web 端默认 tab item 布局会把 label 压到容器底部，显式留出行高避免文字被裁切。
+          // TabBar 自身负责吃掉底部安全区；item 只占内容高度，避免 iPhone Home Indicator 顶起文字。
           tabBarItemStyle: {
-            height: 54,
+            height: tabContentHeight - 6,
             paddingVertical: 0,
             justifyContent: 'center',
           },

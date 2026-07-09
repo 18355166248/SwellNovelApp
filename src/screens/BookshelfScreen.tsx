@@ -344,11 +344,10 @@ export default function BookshelfScreen() {
               color="textSecondary"
               style={{ marginTop: 12, marginBottom: 20 }}
             >
-              书架空空如也，点击下方导入本地 TXT
+              书架空空如也，先粘贴书源网址添加网络书籍
             </Text>
             <Pressable
-              onPress={handleImportTxt}
-              disabled={importState.active}
+              onPress={() => setOnlineOpen(true)}
               style={[
                 styles.emptyImportBtn,
                 { backgroundColor: theme.colors.accentDark },
@@ -361,15 +360,16 @@ export default function BookshelfScreen() {
                   fontSize: 14,
                 }}
               >
-                导入本地 TXT
+                粘贴网址添加
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => setOnlineOpen(true)}
+              onPress={handleImportTxt}
+              disabled={importState.active}
               style={{ marginTop: 14 }}
             >
               <Text style={{ color: theme.colors.accent, fontSize: 13.5 }}>
-                或 粘贴网址添加网络书籍
+                导入本地 TXT
               </Text>
             </Pressable>
           </View>
@@ -459,8 +459,7 @@ export default function BookshelfScreen() {
                 styles.addTile,
                 { borderColor: theme.colors.border },
               ]}
-              onPress={handleImportTxt}
-              disabled={importState.active}
+              onPress={() => setOnlineOpen(true)}
             >
               <Icon name="add" size={26} color={theme.colors.textSecondary} />
               <Text
@@ -468,7 +467,7 @@ export default function BookshelfScreen() {
                 color="textSecondary"
                 style={{ marginTop: 6 }}
               >
-                导入 TXT
+                添加网络书籍
               </Text>
             </Pressable>
           </View>
@@ -524,8 +523,7 @@ export default function BookshelfScreen() {
               </Pressable>
             ))}
             <Pressable
-              onPress={handleImportTxt}
-              disabled={importState.active}
+              onPress={() => setOnlineOpen(true)}
               style={[
                 styles.listImportBtn,
                 { borderColor: theme.colors.border },
@@ -537,6 +535,15 @@ export default function BookshelfScreen() {
                 color="textSecondary"
                 style={{ marginLeft: 6 }}
               >
+                添加网络书籍
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleImportTxt}
+              disabled={importState.active}
+              style={styles.listSecondaryImport}
+            >
+              <Text style={{ color: theme.colors.accent, fontSize: 13.5 }}>
                 导入本地 TXT
               </Text>
             </Pressable>
@@ -586,7 +593,7 @@ const styles = StyleSheet.create({
   scrollContent: { paddingTop: 8, paddingBottom: 24 },
   headerRow: {
     paddingHorizontal: 20,
-    paddingTop: 6,
+    paddingTop: 10,
     paddingBottom: 6,
     flexDirection: 'row',
     alignItems: 'center',
@@ -595,6 +602,7 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: SERIF_FONT,
     fontSize: 25,
+    lineHeight: 33,
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
     letterSpacing: 0.5,
   },
@@ -781,6 +789,11 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderWidth: 1,
     borderRadius: 8,
+  },
+  listSecondaryImport: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
   },
   importOverlay: {
     ...StyleSheet.absoluteFillObject,

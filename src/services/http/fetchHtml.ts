@@ -18,17 +18,32 @@ const TIMEOUT_MS = 15000;
 
 type FetchHtmlOptions = {
   preferLocalProxy?: boolean;
+  requireLocalProxy?: boolean;
   localProxyRetries?: number;
 };
 
-function toLocalProxyUrl(url: string): string | null {
+// 代理转发源：书源站点用 TLS/JA3 指纹识别客户端——curl（服务端代理）能拿到完整
+// 单页目录，而 iOS 原生 fetch/WebView 会被降级成 JS 分页目录（每页约 10 章、标题为
+// “分节阅读 N”占位），三条 fallback 全都拿不全。因此真机也必须经服务端 curl 代理。
+// 开发走本机 server.js；生产/真机走公网部署的同一份 server.js。
+const DEV_PROXY_ORIGIN = 'http://127.0.0.1:3000';
+const PROD_PROXY_ORIGIN = 'http://101.43.11.224:11008';
+
+/** 判断 url 是否指向我们自己的 /proxy 端点（本机或公网），这类响应已是 UTF-8 明文。 */
+function isProxyUrl(url: string): boolean {
+  return (
+    url.startsWith(`${DEV_PROXY_ORIGIN}/proxy/`) ||
+    url.startsWith(`${PROD_PROXY_ORIGIN}/proxy/`)
+  );
+}
+
+function toProxyUrl(url: string, origin: string): string | null {
   const m = /^(https?):\/\/([^/]+)(\/.*)?$/i.exec(url);
   if (!m || /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(m[2])) return null;
   const path = m[3] || '/';
   const sep = path.includes('?') ? '&' : '?';
-  // 本地代理用于绕过书源 TLS/Cloudflare 拦截；追加时间戳避免 iOS 模拟器复用
-  // 旧的短目录/压缩响应，把“分节阅读 N”之类占位目录再次写进缓存。
-  return `http://127.0.0.1:3000/proxy/${m[1].toLowerCase()}/${m[2].toLowerCase()}${path}${sep}__nvl_proxy_ts=${Date.now()}`;
+  // 追加时间戳避免复用旧的短目录/压缩响应，把“分节阅读 N”之类占位目录再次写进缓存。
+  return `${origin}/proxy/${m[1].toLowerCase()}/${m[2].toLowerCase()}${path}${sep}__nvl_proxy_ts=${Date.now()}`;
 }
 
 function isChallengeHtml(html: string): boolean {
@@ -43,9 +58,11 @@ export async function fetchHtml(
   timeoutMs: number = TIMEOUT_MS,
   options: FetchHtmlOptions = {},
 ): Promise<string> {
-  const proxyUrl = typeof __DEV__ !== 'undefined' && __DEV__
-    ? toLocalProxyUrl(url)
-    : null;
+  const proxyOrigin =
+    typeof __DEV__ !== 'undefined' && __DEV__
+      ? DEV_PROXY_ORIGIN
+      : PROD_PROXY_ORIGIN;
+  const proxyUrl = toProxyUrl(url, proxyOrigin);
   if (options.preferLocalProxy && proxyUrl) {
     const retries = Math.max(1, options.localProxyRetries ?? 1);
     let lastProxyError: unknown;
@@ -54,7 +71,7 @@ export async function fetchHtml(
         return await fetchHtmlDirect(proxyUrl, timeoutMs);
       } catch (error) {
         lastProxyError = error;
-        console.info('[fetchHtml] local proxy failed', {
+        console.info('[fetchHtml] source proxy failed', {
           url,
           attempt,
           retries,
@@ -62,19 +79,30 @@ export async function fetchHtml(
         });
       }
     }
-    console.info('[fetchHtml] local proxy exhausted, try direct', {
+    console.info('[fetchHtml] source proxy exhausted', {
       url,
       error:
         lastProxyError instanceof Error
           ? lastProxyError.message
           : String(lastProxyError),
     });
+    if (options.requireLocalProxy) {
+      // bookshuku 的直连“成功”经常是降级短目录，代理不可用时必须显式失败，
+      // 否则会把 10 来章的坏目录写进本地缓存，后续 Release 包持续复用。
+      throw new Error(
+        `source proxy exhausted: ${
+          lastProxyError instanceof Error
+            ? lastProxyError.message
+            : String(lastProxyError)
+        }`,
+      );
+    }
   }
   try {
     return await fetchHtmlDirect(url, timeoutMs);
   } catch (error) {
     if (!proxyUrl) throw error;
-    console.info('[fetchHtml] direct failed, try local proxy', {
+    console.info('[fetchHtml] direct failed, try source proxy', {
       url,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -97,13 +125,18 @@ async function fetchHtmlDirect(
         'user-agent': MOBILE_UA,
         'Cache-Control': 'no-cache',
         Pragma: 'no-cache',
+        // 书源站点默认对 gzip 请求返回压缩响应；RN iOS 直连时经 base64 桥接的
+        // arrayBuffer 偶发拿到未解压/被截断的 gzip 字节，decodeBytes 会解出乱码
+        // HTML，导致目录只解析出零星几章（release 真机不走本地代理时尤为明显）。
+        // 显式声明 identity 让服务器直接返回明文，避免这条路径。
+        'Accept-Encoding': 'identity',
       },
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    if (/^http:\/\/127\.0\.0\.1:3000\/proxy\//i.test(url)) {
-      // 本地代理已经用 curl 取回并按 UTF-8 明文输出；RN iOS 的 arrayBuffer
+    if (isProxyUrl(url)) {
+      // 代理已经用 curl 取回并按 UTF-8 明文输出；RN iOS 的 arrayBuffer
       // 对这类大 HTML 偶发拿到不可解析内容，直接走 text() 更贴近浏览器端行为。
       const html = await res.text();
       if (!html.trim()) throw new Error('empty html');
@@ -114,7 +147,14 @@ async function fetchHtmlDirect(
     // React Native 的 fetch 支持 arrayBuffer；个别环境缺失时回退 base64/text。
     if (typeof res.arrayBuffer === 'function') {
       const buf = await res.arrayBuffer();
-      const html = decodeBytes(new Uint8Array(buf));
+      const bytes = new Uint8Array(buf);
+      // 即便请求了 identity，个别 CDN/运营商仍可能回压缩体；gzip 魔数开头的字节
+      // 强解会得到乱码 HTML，会被误当成“部分目录”写入缓存。这里直接抛错，交给
+      // 上层 desktop/WebView 兜底重新取，避免污染目录。
+      if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+        throw new Error('gzip response not decoded');
+      }
+      const html = decodeBytes(bytes);
       if (!html.trim()) throw new Error('empty html');
       if (isChallengeHtml(html)) throw new Error('challenge html');
       return html;
