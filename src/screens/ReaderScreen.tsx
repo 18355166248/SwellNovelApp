@@ -55,6 +55,7 @@ import {
   ReaderThemeKey,
 } from '../theme/readerThemes';
 import type { Chapter } from '../store/types/book';
+import { isBadChapterTitle, isBlockedText } from '../services/source/contentGuards';
 import { SERIF_FONT } from '../theme/fonts';
 import { useReaderFontFamily } from '../services/fonts/useReaderFontFamily';
 import { FONTS, DEFAULT_FONT_KEY } from '../theme/fontCatalog';
@@ -103,19 +104,10 @@ type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
 type DrawerChapterItem = { c: Chapter; idx: number };
 
 function isBlockedBookshukuText(content?: string): boolean {
-  const normalized = (content || '').replace(/\s+/g, '');
-  return !!(
-    content &&
-    (/请在浏览器中打开/.test(content) ||
-      /当前环境无法直接下载/.test(content) ||
-      /点击右上角.*按钮/.test(content) ||
-      /复制链接到浏览器/.test(content) ||
-      /Just a moment/i.test(content) ||
-      /Enable JavaScript and cookies/i.test(content) ||
-      /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载|约爱社区/.test(normalized) ||
-      /👁️/.test(content) ||
-      normalized.length < 200)
-  );
+  if (!content) return false;
+  // 拦截页/广告卡片特征由 contentGuards 统一判定；这里再叠加“正文过短”这条
+  // 阅读器专属规则:缓存里不足 200 字的正文按不可用处理,触发重新抓取。
+  return isBlockedText(content) || content.replace(/\s+/g, '').length < 200;
 }
 
 function displayChapterTitle(chapter: Chapter, index: number): string {
@@ -124,10 +116,7 @@ function displayChapterTitle(chapter: Chapter, index: number): string {
   const suffix = title
     .replace(/^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/, '')
     .trim();
-  if (
-    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(title) ||
-    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(suffix)
-  ) {
+  if (isBadChapterTitle(title) || isBadChapterTitle(suffix)) {
     return fallback;
   }
   return title || fallback;
@@ -142,8 +131,8 @@ function needsDrawerTitleResolve(chapter: Chapter): boolean {
     chapter.contentVersion !== BOOKSHUKU_CONTENT_VERSION ||
     /^第\s*\d+\s*章$/.test(title) ||
     /^分节阅读\s*\d+$/.test(title) ||
-    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(title) ||
-    /^(恭喜!?|恭喜！|心动时刻|温馨提醒|漫画主页|外围名媛|约爱社区|👏💦约爱社区)$/.test(suffix)
+    isBadChapterTitle(title) ||
+    isBadChapterTitle(suffix)
   );
 }
 
@@ -646,7 +635,9 @@ export default function ReaderScreen() {
   const pages = React.useMemo<ReaderPageData[]>(() => {
     const chapterId = chapter?.id || bookId;
     const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
-    const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}`;
+    // 断行随正文字体变化：不同字体字宽不同，缓存 key 必须带 bodyFont，
+    // 否则切字体后仍复用旧字体的测量结果，断行/每页行数会对不上。
+    const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}|${bodyFont}`;
     // measureTick 是原生 onTextLayout 写入真实测量缓存后的失效版本，促使同一 cacheKey 重新取缓存。
     const lines =
       measureTick >= 0 && measuredLinesCache.has(cacheKey)
@@ -1479,13 +1470,15 @@ export default function ReaderScreen() {
                   position: 'absolute',
                   opacity: 0,
                   width: pageMetrics.maxWidth,
-                  fontFamily: SERIF_FONT,
+                  // 用真实正文字体测量：断行结果要与渲染一致，硬编码 SERIF_FONT
+                  // 会让非衬线字体下的每页行数/末页留白算错。
+                  fontFamily: bodyFont,
                   fontSize: display.fontSize,
                   lineHeight: display.fontSize * display.lineHeight,
                 }}
                 onTextLayout={e => {
                   const chapterId = chapter?.id || bookId;
-                  const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}`;
+                  const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}|${bodyFont}`;
                   if (measuredLinesCache.has(cacheKey)) return;
                   const lineTexts = e.nativeEvent.lines.map(l => l.text);
                   const lines = linesFromTextLayout(paragraphs, lineTexts);

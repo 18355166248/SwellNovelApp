@@ -28,6 +28,8 @@ import {
   ParsedChapterContent,
 } from './types';
 import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
+import { BAD_TITLE_CANDIDATES, HEADING_RE, isBlockedText } from './contentGuards';
+import { devInfo } from '../../utils/devLog';
 
 const HOST = 'wap.bookshuku.org';
 const ORIGIN = `http://${HOST}`;
@@ -43,25 +45,11 @@ const KNOWN_MIN_CATALOG_COUNTS: Record<string, number> = {
 const KNOWN_TITLES: Record<string, string> = {
   '160297': '捞尸人',
 };
-const BAD_TITLE_CANDIDATES = new Set([
-  '恭喜',
-  '恭喜!',
-  '恭喜！',
-  '心动时刻',
-  '温馨提醒',
-  '漫画主页',
-  '外围名媛',
-  '约爱社区',
-  '👏💦约爱社区',
-]);
 const ARTICLE_DIRECT_TIMEOUT_MS = 30000;
 const ARTICLE_WEBVIEW_TIMEOUT_MS = 22000;
 const ARTICLE_WEBVIEW_WAIT_MS = 8000;
 const ARTICLE_TEXT_WEBVIEW_TIMEOUT_MS = 12000;
 const ARTICLE_TEXT_WEBVIEW_WAIT_MS = 5000;
-
-/** 章节/正文页标题回显，例如“第一章”，正文里出现时属重复，剔除。 */
-const HEADING_RE = /^第[零一二三四五六七八九十百千两万0-9]+[章节回卷]/;
 
 function extractBookId(url: string): string | undefined {
   return matchOne(/\/(?:bookinfo|read|down|txt)\/(\d+)/, url);
@@ -100,7 +88,7 @@ async function fetchBookshukuHtml(
     }
     if (isCloudflareChallenge(html)) {
       if (!renderedFallback) return html;
-      console.info('[bookshuku] fetch html got challenge, fallback WebView', {
+      devInfo('[bookshuku] fetch html got challenge, fallback WebView', {
         url,
         ms: Date.now() - startedAt,
         length: html.length,
@@ -117,7 +105,7 @@ async function fetchBookshukuHtml(
       });
       return renderedHtml;
     }
-    console.info('[bookshuku] fetch html ok', {
+    devInfo('[bookshuku] fetch html ok', {
       url,
       ms: Date.now() - startedAt,
       length: html.length,
@@ -127,7 +115,7 @@ async function fetchBookshukuHtml(
     if (options.requireLocalProxy) {
       // bookshuku 的 WebView/原生直连会稳定返回分页短目录；既然调用方声明必须走
       // curl 代理，代理失败就直接抛错，避免继续用 WebView 结果污染入库目录。
-      console.info('[bookshuku] required source proxy failed', {
+      devInfo('[bookshuku] required source proxy failed', {
         url,
         ms: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error),
@@ -136,7 +124,7 @@ async function fetchBookshukuHtml(
     }
     // 原生 fetch 可能被站点 403、ATS 或网络层拒绝，下面统一走 WebView 兜底。
     // 注意：bookshuku 的正常页面底部也会带 Cloudflare 脚本，不能只凭脚本特征丢弃 HTML。
-    console.info('[bookshuku] fetch html fallback WebView', {
+    devInfo('[bookshuku] fetch html fallback WebView', {
       url,
       ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
@@ -147,7 +135,7 @@ async function fetchBookshukuHtml(
       waitMs: options.renderedWaitMs,
       priority: options.priority,
     });
-    console.info('[bookshuku] WebView html ok', {
+    devInfo('[bookshuku] WebView html ok', {
       url,
       ms: Date.now() - startedAt,
       length: html.length,
@@ -265,25 +253,11 @@ function hasNextPage(html: string): boolean {
   return /本章未完|下一页继续阅读|点击下一页/.test(decodeEntities(html));
 }
 
-function isBlockedContent(text: string): boolean {
-  const normalized = text.replace(/\s+/g, '');
-  return (
-    /请在浏览器中打开/.test(text) ||
-    /当前环境无法直接下载/.test(text) ||
-    /点击右上角.*按钮/.test(text) ||
-    /复制链接到浏览器/.test(text) ||
-    /Just a moment/i.test(text) ||
-    /Enable JavaScript and cookies/i.test(text) ||
-    /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载/.test(normalized) ||
-    /👁️/.test(text)
-  );
-}
-
 function isInvalidArticleText(text: string): boolean {
   const compact = text.replace(/\s+/g, '');
   // WebView 偶尔会命中页面广告卡片而非正文；这类内容短且带成人广告词，
   // 不能写入缓存，否则阅读器会把广告当作章节正文。
-  return compact.length < 200 || isBlockedContent(text);
+  return compact.length < 200 || isBlockedText(text);
 }
 
 function getReadPageUrl(url: string, pageNo: number): string | undefined {
@@ -331,14 +305,14 @@ async function fetchArticleText(
       requireLocalProxy: true,
       localProxyRetries: 2,
     });
-    console.info('[bookshuku] article html ok', {
+    devInfo('[bookshuku] article html ok', {
       url,
       mode: 'direct',
       ms: Date.now() - startedAt,
       length: html.length,
     });
   } catch (error) {
-    console.info('[bookshuku] article direct failed, fallback source proxy WebView', {
+    devInfo('[bookshuku] article direct failed, fallback source proxy WebView', {
       url,
       ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
@@ -353,7 +327,7 @@ async function fetchArticleText(
       });
       usedRenderedHtml = true;
     } catch (proxyError) {
-      console.info('[bookshuku] article proxy WebView failed, fallback source WebView', {
+      devInfo('[bookshuku] article proxy WebView failed, fallback source WebView', {
         url,
         ms: Date.now() - startedAt,
         error: proxyError instanceof Error ? proxyError.message : String(proxyError),
@@ -368,7 +342,7 @@ async function fetchArticleText(
   }
   let directText = cleanArticle(html);
   if (directText && !isInvalidArticleText(directText)) {
-    console.info('[bookshuku] article text ok', {
+    devInfo('[bookshuku] article text ok', {
       url,
       mode: usedRenderedHtml ? 'webview-html' : 'html',
       ms: Date.now() - startedAt,
@@ -378,7 +352,7 @@ async function fetchArticleText(
   }
   if (!usedRenderedHtml) {
     try {
-      console.info('[bookshuku] direct html has no valid article, retry WebView html', {
+      devInfo('[bookshuku] direct html has no valid article, retry WebView html', {
         url,
         ms: Date.now() - startedAt,
         length: html.length,
@@ -391,7 +365,7 @@ async function fetchArticleText(
           priority: options.priority ?? 'normal',
         });
       } catch (proxyError) {
-        console.info('[bookshuku] article proxy WebView html retry failed', {
+        devInfo('[bookshuku] article proxy WebView html retry failed', {
           url,
           ms: Date.now() - startedAt,
           error: proxyError instanceof Error ? proxyError.message : String(proxyError),
@@ -405,7 +379,7 @@ async function fetchArticleText(
       usedRenderedHtml = true;
       directText = cleanArticle(html);
       if (directText && !isInvalidArticleText(directText)) {
-        console.info('[bookshuku] article text ok', {
+        devInfo('[bookshuku] article text ok', {
           url,
           mode: 'webview-html',
           ms: Date.now() - startedAt,
@@ -414,7 +388,7 @@ async function fetchArticleText(
         return { html, text: directText, usedRenderedText: true };
       }
     } catch (error) {
-      console.info('[bookshuku] article WebView html retry failed', {
+      devInfo('[bookshuku] article WebView html retry failed', {
         url,
         ms: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error),
@@ -422,7 +396,7 @@ async function fetchArticleText(
     }
   }
   if (directText) {
-    console.info('[bookshuku] article text invalid, fallback WebView text', {
+    devInfo('[bookshuku] article text invalid, fallback WebView text', {
       url,
       mode: usedRenderedHtml ? 'webview-html' : 'html',
       ms: Date.now() - startedAt,
@@ -430,7 +404,7 @@ async function fetchArticleText(
       head: directText.slice(0, 80),
     });
   }
-  console.info('[bookshuku] article text fallback WebView', {
+  devInfo('[bookshuku] article text fallback WebView', {
     url,
     ms: Date.now() - startedAt,
   });
@@ -450,7 +424,7 @@ async function fetchArticleText(
     });
     throw new Error('书源返回无效页面，未拿到章节正文');
   }
-  console.info('[bookshuku] article text ok', {
+  devInfo('[bookshuku] article text ok', {
     url,
     mode: 'rendered',
     ms: Date.now() - startedAt,
@@ -746,7 +720,7 @@ export const bookshukuSource: BookSource = {
           chapters = retryChapters;
         }
       } catch (error) {
-        console.info('[bookshuku] wap catalog retry failed', {
+        devInfo('[bookshuku] wap catalog retry failed', {
           url: catalogUrl,
           directCount: chapters.length,
           error: error instanceof Error ? error.message : String(error),
@@ -801,7 +775,7 @@ export const bookshukuSource: BookSource = {
           chapters = desktopChapters;
         }
       } catch (error) {
-        console.info('[bookshuku] desktop catalog fallback failed', {
+        devInfo('[bookshuku] desktop catalog fallback failed', {
           url: `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`,
           directCount: chapters.length,
           error: error instanceof Error ? error.message : String(error),
@@ -867,7 +841,7 @@ export const bookshukuSource: BookSource = {
     options?: ParseChapterOptions,
   ): Promise<ParsedChapterContent> {
     const startedAt = Date.now();
-    console.info('[bookshuku] chapter start', { url });
+    devInfo('[bookshuku] chapter start', { url });
     const firstPage = await fetchArticleText(url, options);
     const pageInfo = /第(\d+)\/(\d+)页/.exec(firstPage.html);
     const currentPage = pageInfo ? parseInt(pageInfo[1], 10) : getReadPageNo(url);
@@ -876,7 +850,7 @@ export const bookshukuSource: BookSource = {
       url,
       `${firstPage.html}\n${firstPage.text}`,
     );
-    console.info('[bookshuku] chapter first page', {
+    devInfo('[bookshuku] chapter first page', {
       url,
       currentPage,
       totalPages,
@@ -896,7 +870,7 @@ export const bookshukuSource: BookSource = {
     }
     const content = normalizeChapter(parts);
     if (!content) throw new Error('未能解析到章节正文');
-    console.info('[bookshuku] chapter done', {
+    devInfo('[bookshuku] chapter done', {
       url,
       ms: Date.now() - startedAt,
       currentPage,

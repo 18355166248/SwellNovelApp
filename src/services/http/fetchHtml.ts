@@ -7,6 +7,12 @@
  */
 
 import { base64ToBytes, decodeBytes } from '../../utils/decodeText';
+import { devInfo } from '../../utils/devLog';
+import {
+  DEV_PROXY_ORIGIN,
+  PROD_PROXY_ORIGIN,
+  getProxyOrigin,
+} from '../../config/proxy';
 
 // 移动端 UA：部分书源对 UA 敏感，模拟手机浏览器更稳。
 const MOBILE_UA =
@@ -22,12 +28,7 @@ type FetchHtmlOptions = {
   localProxyRetries?: number;
 };
 
-// 代理转发源：书源站点用 TLS/JA3 指纹识别客户端——curl（服务端代理）能拿到完整
-// 单页目录，而 iOS 原生 fetch/WebView 会被降级成 JS 分页目录（每页约 10 章、标题为
-// “分节阅读 N”占位），三条 fallback 全都拿不全。因此真机也必须经服务端 curl 代理。
-// 开发走本机 server.js；生产/真机走公网部署的同一份 server.js。
-const DEV_PROXY_ORIGIN = 'http://127.0.0.1:3000';
-const PROD_PROXY_ORIGIN = 'http://101.43.11.224:11008';
+// 代理转发源在 config/proxy.ts 统一维护（换服务器只改那一处）。
 
 /** 判断 url 是否指向我们自己的 /proxy 端点（本机或公网），这类响应已是 UTF-8 明文。 */
 function isProxyUrl(url: string): boolean {
@@ -51,9 +52,7 @@ export function getSourceProxyUrl(url: string): string | null {
 }
 
 export function getSourceProxyOrigin(): string {
-  return typeof __DEV__ !== 'undefined' && __DEV__
-    ? DEV_PROXY_ORIGIN
-    : PROD_PROXY_ORIGIN;
+  return getProxyOrigin();
 }
 
 function isChallengeHtml(html: string): boolean {
@@ -77,7 +76,7 @@ export async function fetchHtml(
         return await fetchHtmlDirect(proxyUrl, timeoutMs);
       } catch (error) {
         lastProxyError = error;
-        console.info('[fetchHtml] source proxy failed', {
+        devInfo('[fetchHtml] source proxy failed', {
           url,
           attempt,
           retries,
@@ -85,7 +84,7 @@ export async function fetchHtml(
         });
       }
     }
-    console.info('[fetchHtml] source proxy exhausted', {
+    devInfo('[fetchHtml] source proxy exhausted', {
       url,
       error:
         lastProxyError instanceof Error
@@ -108,7 +107,7 @@ export async function fetchHtml(
     return await fetchHtmlDirect(url, timeoutMs);
   } catch (error) {
     if (!proxyUrl) throw error;
-    console.info('[fetchHtml] direct failed, try source proxy', {
+    devInfo('[fetchHtml] direct failed, try source proxy', {
       url,
       error: error instanceof Error ? error.message : String(error),
     });

@@ -8,6 +8,9 @@
  * （浏览器识别源本就只在原生产生，故 Web 不会用到）。
  */
 
+import { HEADING_RE } from '../source/contentGuards';
+import { devInfo } from '../../utils/devLog';
+
 /** 抽正文脚本回传的消息类型。 */
 export const CONTENT_MESSAGE = 'nvl-content';
 export type BrowserFetchPriority = 'high' | 'normal' | 'low';
@@ -130,7 +133,7 @@ function fetchRendered(
       priority,
       resolve: t => {
         clearTimeout(timer);
-        console.info('[browserFetch] done', { id, url, length: t.length });
+        devInfo('[browserFetch] done', { id, url, length: t.length });
         resolve(t);
       },
       reject: e => {
@@ -139,7 +142,7 @@ function fetchRendered(
         reject(e);
       },
     };
-    console.info('[browserFetch] enqueue', {
+    devInfo('[browserFetch] enqueue', {
       id,
       url,
       waitMs,
@@ -149,7 +152,7 @@ function fetchRendered(
     if (enqueueImpl) enqueueImpl(job);
     else {
       buffer.push(job);
-      console.info('[browserFetch] buffered', { id, buffered: buffer.length });
+      devInfo('[browserFetch] buffered', { id, buffered: buffer.length });
     }
   });
 }
@@ -231,7 +234,6 @@ function httpFetchExtractorJs(id: string, url: string): string {
 
 /** 清洗抽到的正文：去空行、去开头的章节标题回显。 */
 export function cleanRenderedText(raw: string, title?: string): string {
-  const heading = /^第[零一二三四五六七八九十百千两万0-9]+[章节回卷]/;
   const lines = raw
     .split(/\r?\n/)
     .map(l => l.replace(/ /g, ' ').trim())
@@ -239,7 +241,8 @@ export function cleanRenderedText(raw: string, title?: string): string {
   const t = (title || '').trim();
   while (
     lines.length &&
-    ((t && lines[0] === t) || (lines[0].length < 30 && heading.test(lines[0])))
+    ((t && lines[0] === t) ||
+      (lines[0].length < 30 && HEADING_RE.test(lines[0])))
   ) {
     lines.shift();
   }
