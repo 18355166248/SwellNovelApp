@@ -3,8 +3,6 @@ import { View, StyleSheet, ScrollView, Switch, Platform } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon } from '../components';
 import {
-  useAppSettings,
-  useToggleNotifications,
   useAllBooks,
   useReaderSettings,
   useSetFullscreenPref,
@@ -13,11 +11,10 @@ import {
 import { SERIF_FONT } from '../theme/fonts';
 import { NOVEL_GOLD } from '../theme/readerThemes';
 import { isFullscreenSupported, setFullscreen } from '../utils/fullscreen';
+import { APP_VERSION } from '../config/appVersion';
 
 export default function MeScreen() {
   const { theme, isDarkMode, toggleTheme } = useTheme();
-  const appSettings = useAppSettings();
-  const toggleNotifications = useToggleNotifications();
   const books = useAllBooks();
   const readerSettings = useReaderSettings();
   const setFullscreenPref = useSetFullscreenPref();
@@ -71,7 +68,7 @@ export default function MeScreen() {
           <Text
             style={[styles.profileMeta, { color: theme.colors.textSecondary }]}
           >
-            本地阅读 · 安静同步中
+            本地阅读 · 数据仅保存在当前设备
           </Text>
         </View>
         <View
@@ -207,31 +204,12 @@ export default function MeScreen() {
         ]}
       >
         <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-          阅读服务
+          关于
         </Text>
-        <SettingRow
-          icon="notifications-none"
-          title="更新提醒"
-          desc="接收章节更新通知"
-          borderColor={theme.colors.border}
-          textColor={theme.colors.text}
-          subColor={theme.colors.textSecondary}
-          right={
-            <Switch
-              value={appSettings.notificationsEnabled}
-              onValueChange={toggleNotifications}
-              trackColor={{
-                false: theme.colors.border,
-                true: theme.colors.accentDark,
-              }}
-              thumbColor="#FFFFFF"
-            />
-          }
-        />
         <SettingRow
           icon="info-outline"
           title="版本"
-          desc="1.0.0"
+          desc={APP_VERSION}
           borderColor="transparent"
           textColor={theme.colors.text}
           subColor={theme.colors.textSecondary}

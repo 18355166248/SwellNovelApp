@@ -87,6 +87,9 @@ def computeVersionCode() {
     return major * 10000 + minor * 100 + patch
 }
 
+def hasReleaseKeystore = project.hasProperty('MYAPP_RELEASE_STORE_FILE') &&
+    file(MYAPP_RELEASE_STORE_FILE).exists()
+
 // 每个 ABI 的编号（用于 ABI 拆分时给各架构 APK 生成唯一 versionCode，供上架区分）
 ext.abiCodes = ["armeabi-v7a": 1, "x86": 2, "arm64-v8a": 3, "x86_64": 4]
 
@@ -135,11 +138,8 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            def hasReleaseKeystore = project.hasProperty('MYAPP_RELEASE_STORE_FILE') && file(MYAPP_RELEASE_STORE_FILE).exists()
             if (hasReleaseKeystore) {
                 signingConfig signingConfigs.release
-            } else {
-                signingConfig signingConfigs.debug
             }
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
@@ -155,6 +155,20 @@ android.applicationVariants.all { variant ->
         if (abiCode != null) {
             output.versionCodeOverride = variant.versionCode * 1000 + abiCode
         }
+    }
+}
+
+// 正式任务缺少发布证书时直接失败，绝不能静默产出 debug 签名的 Release 包。
+gradle.taskGraph.whenReady { graph ->
+    def releaseRequested = graph.allTasks.any { task ->
+        task.project == project && task.name.toLowerCase().contains('release')
+    }
+    if (releaseRequested && !hasReleaseKeystore) {
+        throw new GradleException(
+            'Release keystore 未配置：请设置 MYAPP_RELEASE_STORE_FILE、' +
+            'MYAPP_RELEASE_STORE_PASSWORD、MYAPP_RELEASE_KEY_ALIAS、' +
+            'MYAPP_RELEASE_KEY_PASSWORD。'
+        )
     }
 }
 

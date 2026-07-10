@@ -17,6 +17,16 @@ function toProxyUrl(url: string): string {
   return `/proxy/${m[1].toLowerCase()}/${m[2].toLowerCase()}${m[3] || '/'}`;
 }
 
+/** Web 始终使用当前站点的同源 /proxy，避免引用原生端公网代理配置。 */
+export function getSourceProxyUrl(url: string): string | null {
+  const proxyUrl = toProxyUrl(url);
+  return proxyUrl === url && /^(https?):\/\//i.test(url) ? null : proxyUrl;
+}
+
+export function getSourceProxyOrigin(): string {
+  return typeof window === 'undefined' ? '' : window.location.origin;
+}
+
 // 单次请求超时：代理/书源卡住时不至于让阅读器永久停在“加载中”。
 const TIMEOUT_MS = 15000;
 

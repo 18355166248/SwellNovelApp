@@ -579,6 +579,7 @@ export default function ReaderScreen() {
     chapters,
     drawerOpen,
     drawerTab,
+    drawerVisibleIndices,
     drawerVisibleKey,
   ]);
 
@@ -904,7 +905,6 @@ export default function ReaderScreen() {
       isOnline,
       lockChapterTurn,
       openChapter,
-      setToolbarVisible,
       total,
     ],
   );
@@ -1401,6 +1401,7 @@ export default function ReaderScreen() {
     },
     [
       chapterIndex,
+      chapterTurnLockRef,
       goToChapter,
       loadCurrentChapterNextPage,
       lockChapterTurn,
@@ -1409,6 +1410,9 @@ export default function ReaderScreen() {
       syncPageByScrollOffset,
       total,
       viewportWidth,
+      webProgrammaticScrollRef,
+      webScrollEpochRef,
+      webScrollIdleRef,
     ],
   );
 

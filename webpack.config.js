@@ -40,6 +40,9 @@ module.exports = (_env, argv) => {
       ? {
           splitChunks: {
             chunks: 'all',
+            // React Navigation/RN Web 的公共依赖较大；限制单个 vendor chunk，
+            // 改善长期缓存与并行加载，避免一个 600KB 文件阻塞首屏。
+            maxSize: 350 * 1024,
             cacheGroups: {
               vendor: {
                 test: /[\\/]node_modules[\\/]/,
@@ -110,7 +113,12 @@ module.exports = (_env, argv) => {
       }),
     ],
     performance: isProd
-      ? { hints: 'warning', maxAssetSize: 400 * 1024, maxEntrypointSize: 500 * 1024 }
+      ? {
+          hints: 'warning',
+          maxAssetSize: 400 * 1024,
+          // 当前入口由多个按 350KB 拆分的公共 chunk 组成；超过 800KB 再报警。
+          maxEntrypointSize: 800 * 1024,
+        }
       : false,
     devServer: {
       static: { directory: path.resolve(appDirectory, 'public') },

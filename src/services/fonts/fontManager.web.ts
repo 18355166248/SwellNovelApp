@@ -3,6 +3,7 @@
  * 字体管理（Web）。系统预设用 CSS 字体栈；远程字体用 FontFace API 运行时下载注册。
  */
 import { FontDef } from '../../theme/fontCatalog';
+import { extractZipEntry } from '../../utils/fontArchive';
 
 const ready = new Set<string>();
 const loading = new Set<string>();
@@ -50,7 +51,21 @@ export async function ensureFont(def: FontDef): Promise<void> {
     loading.add(def.key);
     emit();
     try {
-      const face = new FontFace(rf.family, `url(${rf.url})`);
+      let source: string | ArrayBuffer = `url(${rf.url})`;
+      if (rf.archiveEntry) {
+        // FontFace 无法直接读取 ZIP；Web 与原生保持一致，先下载官方包并只解出
+        // 指定字体条目，再把 ArrayBuffer 交给浏览器字体引擎。
+        const response = await fetch(rf.url);
+        if (!response.ok) {
+          throw new Error(`字体下载失败（HTTP ${response.status}）`);
+        }
+        const fontBytes = extractZipEntry(
+          new Uint8Array(await response.arrayBuffer()),
+          rf.archiveEntry,
+        );
+        source = Uint8Array.from(fontBytes).buffer;
+      }
+      const face = new FontFace(rf.family, source);
       await face.load();
       (document as any).fonts.add(face);
       ready.add(def.key);

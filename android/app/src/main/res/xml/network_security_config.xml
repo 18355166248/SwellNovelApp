@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 默认禁止明文流量，仅为已登记书源、生产代理与本机调试代理开放 HTTP。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">bookshuku.org</domain>
+        <domain includeSubdomains="true">mingzw.net</domain>
+        <domain>101.43.11.224</domain>
+        <domain>127.0.0.1</domain>
+        <domain>localhost</domain>
+    </domain-config>
+</network-security-config>
