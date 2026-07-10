@@ -1,11 +1,9 @@
 /**
  * 全屏/沉浸模式的全局控制器。
  *
- * 挂在应用根部（Provider 内），把持久化的 fullscreen 偏好应用到平台，并让外部
- * 状态变化回写偏好，实现「设置一次、下次自动恢复」：
- *
- * - 原生：偏好为真则隐藏状态栏（沉浸阅读），无需用户手势，可直接在启动时套用。
- * - Web：进入浏览器全屏必须在用户手势调用栈内，无法在加载时静默进入。因此偏好为
+ * 挂在应用根部（Provider 内），仅负责 Web Fullscreen API 的持久化偏好。
+ * 原生阅读器的状态栏由 native-stack 根据工具栏显隐实时控制，不持久化。
+ * Web 进入浏览器全屏必须在用户手势调用栈内，无法在加载时静默进入，因此偏好为
  *   真而当前非全屏时，挂一次性 pointerdown 监听——用户回到页面后的第一次点击即自动
  *   恢复全屏，之后不必再点全屏按钮。用户按 Esc 退出会经 fullscreenchange 回写偏好，
  *   不会在下次点击时又被强行拉回全屏。
@@ -24,18 +22,16 @@ export function FullscreenController() {
   const setFullscreenPref = useSetFullscreenPref();
   const enabled = !!settings.fullscreen;
 
-  // 把实际全屏状态回写到持久化偏好：原生切换、Web 的 Esc 退出 / 手势进入都会走这里。
-  React.useEffect(
-    () => subscribeFullscreen(isFs => setFullscreenPref(isFs)),
-    [setFullscreenPref],
-  );
+  // 原生阅读器的沉浸状态是临时 UI 状态，不写入偏好；Web 才需要记住
+  // Fullscreen API 的进入/Esc 退出结果。
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    return subscribeFullscreen(isFs => setFullscreenPref(isFs));
+  }, [setFullscreenPref]);
 
   // 应用偏好。
   React.useEffect(() => {
-    if (Platform.OS !== 'web') {
-      setFullscreen(enabled);
-      return;
-    }
+    if (Platform.OS !== 'web') return;
     if (enabled === fsIsFullscreen()) return;
     if (enabled) {
       // 只能在用户手势内进入全屏，挂一次性监听，首次点击即恢复。

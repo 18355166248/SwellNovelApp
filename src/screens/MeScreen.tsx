@@ -172,7 +172,7 @@ export default function MeScreen() {
             />
           }
         />
-        {isFullscreenSupported && (
+        {Platform.OS === 'web' && isFullscreenSupported && (
           <SettingRow
             icon="fullscreen"
             title="全屏阅读"

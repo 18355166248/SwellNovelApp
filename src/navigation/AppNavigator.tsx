@@ -135,6 +135,10 @@ export default function AppNavigator() {
         <Stack.Navigator
           screenOptions={{
             headerShown: false,
+            statusBarHidden: false,
+            statusBarStyle: theme.colors.background === darkTheme.colors.background
+              ? 'light'
+              : 'dark',
             contentStyle: {
               backgroundColor: theme.colors.background,
             },

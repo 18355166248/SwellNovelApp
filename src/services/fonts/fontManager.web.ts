@@ -6,6 +6,7 @@ import { FontDef } from '../../theme/fontCatalog';
 
 const ready = new Set<string>();
 const loading = new Set<string>();
+const inflight = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -33,20 +34,25 @@ export function fontFamilyFor(def: FontDef): string | undefined {
 }
 
 export async function ensureFont(def: FontDef): Promise<void> {
-  if (def.kind === 'system' || ready.has(def.key) || loading.has(def.key)) {
-    return;
-  }
+  if (def.kind === 'system' || ready.has(def.key)) return;
+  const pending = inflight.get(def.key);
+  if (pending) return pending;
   if (typeof (globalThis as any).FontFace === 'undefined') return;
   const rf = def.remote!;
-  loading.add(def.key);
-  emit();
-  try {
-    const face = new FontFace(rf.family, `url(${rf.url})`);
-    await face.load();
-    (document as any).fonts.add(face);
-    ready.add(def.key);
-  } finally {
-    loading.delete(def.key);
+  const task = Promise.resolve().then(async () => {
+    loading.add(def.key);
     emit();
-  }
+    try {
+      const face = new FontFace(rf.family, `url(${rf.url})`);
+      await face.load();
+      (document as any).fonts.add(face);
+      ready.add(def.key);
+    } finally {
+      loading.delete(def.key);
+      inflight.delete(def.key);
+      emit();
+    }
+  });
+  inflight.set(def.key, task);
+  return task;
 }

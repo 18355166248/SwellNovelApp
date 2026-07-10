@@ -12,6 +12,7 @@ import {
   Animated,
   Easing,
   BackHandler,
+  Alert,
   useWindowDimensions,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -92,12 +93,6 @@ import {
 } from '../utils/readerScrollGuard';
 import { resolveChapterSearchIndex } from '../utils/chapterSearch';
 import { useReaderGuards } from './reader/useReaderGuards';
-import {
-  isFullscreenSupported,
-  isFullscreen as fsIsFullscreen,
-  toggleFullscreen,
-  subscribeFullscreen,
-} from '../utils/fullscreen';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
@@ -138,7 +133,11 @@ function needsDrawerTitleResolve(chapter: Chapter): boolean {
 
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
 const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
-const PAGE_HORIZONTAL_PADDING = 20;
+/**
+ * 正文左右固定留白。字号和字体只改变排版测量，不参与边距计算，避免切换设置后
+ * 阅读列左右跳动；28pt 延续大字号（36）下已经确认过的视觉间距。
+ */
+const PAGE_HORIZONTAL_PADDING = 28;
 const PAGE_TOP_PADDING = 36;
 const PAGE_BOTTOM_PADDING = 48;
 /** 阅读列最大宽度（含左右内边距）：宽屏下超出则居中留白，避免一行几十字难读。 */
@@ -239,9 +238,15 @@ export default function ReaderScreen() {
     Platform.OS === 'web' ? 12 : Math.max(insets.top, 12) + 8;
   const readerStatusTop =
     Platform.OS === 'web' ? 10 : Math.max(insets.top, 8);
+  // 正文标题必须落在常驻章节状态行下方；仅按安全区加偏移会在刘海屏上只剩
+  // 1～2pt 间隔，大字号标题的字形上沿容易与状态行叠住。
   const readerTopPadding =
-    PAGE_TOP_PADDING +
-    (Platform.OS === 'web' ? 0 : Math.max(0, insets.top - 12));
+    Platform.OS === 'web'
+      ? PAGE_TOP_PADDING
+      : Math.max(
+          PAGE_TOP_PADDING + Math.max(0, insets.top - 12),
+          readerStatusTop + 32,
+        );
   const bottomBarPad =
     Platform.OS === 'web' ? 22 : Math.max(insets.bottom, 8) + 14;
   const progressHintBottom =
@@ -285,10 +290,24 @@ export default function ReaderScreen() {
   const toggleToolbar = useToggleToolbar();
   const setToolbarVisible = useSetToolbarVisible();
 
-  // 全屏：Web 用浏览器 Fullscreen API，原生用沉浸式隐藏状态栏。偏好由全局
-  // FullscreenController 持久化并跨屏保持，这里只订阅实际状态以同步按钮图标。
-  const [isFs, setIsFs] = React.useState(fsIsFullscreen());
-  React.useEffect(() => subscribeFullscreen(setIsFs), []);
+  // 原生状态栏交给 native-stack 对应的 UIViewController 管理；现代 iOS 已不再
+  // 可靠支持 UIApplication 的旧式隐藏 API。工具栏显示时恢复，收起时沉浸。
+  React.useEffect(() => {
+    if (Platform.OS === 'web') return;
+    navigation.setOptions({
+      statusBarHidden: !isToolbarVisible,
+      statusBarAnimation: 'fade',
+      statusBarStyle: settings.theme === 'night' ? 'light' : 'dark',
+    });
+  }, [isToolbarVisible, navigation, settings.theme]);
+  React.useEffect(
+    () => () => {
+      if (Platform.OS !== 'web') {
+        navigation.setOptions({ statusBarHidden: false });
+      }
+    },
+    [navigation],
+  );
 
   // 阅读时长统计：阅读器挂载期间按前台时间累计到今天。用 ref 持有累加器避免作为依赖；
   // 计时由全局单例 startReadingSession 负责，避免导航过渡中出现两个实例时重复计时。
@@ -593,8 +612,9 @@ export default function ReaderScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  // 阅读列宽度：窄屏铺满，宽屏封顶到 READER_MAX_CONTENT 并居中（两侧多留白）。
-  // paddingH 用于渲染时把文本块在整页/滚动容器内居中；textWidth 用于分页断行。
+  // 阅读列宽度：窄屏使用固定对称留白，宽屏封顶到 READER_MAX_CONTENT 并居中。
+  // 字号、字体不得参与 paddingH 计算，否则切换排版设置会让正文列左右跳动。
+  // 同一 padding 同时用于渲染和分页断行，保证两侧严格对称且不会分页错位。
   const readerColumn = React.useMemo(() => {
     const clamped = Math.min(viewportWidth, READER_MAX_CONTENT);
     const sideGutter = Math.max(0, (viewportWidth - clamped) / 2);
@@ -603,6 +623,8 @@ export default function ReaderScreen() {
       textWidth: Math.max(1, clamped - PAGE_HORIZONTAL_PADDING * 2),
     };
   }, [viewportWidth]);
+
+  const chapterTitleLineHeight = Math.ceil(display.titleSize * 1.25);
 
   // 左右翻页先按真实字符宽度断行、组页，再交给 FlatList 虚拟渲染，避免大章节一次性挂载所有页面。
   const pageMetrics = React.useMemo(() => {
@@ -613,7 +635,7 @@ export default function ReaderScreen() {
     );
     const lineHeight = display.fontSize * display.lineHeight;
     // 首页扣除标题区（章节名 + meta + 间距）真实占用的高度，消除首页尾部留白。
-    const headerHeight = display.titleSize * 1.4 + 12 + 24;
+    const headerHeight = chapterTitleLineHeight + 8 + 15 + 24;
     const firstBodyHeight = Math.max(lineHeight, bodyHeight - headerHeight);
 
     return {
@@ -627,7 +649,7 @@ export default function ReaderScreen() {
     display.fontSize,
     display.lineHeight,
     display.paraGap,
-    display.titleSize,
+    chapterTitleLineHeight,
     readerTopPadding,
     viewportHeight,
     readerColumn.textWidth,
@@ -1229,6 +1251,7 @@ export default function ReaderScreen() {
                   styles.chapterTitle,
                   {
                     fontSize: display.titleSize,
+                    lineHeight: chapterTitleLineHeight,
                     color: display.theme.text,
                   },
                 ]}
@@ -1267,7 +1290,12 @@ export default function ReaderScreen() {
                   marginTop: i === 0 ? 0 : display.paraGap,
                 }}
               >
-                {block.text}
+                {
+                  // 分页器保存的换行只用于计算页高，不能作为正文硬换行渲染。
+                  // iOS 会把每个硬换行都视为段落末行，导致两端对齐失效，
+                  // 尤其在 31 等字号下表现为右侧残留一块明显空白。
+                  block.text.replace(/\n/g, '')
+                }
               </Text>
             ))
           )}
@@ -1291,9 +1319,11 @@ export default function ReaderScreen() {
       display.theme.sub,
       display.theme.text,
       display.titleSize,
+      chapterTitleLineHeight,
       goToPage,
       pages.length,
       readerColumn.paddingH,
+      readerTopPadding,
       toggleToolbar,
       viewportWidth,
     ],
@@ -1517,7 +1547,11 @@ export default function ReaderScreen() {
               <Text
                 style={[
                   styles.chapterTitle,
-                  { fontSize: display.titleSize, color: display.theme.text },
+                  {
+                    fontSize: display.titleSize,
+                    lineHeight: chapterTitleLineHeight,
+                    color: display.theme.text,
+                  },
                 ]}
               >
                 {chapter?.title || book.title}
@@ -1714,19 +1748,8 @@ export default function ReaderScreen() {
             {book.title}
           </Text>
         </View>
-        <View style={styles.topRight}>
-          {isFullscreenSupported ? (
-            <Pressable onPress={() => toggleFullscreen()} style={styles.barBtn}>
-              <Icon
-                name={isFs ? 'fullscreen-exit' : 'fullscreen'}
-                size={22}
-                color={display.chrome.ink}
-              />
-            </Pressable>
-          ) : (
-            <View style={styles.barBtn} />
-          )}
-        </View>
+        {/* 与左侧返回按钮等宽占位，确保书名相对整个屏幕几何居中。 */}
+        <View style={styles.barBtn} />
       </Animated.View>
 
       <Animated.View
@@ -2007,9 +2030,33 @@ export default function ReaderScreen() {
                   return (
                     <Pressable
                       key={f.key}
-                      onPress={() => {
-                        setReaderFont(f.key);
-                        if (remote) ensureFont(f).catch(() => {});
+                      disabled={busy}
+                      onPress={async () => {
+                        if (!remote || isFontReady(f.key)) {
+                          setReaderFont(f.key);
+                          return;
+                        }
+                        try {
+                          // 待下载字体只有在文件下载并完成原生注册后才写入设置；
+                          // 失败时继续保留当前字体，避免渲染不存在的 family。
+                          await ensureFont(f);
+                          if (!isFontReady(f.key)) {
+                            throw new Error('字体注册未完成');
+                          }
+                          setReaderFont(f.key);
+                        } catch (error) {
+                          console.warn('[ReaderScreen] font download failed', {
+                            key: f.key,
+                            error:
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                          });
+                          Alert.alert(
+                            '字体下载失败',
+                            '请检查网络后重试，当前阅读字体不会改变。',
+                          );
+                        }
                       }}
                       style={[
                         styles.fontBtn,
@@ -2465,7 +2512,6 @@ const styles = StyleSheet.create({
     fontFamily: SERIF_FONT,
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
     marginBottom: 8,
-    lineHeight: 30,
   },
   chapterMeta: { fontSize: 12, marginBottom: 24 },
   centerFill: {
@@ -2537,13 +2583,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignItems: 'center',
     paddingHorizontal: 8,
-  },
-  topRight: {
-    minWidth: 80,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 2,
   },
   bottomBar: {
     position: 'absolute',

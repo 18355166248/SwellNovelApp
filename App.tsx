@@ -6,29 +6,18 @@
  */
 
 import React from 'react';
-import { StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
+import { ThemeProvider } from './src/theme/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { LibraryPersistence } from './src/store/LibraryPersistence';
 import { FullscreenController } from './src/components/FullscreenController';
 import { WebViewFetcher } from './src/components/WebViewFetcher';
-import { useReaderSettings } from './src/store';
 import { BookshukuSelfTest } from './src/dev/BookshukuSelfTest';
 
 function AppContent() {
-  const { isDarkMode } = useTheme();
-  const { fullscreen } = useReaderSettings();
-
   return (
     <>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor="transparent"
-        translucent
-        hidden={!!fullscreen}
-      />
       <LibraryPersistence />
       <FullscreenController />
       <WebViewFetcher />
