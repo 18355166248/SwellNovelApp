@@ -59,9 +59,11 @@ import type { Chapter } from '../store/types/book';
 import { isBadChapterTitle, isBlockedText } from '../services/source/contentGuards';
 import { SERIF_FONT } from '../theme/fonts';
 import { useReaderFontFamily } from '../services/fonts/useReaderFontFamily';
-import { FONTS, DEFAULT_FONT_KEY } from '../theme/fontCatalog';
+import { FONTS, getFontDef } from '../theme/fontCatalog';
 import {
   ensureFont,
+  fontFamilyFor,
+  isAnyFontLoading,
   isFontReady,
   isFontLoading,
 } from '../services/fonts/fontManager';
@@ -279,6 +281,7 @@ export default function ReaderScreen() {
   const display = useReaderDisplay();
   // 阅读正文字体：随设置切换，远程字体就绪后自动重渲染；用于正文与分页测量。
   const bodyFont = useReaderFontFamily();
+  const fontDownloadBusy = isAnyFontLoading();
   const setReaderTheme = useSetReaderTheme();
   const { inc: incFont, dec: decFont } = useAdjustFontSize();
   const setLineHeightIndex = useSetLineHeightIndex();
@@ -2019,19 +2022,27 @@ export default function ReaderScreen() {
                   marginBottom: 7,
                 }}
               >
-                字体
+                {fontDownloadBusy ? '字体下载处理中，请稍候' : '字体'}
               </Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                 {FONTS.map(f => {
-                  const on = (settings.fontKey || DEFAULT_FONT_KEY) === f.key;
+                  // 旧版本若保存了已删除的 system/lxgwlite，目录解析会回退宋体，
+                  // 这里也用同一解析结果，避免界面出现“没有任何字体被选中”。
+                  const on = getFontDef(settings.fontKey).key === f.key;
                   const remote = f.kind === 'remote';
                   const busy = remote && isFontLoading(f.key);
                   const needDl = remote && !isFontReady(f.key) && !busy;
                   return (
                     <Pressable
                       key={f.key}
-                      disabled={busy}
+                      disabled={fontDownloadBusy}
+                      accessibilityState={{
+                        disabled: fontDownloadBusy,
+                        busy,
+                      }}
                       onPress={async () => {
+                        // disabled 状态更新前仍可能发生同一帧连点，管理器同步锁再兜底。
+                        if (isAnyFontLoading()) return;
                         if (!remote || isFontReady(f.key)) {
                           setReaderFont(f.key);
                           return;
@@ -2063,6 +2074,7 @@ export default function ReaderScreen() {
                         {
                           backgroundColor: on ? NOVEL_ACCENT : 'transparent',
                           borderColor: on ? NOVEL_ACCENT : display.chrome.hair,
+                          opacity: fontDownloadBusy && !busy ? 0.42 : 1,
                         },
                       ]}
                     >
@@ -2071,11 +2083,19 @@ export default function ReaderScreen() {
                         style={{
                           color: on ? '#fff' : display.chrome.sheetInk,
                           fontSize: 12,
+                          // 已可用的选项直接用自身字体展示名称，切换结果更直观。
+                          fontFamily: fontFamilyFor(f),
                         }}
                       >
                         {f.label}
-                        {busy ? ' …' : needDl ? ' ↓' : ''}
+                        {needDl ? ' ↓' : ''}
                       </Text>
+                      {busy && (
+                        <ActivityIndicator
+                          size="small"
+                          color={on ? '#fff' : NOVEL_ACCENT}
+                        />
+                      )}
                     </Pressable>
                   );
                 })}
@@ -2669,6 +2689,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderWidth: 1,
     borderRadius: 7,
+    flexDirection: 'row',
+    gap: 5,
     alignItems: 'center',
     justifyContent: 'center',
   },

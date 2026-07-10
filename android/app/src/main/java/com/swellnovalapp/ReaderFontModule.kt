@@ -18,7 +18,8 @@ class ReaderFontModule(reactContext: ReactApplicationContext) :
     try {
       val typeface = Typeface.createFromFile(path)
       ReactFontManager.getInstance().addCustomFont(family, typeface)
-      promise.resolve(null)
+      // Android 使用传入的别名注册，回传给 JS 作为实际 fontFamily。
+      promise.resolve(family)
     } catch (error: Exception) {
       promise.reject("font_register_failed", "字体文件注册失败", error)
     }

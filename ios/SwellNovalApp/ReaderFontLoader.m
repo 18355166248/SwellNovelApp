@@ -34,7 +34,33 @@ RCT_REMAP_METHOD(registerFont,
       CFRelease(error);
     }
 
-    resolve(nil);
+    // React Native/Fabric 在 iOS 上需要字体内部的 PostScript 名称；JS 传入的
+    // 下载别名（例如 LXGWWenKai）不一定与真实名称一致，错误时会静默回退。
+    NSString *registeredName = family;
+    CFArrayRef descriptors = CTFontManagerCreateFontDescriptorsFromURL(
+      (__bridge CFURLRef)url
+    );
+    if (descriptors != NULL) {
+      if (CFArrayGetCount(descriptors) > 0) {
+        CTFontDescriptorRef descriptor = (CTFontDescriptorRef)CFArrayGetValueAtIndex(
+          descriptors,
+          0
+        );
+        CFTypeRef nameValue = CTFontDescriptorCopyAttribute(
+          descriptor,
+          kCTFontNameAttribute
+        );
+        if (nameValue != NULL) {
+          if (CFGetTypeID(nameValue) == CFStringGetTypeID()) {
+            registeredName = [(__bridge NSString *)nameValue copy];
+          }
+          CFRelease(nameValue);
+        }
+      }
+      CFRelease(descriptors);
+    }
+
+    resolve(registeredName);
   });
 }
 

@@ -28,6 +28,10 @@ export function isFontLoading(key: string): boolean {
   return loading.has(key);
 }
 
+export function isAnyFontLoading(): boolean {
+  return inflight.size > 0 || loading.size > 0;
+}
+
 export function fontFamilyFor(def: FontDef): string | undefined {
   if (def.kind === 'system') return def.system?.web;
   return ready.has(def.key) ? def.remote!.family : undefined;
@@ -37,6 +41,9 @@ export async function ensureFont(def: FontDef): Promise<void> {
   if (def.kind === 'system' || ready.has(def.key)) return;
   const pending = inflight.get(def.key);
   if (pending) return pending;
+  if (inflight.size > 0) {
+    throw new Error('已有字体正在下载，请稍候');
+  }
   if (typeof (globalThis as any).FontFace === 'undefined') return;
   const rf = def.remote!;
   const task = Promise.resolve().then(async () => {
