@@ -22,7 +22,6 @@ import {
   useCheckBookUpdate,
 } from '../store';
 import { resumeChapterIndex } from '../utils/chapters';
-import { confirmAction } from '../utils/confirm';
 import {
   DETAIL_HERO_GRADIENT,
   paletteForId,
@@ -89,6 +88,7 @@ export default function BookDetailScreen() {
   const [checking, setChecking] = React.useState(false);
   const [caching, setCaching] = React.useState({ active: false, done: 0, total: 0 });
   const [onlineMsg, setOnlineMsg] = React.useState('');
+  const [showDeletePrompt, setShowDeletePrompt] = React.useState(false);
   const autoRepairCatalogRef = React.useRef(false);
   // 缓存全本可中断：离开页面或点“停止”时 abort，避免后台继续抓取。
   const cacheAbortRef = React.useRef<AbortController | null>(null);
@@ -225,16 +225,7 @@ export default function BookDetailScreen() {
               </Pressable>
               <Pressable
                 style={styles.heroBtn}
-                onPress={() =>
-                  confirmAction(
-                    '删除书籍',
-                    `确定删除《${book.title}》？将同时移除章节与阅读进度，此操作不可撤销。`,
-                    () => {
-                      removeBook(book.id);
-                      navigation.goBack();
-                    },
-                  )
-                }
+                onPress={() => setShowDeletePrompt(true)}
               >
                 <Icon name="more-horiz" size={20} color="#fff" />
               </Pressable>
@@ -479,6 +470,43 @@ export default function BookDetailScreen() {
         </View>
       </ScrollView>
 
+      {showDeletePrompt ? (
+        <View style={styles.deleteBackdrop}>
+          <View
+            style={[
+              styles.deleteDialog,
+              { backgroundColor: theme.colors.surface },
+              theme.shadows.md,
+            ]}
+          >
+            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>
+              删除书籍
+            </Text>
+            <Text style={[styles.deleteMessage, { color: theme.colors.textSecondary }]}>
+              确定删除《{book.title}》？章节与阅读进度也会被移除。
+            </Text>
+            <View style={styles.deleteActions}>
+              <Pressable
+                style={[styles.deleteButton, { borderColor: theme.colors.border }]}
+                onPress={() => setShowDeletePrompt(false)}
+              >
+                <Text style={{ color: theme.colors.text }}>取消</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.deleteButton, { backgroundColor: theme.colors.danger }]}
+                onPress={() => {
+                  removeBook(book.id);
+                  setShowDeletePrompt(false);
+                  navigation.goBack();
+                }}
+              >
+                <Text style={styles.deleteConfirmText}>删除</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : null}
+
       <View
         pointerEvents="box-none"
         style={[styles.actionBarWrap, { bottom: bottomActionOffset }]}
@@ -544,6 +572,31 @@ export default function BookDetailScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  deleteBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,.42)',
+    justifyContent: 'center',
+    padding: 24,
+    zIndex: 20,
+  },
+  deleteDialog: {
+    borderRadius: 8,
+    maxWidth: 360,
+    padding: 20,
+    width: '100%',
+  },
+  deleteTitle: { fontSize: 18, fontWeight: '700' },
+  deleteMessage: { fontSize: 14, lineHeight: 21, marginTop: 10 },
+  deleteActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  deleteButton: {
+    alignItems: 'center',
+    borderRadius: 6,
+    borderWidth: 1,
+    flex: 1,
+    paddingVertical: 10,
+  },
+  deleteConfirmText: { color: '#fff', fontWeight: '600' },
   hero: {
     position: 'relative',
     overflow: 'hidden',

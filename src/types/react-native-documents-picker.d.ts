@@ -26,4 +26,19 @@ declare module '@react-native-documents/picker' {
   export function pick(
     options?: DocumentPickerOptions,
   ): Promise<DocumentPickerResponse[]>;
+  export function keepLocalCopy(options: {
+    files: Array<{ uri: string; fileName: string }>;
+    destination: 'cachesDirectory' | 'documentDirectory';
+  }): Promise<
+    Array<
+      | { status: 'success'; sourceUri: string; localUri: string }
+      | { status: 'error'; sourceUri: string; copyError: string }
+    >
+  >;
+  export function saveDocuments(options: {
+    sourceUris: string[];
+    mimeType?: string;
+    fileName?: string;
+    copy?: boolean;
+  }): Promise<Array<{ uri: string; name: string | null; error: string | null }>>;
 }

@@ -170,3 +170,25 @@ export const deleteBookChapters = async (bookId: string) => {
     await RNFS.unlink(path).catch(() => {});
   }
 };
+
+/**
+ * 将已经校验的备份写入本地存储。先写入新章节，最后切换元数据，避免中断时
+ * 把当前可用书库替换成半份备份。
+ */
+export const replaceLibraryFromBackup = async (
+  meta: LibraryMeta,
+  chapters: Record<string, Chapter[]>,
+) => {
+  const previous = await loadLibrarySnapshot();
+  await Promise.all(
+    Object.entries(chapters).map(([bookId, content]) =>
+      saveBookChapters(bookId, content),
+    ),
+  );
+  await saveLibraryMeta(meta);
+  await Promise.all(
+    (previous?.books ?? [])
+      .filter(book => !chapters[book.id])
+      .map(book => deleteBookChapters(book.id)),
+  );
+};

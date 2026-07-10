@@ -5,6 +5,7 @@
 // 书籍相关
 export {
   booksAtom,
+  libraryHydratedAtom,
   selectedBookIdAtom,
   bookDetailsAtom,
   chaptersAtom,

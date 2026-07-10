@@ -8,6 +8,9 @@ import { Book, Chapter, Bookmark, ReadingHistory } from '../types/book';
 // 书籍列表
 export const booksAtom = atom<Book[]>([]);
 
+/** LibraryPersistence 完成磁盘快照恢复后才允许导出或恢复备份。 */
+export const libraryHydratedAtom = atom<boolean>(false);
+
 // 当前选中的书籍 ID
 export const selectedBookIdAtom = atom<string | null>(null);
 

@@ -22,7 +22,6 @@ import {
   useBookChapters,
   useRemoveBook,
 } from '../store';
-import { confirmAction } from '../utils/confirm';
 import { AddOnlineBookModal } from '../components/AddOnlineBookModal';
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
@@ -74,16 +73,26 @@ export default function BookshelfScreen() {
   const setChapters = useSetChapters();
   const openChapter = useOpenChapter();
   const removeBook = useRemoveBook();
+  const [pendingDelete, setPendingDelete] = React.useState<Book | null>(null);
 
   const confirmDeleteBook = React.useCallback(
     (b: Book) => {
-      confirmAction(
+      const message =
+        `确定删除《${b.title}》？将同时移除章节、阅读进度与书签。`;
+      if (Platform.OS === 'web') {
+        setPendingDelete(b);
+        return;
+      }
+      Alert.alert(
         '删除书籍',
-        `确定删除《${b.title}》？将同时移除章节与阅读进度，此操作不可撤销。`,
-        () => removeBook(b.id),
+        message,
+        [
+          { text: '取消', style: 'cancel' },
+          { text: '删除', style: 'destructive', onPress: () => removeBook(b.id) },
+        ],
       );
     },
-    [removeBook],
+    [removeBook, setPendingDelete],
   );
 
   const [filter, setFilter] = React.useState<(typeof FILTERS)[number]>('全部');
@@ -576,6 +585,39 @@ export default function BookshelfScreen() {
           </View>
         </View>
       )}
+      {pendingDelete ? (
+        <View style={styles.deleteBackdrop}>
+          <View
+            style={[
+              styles.deleteDialog,
+              { backgroundColor: theme.colors.surface },
+              theme.shadows.md,
+            ]}
+          >
+            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>删除书籍</Text>
+            <Text style={[styles.deleteMessage, { color: theme.colors.textSecondary }]}>
+              确定删除《{pendingDelete.title}》？章节、阅读进度与书签都会被清除。
+            </Text>
+            <View style={styles.deleteActions}>
+              <Pressable
+                style={[styles.deleteButton, { borderColor: theme.colors.border }]}
+                onPress={() => setPendingDelete(null)}
+              >
+                <Text style={{ color: theme.colors.text }}>取消</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.deleteButton, { backgroundColor: theme.colors.danger }]}
+                onPress={() => {
+                  removeBook(pendingDelete.id);
+                  setPendingDelete(null);
+                }}
+              >
+                <Text style={styles.deleteConfirmText}>删除</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : null}
       <AddOnlineBookModal
         visible={onlineOpen}
         onClose={() => setOnlineOpen(false)}
@@ -816,4 +858,29 @@ const styles = StyleSheet.create({
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
   importHint: { marginTop: 6, textAlign: 'center' },
+  deleteBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,.42)',
+    justifyContent: 'center',
+    padding: 24,
+    zIndex: 20,
+  },
+  deleteDialog: {
+    borderRadius: 8,
+    maxWidth: 360,
+    padding: 20,
+    width: '100%',
+  },
+  deleteTitle: { fontSize: 18, fontWeight: '700' },
+  deleteMessage: { fontSize: 14, lineHeight: 21, marginTop: 10 },
+  deleteActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  deleteButton: {
+    alignItems: 'center',
+    borderRadius: 6,
+    borderWidth: 1,
+    flex: 1,
+    paddingVertical: 10,
+  },
+  deleteConfirmText: { color: '#fff', fontWeight: '600' },
 });

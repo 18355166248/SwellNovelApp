@@ -77,6 +77,7 @@ export const useRemoveBook = () => {
   const setBooks = useSetAtom(booksAtom);
   const setChapters = useSetAtom(chaptersAtom);
   const setHistory = useSetAtom(readingHistoryAtom);
+  const setBookmarks = useSetAtom(bookmarksAtom);
 
   return (bookId: string) => {
     setBooks(prev => prev.filter(book => book.id !== bookId));
@@ -86,6 +87,11 @@ export const useRemoveBook = () => {
       return next;
     });
     setHistory(prev => {
+      const next = { ...prev };
+      delete next[bookId];
+      return next;
+    });
+    setBookmarks(prev => {
       const next = { ...prev };
       delete next[bookId];
       return next;

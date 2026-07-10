@@ -1,7 +1,7 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, Switch, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, Switch, Platform, Pressable } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Text, Icon } from '../components';
+import { Button, Text, Icon } from '../components';
 import {
   useAllBooks,
   useReaderSettings,
@@ -12,6 +12,8 @@ import { SERIF_FONT } from '../theme/fonts';
 import { NOVEL_GOLD } from '../theme/readerThemes';
 import { isFullscreenSupported, setFullscreen } from '../utils/fullscreen';
 import { APP_VERSION } from '../config/appVersion';
+import { useLibraryBackup } from '../services/backup/useLibraryBackup';
+import { RestoredLibraryBackup } from '../services/backup/libraryBackup';
 
 export default function MeScreen() {
   const { theme, isDarkMode, toggleTheme } = useTheme();
@@ -27,14 +29,95 @@ export default function MeScreen() {
   const finished = books.filter(b => b.progress >= 100).length;
   const imported = books.filter(b => b.fileFormat === 'txt').length;
   const stats = useReadingStats();
+  const {
+    hydrated: libraryHydrated,
+    createBackup,
+    selectBackupForRestore,
+    restoreBackup,
+  } = useLibraryBackup();
+  const [backupBusy, setBackupBusy] = React.useState(false);
+  const [pendingRestore, setPendingRestore] = React.useState<{
+    name: string;
+    backup: RestoredLibraryBackup;
+  } | null>(null);
+  const [feedback, setFeedback] = React.useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+  const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   // 累计时长：不足 1 小时按分钟展示，超过则按「X.X 小时」。
   const totalLabel =
     stats.totalMinutes >= 60
       ? `${(stats.totalMinutes / 60).toFixed(1)}h`
       : `${stats.totalMinutes}m`;
 
+  const showMessage = (title: string, message: string) => {
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+    }
+    setFeedback({ title, message });
+    feedbackTimerRef.current = setTimeout(() => {
+      setFeedback(null);
+      feedbackTimerRef.current = null;
+    }, 4000);
+  };
+
+  React.useEffect(
+    () => () => {
+      if (feedbackTimerRef.current) {
+        clearTimeout(feedbackTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const handleCreateBackup = async () => {
+    setBackupBusy(true);
+    try {
+      const result = await createBackup();
+      const message =
+        Platform.OS === 'web'
+          ? `已包含 ${result.bookCount} 本书籍的数据。请在浏览器下载列表或系统“下载”文件夹查看。`
+          : `已包含 ${result.bookCount} 本书籍的数据。`;
+      showMessage('备份已导出', message);
+    } catch (error) {
+      showMessage('导出失败', error instanceof Error ? error.message : '请稍后重试');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const applyRestore = async (backup: RestoredLibraryBackup) => {
+    setBackupBusy(true);
+    try {
+      await restoreBackup(backup);
+      showMessage('恢复完成', `已恢复 ${backup.meta.books.length} 本书籍。`);
+    } catch (error) {
+      showMessage('恢复失败', error instanceof Error ? error.message : '请稍后重试');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    setBackupBusy(true);
+    try {
+      const selected = await selectBackupForRestore();
+      if (!selected) {
+        setBackupBusy(false);
+        return;
+      }
+      setBackupBusy(false);
+      setPendingRestore(selected);
+    } catch (error) {
+      setBackupBusy(false);
+      showMessage('无法读取备份', error instanceof Error ? error.message : '请检查备份文件');
+    }
+  };
+
   return (
-    <ScrollView
+    <View style={styles.root}>
+      <ScrollView
       style={[styles.container, { backgroundColor: theme.colors.background }]}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
@@ -147,6 +230,35 @@ export default function MeScreen() {
           theme.shadows.sm,
         ]}
       >
+        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>数据安全</Text>
+        <View style={styles.backupActions}>
+          <Button
+            title="导出备份"
+            variant="outline"
+            size="small"
+            disabled={!libraryHydrated || backupBusy}
+            loading={backupBusy}
+            onPress={() => { handleCreateBackup(); }}
+            style={styles.backupAction}
+          />
+          <Button
+            title="恢复备份"
+            variant="outline"
+            size="small"
+            disabled={!libraryHydrated || backupBusy}
+            onPress={() => { handleRestoreBackup(); }}
+            style={styles.backupAction}
+          />
+        </View>
+      </View>
+
+      <View
+        style={[
+          styles.section,
+          { backgroundColor: theme.colors.surface },
+          theme.shadows.sm,
+        ]}
+      >
         <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
           外观设置
         </Text>
@@ -215,7 +327,58 @@ export default function MeScreen() {
           subColor={theme.colors.textSecondary}
         />
       </View>
-    </ScrollView>
+      </ScrollView>
+
+      {pendingRestore ? (
+        <View style={styles.restoreBackdrop}>
+          <View
+            style={[
+              styles.restoreDialog,
+              { backgroundColor: theme.colors.surface },
+              theme.shadows.md,
+            ]}
+          >
+            <Text style={[styles.restoreTitle, { color: theme.colors.text }]}>恢复备份</Text>
+            <Text style={[styles.restoreMessage, { color: theme.colors.textSecondary }]}>
+              将用 {pendingRestore.name} 替换当前书库。此操作不可撤销。
+            </Text>
+            <View style={styles.restoreActions}>
+              <Button
+                title="取消"
+                variant="outline"
+                size="small"
+                onPress={() => setPendingRestore(null)}
+                style={styles.restoreAction}
+              />
+              <Button
+                title="替换恢复"
+                size="small"
+                onPress={() => {
+                  const backup = pendingRestore.backup;
+                  setPendingRestore(null);
+                  applyRestore(backup);
+                }}
+                style={styles.restoreAction}
+              />
+            </View>
+          </View>
+        </View>
+      ) : null}
+
+      {feedback ? (
+        <Pressable
+          style={styles.feedbackWrap}
+          onPress={() => setFeedback(null)}
+        >
+          <View style={[styles.feedback, { backgroundColor: theme.colors.surface }, theme.shadows.md]}>
+            <Text style={[styles.feedbackTitle, { color: theme.colors.text }]}>{feedback.title}</Text>
+            <Text style={[styles.feedbackMessage, { color: theme.colors.textSecondary }]}>
+              {feedback.message}
+            </Text>
+          </View>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -251,6 +414,7 @@ function SettingRow({
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   container: { flex: 1 },
   content: { paddingTop: 8, paddingBottom: 88 },
   headerRow: {
@@ -341,6 +505,46 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
+  backupActions: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 15,
+    paddingTop: 10,
+    paddingBottom: 15,
+  },
+  backupAction: { flex: 1 },
+  restoreBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,.42)',
+    justifyContent: 'center',
+    padding: 24,
+    zIndex: 20,
+  },
+  restoreDialog: {
+    borderRadius: 8,
+    maxWidth: 360,
+    padding: 20,
+    width: '100%',
+  },
+  restoreTitle: { fontSize: 18, fontWeight: '700' },
+  restoreMessage: { fontSize: 14, lineHeight: 21, marginTop: 10 },
+  restoreActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  restoreAction: { flex: 1 },
+  feedbackWrap: {
+    bottom: 24,
+    left: 20,
+    position: 'absolute',
+    right: 20,
+    zIndex: 30,
+  },
+  feedback: {
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  feedbackTitle: { fontSize: 14, fontWeight: '700' },
+  feedbackMessage: { fontSize: 13, lineHeight: 19, marginTop: 4 },
   settingRow: {
     minHeight: 64,
     paddingHorizontal: 15,

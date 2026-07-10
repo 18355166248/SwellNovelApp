@@ -12,6 +12,7 @@ import {
   bookmarksAtom,
   booksAtom,
   chaptersAtom,
+  libraryHydratedAtom,
   readerSettingsAtom,
   readingHistoryAtom,
   readingStatsAtom,
@@ -29,6 +30,7 @@ export function LibraryPersistence() {
   const [readerSettings, setReaderSettings] = useAtom(readerSettingsAtom);
   const [searchHistory, setSearchHistory] = useAtom(searchHistoryAtom);
   const [readingStats, setReadingStats] = useAtom(readingStatsAtom);
+  const setLibraryHydrated = useAtom(libraryHydratedAtom)[1];
   const hydratedRef = React.useRef(false);
   const metaTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -63,6 +65,7 @@ export function LibraryPersistence() {
       .finally(() => {
         if (!cancelled) {
           hydratedRef.current = true;
+          setLibraryHydrated(true);
         }
       });
 
@@ -76,6 +79,7 @@ export function LibraryPersistence() {
     setBooks,
     setBookmarks,
     setChapters,
+    setLibraryHydrated,
     setReaderSettings,
     setReadingHistory,
     setReadingStats,
