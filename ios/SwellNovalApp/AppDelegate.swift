@@ -14,6 +14,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+#if !DEBUG
+    // RN 0.83.1 可能在本地 Bundle 已加载后仍残留 Metro 提示；正式包主动关闭，
+    // 避免开发状态覆盖阅读页面，Debug 包继续保留加载反馈。
+    RCTDevLoadingViewSetEnabled(false)
+#endif
+
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
