@@ -11,7 +11,7 @@ const appName = appJson.name;
 
 // 注入 MaterialIcons 字体：react-native-vector-icons 自带 ttf，
 // Web 端需要通过 @font-face 手动加载，否则图标显示为方框。
-import MaterialIconsFont from 'react-native-vector-icons/Fonts/MaterialIcons.ttf';
+import MaterialIconsFont from './assets/fonts/MaterialIcons.web.ttf';
 
 const iconFontStyles = `@font-face {
   font-family: 'MaterialIcons';
