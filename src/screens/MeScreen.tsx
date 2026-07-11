@@ -26,6 +26,11 @@ import {
   uploadWebDavBackup,
   WebDavBackupFile,
 } from '../services/webdav/client';
+import {
+  clearWebDavCredentials,
+  loadWebDavCredentials,
+  saveWebDavCredentials,
+} from '../services/webdav/credentials';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -104,6 +109,18 @@ export default function MeScreen({
     [],
   );
 
+  React.useEffect(() => {
+    let active = true;
+    loadWebDavCredentials()
+      .then(credentials => {
+        if (active && credentials) {
+          setWebDav({ ...credentials, directory: credentials.directory || 'qingdu-backups' });
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   const handleCreateBackup = async () => {
     setBackupBusy(true);
     try {
@@ -157,10 +174,23 @@ export default function MeScreen({
     setCloudBusy(true);
     try {
       await testWebDavConnection(webDav);
+      await saveWebDavCredentials(webDav);
       await refreshCloudFiles();
       showMessage('WebDAV 已连接', '已验证连接，并读取了云端备份列表。');
     } catch (error) {
       showMessage('WebDAV 连接失败', webDavErrorMessage(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const handleClearWebDavCredentials = async () => {
+    setCloudBusy(true);
+    try {
+      await clearWebDavCredentials();
+      setWebDav({ endpoint: '', username: '', password: '', directory: 'qingdu-backups' });
+      setCloudFiles([]);
+      showMessage('已清除 WebDAV 凭据', '下次连接需要重新填写地址、用户名和密码。');
     } finally {
       setCloudBusy(false);
     }
@@ -383,6 +413,9 @@ export default function MeScreen({
             <Button title="测试连接" variant="outline" size="small" loading={cloudBusy} disabled={cloudBusy} onPress={() => { handleTestWebDav(); }} style={styles.backupAction} />
             <Button title="上传备份" size="small" loading={cloudBusy} disabled={!libraryHydrated || cloudBusy} onPress={() => { handleUploadWebDav(); }} style={styles.backupAction} />
           </View>
+          <Pressable disabled={cloudBusy} onPress={() => { handleClearWebDavCredentials(); }} style={styles.clearCredentials}>
+            <Text style={{ color: theme.colors.danger, fontSize: 13 }}>清除已保存的 WebDAV 凭据</Text>
+          </Pressable>
           {cloudFiles.map(file => (
             <View key={file.url} style={[styles.cloudFile, { borderTopColor: theme.colors.border }]}>
               <View style={styles.cloudFileInfo}>
@@ -696,6 +729,7 @@ const styles = StyleSheet.create({
   },
   cloudFileInfo: { flex: 1, marginRight: 12 },
   cloudDelete: { marginLeft: 14 },
+  clearCredentials: { alignItems: 'center', paddingTop: 6, paddingBottom: 8 },
   restoreBackdrop: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
