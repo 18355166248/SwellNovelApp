@@ -47,6 +47,7 @@ export default function SearchScreen() {
     'idle' | 'loading' | 'error' | 'empty' | 'done'
   >('idle');
   const [addingUrl, setAddingUrl] = React.useState<string | null>(null);
+  const [scope, setScope] = React.useState<'shelf' | 'network'>('shelf');
   const searchSeqRef = React.useRef(0);
 
   const runOnlineSearch = React.useCallback(
@@ -69,6 +70,11 @@ export default function SearchScreen() {
 
   const onTapOnline = React.useCallback(
     async (r: NovelSearchResult) => {
+      const existing = allBooks.find(book => book.source?.bookUrl === r.url);
+      if (existing) {
+        navigation.navigate('BookDetail', { bookId: existing.id });
+        return;
+      }
       if (addingUrl) return;
       setAddingUrl(r.url);
       try {
@@ -80,7 +86,7 @@ export default function SearchScreen() {
         setAddingUrl(null);
       }
     },
-    [addingUrl, addOnlineBook, navigation],
+    [addingUrl, addOnlineBook, allBooks, navigation],
   );
   // 本地阅读器无热搜后端，改为按最近阅读/加入列出书库速览。
   const shelf = React.useMemo(
@@ -97,7 +103,7 @@ export default function SearchScreen() {
     if (trimmed) {
       // 去重后置顶，最多保留 8 条；持久化到本地。
       setHistory(prev => [trimmed, ...prev.filter(h => h !== trimmed)].slice(0, 8));
-      runOnlineSearch(trimmed);
+      if (scope === 'network') runOnlineSearch(trimmed);
     } else {
       setOnlineState('idle');
       setOnlineResults([]);
@@ -150,6 +156,20 @@ export default function SearchScreen() {
           </Pressable>
         </View>
 
+        <View style={[styles.scopeControl, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+          {([
+            ['shelf', '书架'],
+            ['network', '网络'],
+          ] as const).map(([value, label]) => {
+            const active = scope === value;
+            return (
+              <Pressable key={value} onPress={() => { setScope(value); if (value === 'network' && query.trim()) runOnlineSearch(query); }} style={[styles.scopeOption, active && { backgroundColor: theme.colors.accentDark }]}>
+                <Text style={{ color: active ? '#fff' : theme.colors.text, fontSize: 13, fontWeight: '600' }}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
         <Pressable
           onPress={() => navigation.navigate('InAppBrowser')}
           style={[
@@ -169,7 +189,7 @@ export default function SearchScreen() {
           <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
         </Pressable>
 
-        {query.trim().length > 0 && (
+        {scope === 'shelf' && query.trim().length > 0 && (
           <View style={styles.section}>
             <Text
               variant="caption"
@@ -275,7 +295,7 @@ export default function SearchScreen() {
           </View>
         )}
 
-        {isNovelSearchSupported && query.trim().length > 0 && (
+        {scope === 'network' && isNovelSearchSupported && query.trim().length > 0 && (
           <View style={styles.section}>
             <Text variant="label" style={{ marginBottom: 12 }}>
               网络搜书
@@ -303,8 +323,9 @@ export default function SearchScreen() {
                   theme.shadows.sm,
                 ]}
               >
-                {onlineResults.map(r => (
-                  <Pressable
+                {onlineResults.map(r => {
+                  const existing = allBooks.find(book => book.source?.bookUrl === r.url);
+                  return <Pressable
                     key={r.url}
                     onPress={() => onTapOnline(r)}
                     style={[
@@ -336,6 +357,8 @@ export default function SearchScreen() {
                       <Text variant="caption" color="textSecondary">
                         添加中…
                       </Text>
+                    ) : existing ? (
+                      <Icon name="menu-book" size={18} color={theme.colors.accent} />
                     ) : (
                       <Icon
                         name="add"
@@ -343,14 +366,14 @@ export default function SearchScreen() {
                         color={theme.colors.textSecondary}
                       />
                     )}
-                  </Pressable>
-                ))}
+                  </Pressable>;
+                })}
               </View>
             )}
           </View>
         )}
 
-        <View style={styles.section}>
+        {scope === 'shelf' && <View style={styles.section}>
           {history.length > 0 && (
             <>
               <View style={styles.rowBetween}>
@@ -435,7 +458,7 @@ export default function SearchScreen() {
               </View>
             </>
           )}
-        </View>
+        </View>}
       </ScrollView>
     </View>
   );
@@ -443,6 +466,16 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  scopeControl: {
+    alignSelf: 'flex-start',
+    borderRadius: 7,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginLeft: 62,
+    marginTop: 2,
+    overflow: 'hidden',
+  },
+  scopeOption: { alignItems: 'center', minWidth: 64, paddingVertical: 7 },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',

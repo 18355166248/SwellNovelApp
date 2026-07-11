@@ -7,6 +7,7 @@ import { Text, Icon, LinearGradient } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
 import { RootStackParamList } from '../types/navigation';
 import { useAllBooks } from '../store';
+import { Book } from '../store/types/book';
 import {
   CONTINUE_CARD_GRADIENT,
   CONTINUE_CARD_GRADIENT_DIRECTION,
@@ -28,7 +29,11 @@ export default function DiscoverScreen() {
     [allBooks],
   );
   const hero = recent[0];
-  const ranks = recent.slice(0, 6);
+  const ranks = recent.filter(book => book.lastReadAt).slice(0, 6);
+  const updates = allBooks.filter(book => (book.unreadUpdates || 0) > 0);
+  const recentlyAdded = [...allBooks]
+    .sort((a, b) => b.addedAt - a.addedAt)
+    .slice(0, 6);
   const openDetail = (bookId: string) =>
     navigation.navigate('BookDetail', { bookId });
 
@@ -47,15 +52,6 @@ export default function DiscoverScreen() {
               : '导入本地 TXT，开始你的书架'}
           </Text>
         </View>
-        <Pressable
-          style={[
-            styles.iconBtn,
-            { backgroundColor: theme.colors.surface },
-            theme.shadows.sm,
-          ]}
-        >
-          <Icon name="auto-awesome" size={18} color={theme.colors.text} />
-        </Pressable>
       </View>
 
       {hero ? (
@@ -150,7 +146,59 @@ export default function DiscoverScreen() {
           </View>
         </View>
       )}
+
+      {updates.length > 0 && (
+        <DiscoverList
+          title="追更更新"
+          books={updates}
+          theme={theme}
+          onOpen={openDetail}
+          detail={book => `新增 ${book.unreadUpdates} 章`}
+        />
+      )}
+
+      {recentlyAdded.length > 0 && (
+        <DiscoverList
+          title="最近加入"
+          books={recentlyAdded}
+          theme={theme}
+          onOpen={openDetail}
+          detail={book => `${book.author || '本地导入'} · 已读 ${book.progress}%`}
+        />
+      )}
     </ScrollView>
+  );
+}
+
+function DiscoverList({
+  title,
+  books,
+  theme,
+  onOpen,
+  detail,
+}: {
+  title: string;
+  books: Book[];
+  theme: ReturnType<typeof useTheme>['theme'];
+  onOpen: (bookId: string) => void;
+  detail: (book: Book) => string;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>{title}</Text>
+      <View style={[styles.rankList, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
+        {books.map((book, index) => (
+          <Pressable key={book.id} onPress={() => onOpen(book.id)} style={[styles.rankRow, { borderBottomColor: index === books.length - 1 ? 'transparent' : theme.colors.border }]}>
+            <View style={[styles.updateDot, { backgroundColor: book.unreadUpdates ? theme.colors.danger : theme.colors.accent }]} />
+            <View style={styles.rankInfo}>
+              <Text style={[styles.rankTitle, { color: theme.colors.text }]} numberOfLines={1}>{book.title}</Text>
+              <Text variant="caption" color="textSecondary">{detail(book)}</Text>
+            </View>
+            <Icon name="chevron-right" size={18} color={theme.colors.textSecondary} />
+          </Pressable>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -235,6 +283,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
   },
+  updateDot: { borderRadius: 4, height: 8, width: 8 },
   rankInfo: { flex: 1 },
   rankTitle: {
     fontFamily: SERIF_FONT,
