@@ -73,27 +73,20 @@ export default function BookshelfScreen() {
   const setChapters = useSetChapters();
   const openChapter = useOpenChapter();
   const removeBook = useRemoveBook();
-  const [pendingDelete, setPendingDelete] = React.useState<Book | null>(null);
+  const [selectedBookIds, setSelectedBookIds] = React.useState<string[]>([]);
+  const [pendingDeleteIds, setPendingDeleteIds] = React.useState<string[] | null>(null);
+  const [selectionMode, setSelectionMode] = React.useState(false);
 
-  const confirmDeleteBook = React.useCallback(
-    (b: Book) => {
-      const message =
-        `确定删除《${b.title}》？将同时移除章节、阅读进度与书签。`;
-      if (Platform.OS === 'web') {
-        setPendingDelete(b);
-        return;
-      }
-      Alert.alert(
-        '删除书籍',
-        message,
-        [
-          { text: '取消', style: 'cancel' },
-          { text: '删除', style: 'destructive', onPress: () => removeBook(b.id) },
-        ],
-      );
-    },
-    [removeBook, setPendingDelete],
-  );
+  const toggleSelection = React.useCallback((bookId: string) => {
+    setSelectedBookIds(ids =>
+      ids.includes(bookId) ? ids.filter(id => id !== bookId) : [...ids, bookId],
+    );
+  }, []);
+
+  const enterSelection = React.useCallback((bookId: string) => {
+    setSelectionMode(true);
+    setSelectedBookIds(ids => (ids.includes(bookId) ? ids : [...ids, bookId]));
+  }, []);
 
   const [filter, setFilter] = React.useState<(typeof FILTERS)[number]>('全部');
   const [gridView, setGridView] = React.useState(true);
@@ -177,7 +170,7 @@ export default function BookshelfScreen() {
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.title, { color: theme.colors.text }]}>
-              书架
+              {selectionMode ? `已选择 ${selectedBookIds.length} 本` : '书架'}
             </Text>
             <Text
               variant="caption"
@@ -189,7 +182,41 @@ export default function BookshelfScreen() {
             </Text>
           </View>
           <View style={styles.headerActions}>
-            <Pressable
+            {selectionMode ? (
+              <>
+                <Pressable
+                  accessibilityLabel="全选书籍"
+                  onPress={() => setSelectedBookIds(shown.map(book => book.id))}
+                  style={[styles.iconBtn, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}
+                >
+                  <Icon name="select-all" size={18} color={theme.colors.text} />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="删除已选书籍"
+                  disabled={selectedBookIds.length === 0}
+                  onPress={() => setPendingDeleteIds(selectedBookIds)}
+                  style={[styles.iconBtn, { backgroundColor: theme.colors.danger, opacity: selectedBookIds.length ? 1 : 0.45 }, theme.shadows.sm]}
+                >
+                  <Icon name="delete-outline" size={18} color="#fff" />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="取消选择"
+                  onPress={() => { setSelectedBookIds([]); setSelectionMode(false); }}
+                  style={[styles.iconBtn, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}
+                >
+                  <Icon name="close" size={18} color={theme.colors.text} />
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                accessibilityLabel="批量删除书籍"
+                onPress={() => setSelectionMode(true)}
+                style={[styles.iconBtn, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}
+              >
+                <Icon name="delete-outline" size={18} color={theme.colors.text} />
+              </Pressable>
+            )}
+            {!selectionMode ? <Pressable
               onPress={() => setOnlineOpen(true)}
               style={[
                 styles.iconBtn,
@@ -198,8 +225,8 @@ export default function BookshelfScreen() {
               ]}
             >
               <Icon name="add-link" size={18} color={theme.colors.text} />
-            </Pressable>
-            <Pressable
+            </Pressable> : null}
+            {!selectionMode ? <Pressable
               onPress={() =>
                 navigation.navigate('MainTabs', { screen: 'Search' })
               }
@@ -210,7 +237,7 @@ export default function BookshelfScreen() {
               ]}
             >
               <Icon name="search" size={18} color={theme.colors.text} />
-            </Pressable>
+            </Pressable> : null}
             <Pressable
               onPress={() => setGridView(v => !v)}
               style={[
@@ -396,10 +423,8 @@ export default function BookshelfScreen() {
                 <Pressable
                   key={b.id}
                   style={styles.gridItem}
-                  onPress={() =>
-                    navigation.navigate('BookDetail', { bookId: b.id })
-                  }
-                  onLongPress={() => confirmDeleteBook(b)}
+                  onPress={() => selectionMode ? toggleSelection(b.id) : navigation.navigate('BookDetail', { bookId: b.id })}
+                  onLongPress={() => enterSelection(b.id)}
                   delayLongPress={350}
                 >
                   <LinearGradient
@@ -437,6 +462,11 @@ export default function BookshelfScreen() {
                       </Text>
                     </View>
                   )}
+                  {selectionMode ? (
+                    <View style={[styles.selectionBadge, { backgroundColor: selectedBookIds.includes(b.id) ? theme.colors.accentDark : theme.colors.surface, borderColor: theme.colors.border }]}>
+                      <Icon name={selectedBookIds.includes(b.id) ? 'check' : 'add'} size={15} color={selectedBookIds.includes(b.id) ? '#fff' : theme.colors.textSecondary} />
+                    </View>
+                  ) : null}
                   <Text
                     numberOfLines={1}
                     style={[styles.gridTitle, { color: theme.colors.text }]}
@@ -462,7 +492,7 @@ export default function BookshelfScreen() {
                 </Pressable>
               );
             })}
-            <Pressable
+            {!selectionMode ? <Pressable
               style={[
                 styles.gridItem,
                 styles.addTile,
@@ -478,7 +508,7 @@ export default function BookshelfScreen() {
               >
                 添加网络书籍
               </Text>
-            </Pressable>
+            </Pressable> : null}
           </View>
         ) : (
           <View style={styles.list}>
@@ -489,10 +519,8 @@ export default function BookshelfScreen() {
                   styles.listItem,
                   { borderBottomColor: theme.colors.border },
                 ]}
-                onPress={() =>
-                  navigation.navigate('BookDetail', { bookId: b.id })
-                }
-                onLongPress={() => confirmDeleteBook(b)}
+                onPress={() => selectionMode ? toggleSelection(b.id) : navigation.navigate('BookDetail', { bookId: b.id })}
+                onLongPress={() => enterSelection(b.id)}
                 delayLongPress={350}
               >
                 <LinearGradient
@@ -529,9 +557,10 @@ export default function BookshelfScreen() {
                     {b.author} · 已读 {b.progress}%
                   </Text>
                 </View>
+                {selectionMode ? <Icon name={selectedBookIds.includes(b.id) ? 'check-circle' : 'radio-button-unchecked'} size={21} color={selectedBookIds.includes(b.id) ? theme.colors.accentDark : theme.colors.textSecondary} /> : null}
               </Pressable>
             ))}
-            <Pressable
+            {!selectionMode ? <Pressable
               onPress={() => setOnlineOpen(true)}
               style={[
                 styles.listImportBtn,
@@ -546,8 +575,8 @@ export default function BookshelfScreen() {
               >
                 添加网络书籍
               </Text>
-            </Pressable>
-            <Pressable
+            </Pressable> : null}
+            {!selectionMode ? <Pressable
               onPress={handleImportTxt}
               disabled={importState.active}
               style={styles.listSecondaryImport}
@@ -555,7 +584,7 @@ export default function BookshelfScreen() {
               <Text style={{ color: theme.colors.accent, fontSize: 13.5 }}>
                 导入本地 TXT
               </Text>
-            </Pressable>
+            </Pressable> : null}
           </View>
         )}
       </ScrollView>
@@ -585,7 +614,7 @@ export default function BookshelfScreen() {
           </View>
         </View>
       )}
-      {pendingDelete ? (
+      {pendingDeleteIds ? (
         <View style={styles.deleteBackdrop}>
           <View
             style={[
@@ -594,22 +623,24 @@ export default function BookshelfScreen() {
               theme.shadows.md,
             ]}
           >
-            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>删除书籍</Text>
+            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>删除 {pendingDeleteIds.length} 本书籍</Text>
             <Text style={[styles.deleteMessage, { color: theme.colors.textSecondary }]}>
-              确定删除《{pendingDelete.title}》？章节、阅读进度与书签都会被清除。
+              章节缓存、阅读进度与书签都会被永久清除。
             </Text>
             <View style={styles.deleteActions}>
               <Pressable
                 style={[styles.deleteButton, { borderColor: theme.colors.border }]}
-                onPress={() => setPendingDelete(null)}
+                onPress={() => setPendingDeleteIds(null)}
               >
                 <Text style={{ color: theme.colors.text }}>取消</Text>
               </Pressable>
               <Pressable
                 style={[styles.deleteButton, { backgroundColor: theme.colors.danger }]}
                 onPress={() => {
-                  removeBook(pendingDelete.id);
-                  setPendingDelete(null);
+                  pendingDeleteIds.forEach(removeBook);
+                  setPendingDeleteIds(null);
+                  setSelectedBookIds([]);
+                  setSelectionMode(false);
                 }}
               >
                 <Text style={styles.deleteConfirmText}>删除</Text>
@@ -865,6 +896,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     zIndex: 20,
+  },
+  selectionBadge: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 24,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 5,
+    top: 5,
+    width: 24,
+    zIndex: 3,
   },
   deleteDialog: {
     borderRadius: 8,

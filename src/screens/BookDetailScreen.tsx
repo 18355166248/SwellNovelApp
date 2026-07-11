@@ -224,10 +224,11 @@ export default function BookDetailScreen() {
                 <Icon name="arrow-back" size={20} color="#fff" />
               </Pressable>
               <Pressable
-                style={styles.heroBtn}
+                accessibilityLabel="删除书籍"
+                style={[styles.heroBtn, styles.deleteHeroBtn]}
                 onPress={() => setShowDeletePrompt(true)}
               >
-                <Icon name="more-horiz" size={20} color="#fff" />
+                <Icon name="delete-outline" size={20} color="#fff" />
               </Pressable>
             </View>
             <View style={styles.heroBody}>
@@ -483,7 +484,7 @@ export default function BookDetailScreen() {
               删除书籍
             </Text>
             <Text style={[styles.deleteMessage, { color: theme.colors.textSecondary }]}>
-              确定删除《{book.title}》？章节与阅读进度也会被移除。
+              确定删除《{book.title}》？章节缓存、阅读进度与书签都会被永久清除。
             </Text>
             <View style={styles.deleteActions}>
               <Pressable
@@ -597,6 +598,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   deleteConfirmText: { color: '#fff', fontWeight: '600' },
+  deleteHeroBtn: { backgroundColor: 'rgba(180,53,53,.82)' },
   hero: {
     position: 'relative',
     overflow: 'hidden',
