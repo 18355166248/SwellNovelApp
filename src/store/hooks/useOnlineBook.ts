@@ -698,7 +698,12 @@ export const useCheckBookUpdate = () => {
     const existing = store.get(chaptersAtom)[bookId] ?? [];
     const shouldReplaceCatalog =
       source.id === 'bookshuku' && isBadBookshukuCatalog(existing);
-    if (!shouldReplaceCatalog && metas.length <= existing.length) return 0;
+    if (!shouldReplaceCatalog && metas.length <= existing.length) {
+      store.set(booksAtom, prev => prev.map(b =>
+        b.id === bookId ? { ...b, lastUpdateCheckAt: Date.now() } : b,
+      ));
+      return 0;
+    }
 
     const contentBySource = new Map(
       existing
@@ -737,7 +742,15 @@ export const useCheckBookUpdate = () => {
     store.set(booksAtom, prev =>
       prev.map(b =>
         b.id === bookId
-          ? { ...b, totalChapters: next.length, updatedAt: Date.now() }
+          ? {
+              ...b,
+              totalChapters: next.length,
+              updatedAt: Date.now(),
+              lastUpdateCheckAt: Date.now(),
+              unreadUpdates: b.following
+                ? (b.unreadUpdates || 0) + Math.max(0, next.length - existing.length)
+                : b.unreadUpdates,
+            }
           : b,
       ),
     );
@@ -745,5 +758,34 @@ export const useCheckBookUpdate = () => {
       console.warn('[useCheckBookUpdate] save failed', error);
     });
     return next.length - existing.length;
+  };
+};
+
+export const useToggleBookFollow = () => {
+  const store = useStore();
+  return (bookId: string) => {
+    store.set(booksAtom, prev => prev.map(book =>
+      book.id === bookId && book.source
+        ? { ...book, following: !book.following, unreadUpdates: book.following ? 0 : book.unreadUpdates || 0 }
+        : book,
+    ));
+  };
+};
+
+export const useCheckFollowedBooks = () => {
+  const store = useStore();
+  const checkBookUpdate = useCheckBookUpdate();
+  return async () => {
+    const followed = store.get(booksAtom).filter(book => book.source && book.following);
+    let updated = 0;
+    let failed = 0;
+    for (const book of followed) {
+      try {
+        updated += await checkBookUpdate(book.id);
+      } catch {
+        failed += 1;
+      }
+    }
+    return { checked: followed.length, updated, failed };
   };
 };

@@ -20,6 +20,7 @@ import {
   useRemoveBook,
   useCacheWholeBook,
   useCheckBookUpdate,
+  useToggleBookFollow,
 } from '../store';
 import { resumeChapterIndex } from '../utils/chapters';
 import {
@@ -81,6 +82,7 @@ export default function BookDetailScreen() {
   const removeBook = useRemoveBook();
   const cacheWholeBook = useCacheWholeBook();
   const checkBookUpdate = useCheckBookUpdate();
+  const toggleBookFollow = useToggleBookFollow();
   const palette = paletteForId(bookId);
   const bottomActionOffset = Math.max(insets.bottom, 34) + 18;
 
@@ -350,6 +352,15 @@ export default function BookDetailScreen() {
         {book.source && (
           <View style={styles.section}>
             <View style={styles.onlineRow}>
+              <Pressable
+                onPress={() => toggleBookFollow(bookId)}
+                style={[styles.onlineBtn, { backgroundColor: book.following ? theme.colors.accentDark : theme.colors.surface, borderColor: book.following ? theme.colors.accentDark : theme.colors.border }]}
+              >
+                <Icon name={book.following ? 'notifications-active' : 'notifications-none'} size={16} color={book.following ? '#fff' : theme.colors.accentDark} />
+                <Text style={{ fontSize: 13, color: book.following ? '#fff' : theme.colors.text }}>
+                  {book.following ? '追更中' : '追更'}
+                </Text>
+              </Pressable>
               <Pressable
                 onPress={onCheckUpdate}
                 disabled={checking || caching.active}

@@ -53,6 +53,8 @@ export {
   useLoadNextChapterPage,
   useCacheWholeBook,
   useCheckBookUpdate,
+  useToggleBookFollow,
+  useCheckFollowedBooks,
   useAddRecognizedBook,
 } from './useOnlineBook';
 

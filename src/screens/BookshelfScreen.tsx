@@ -21,6 +21,7 @@ import {
   useOpenChapter,
   useBookChapters,
   useRemoveBook,
+  useCheckFollowedBooks,
 } from '../store';
 import { AddOnlineBookModal } from '../components/AddOnlineBookModal';
 import type { Book } from '../store/types/book';
@@ -73,6 +74,7 @@ export default function BookshelfScreen() {
   const setChapters = useSetChapters();
   const openChapter = useOpenChapter();
   const removeBook = useRemoveBook();
+  const checkFollowedBooks = useCheckFollowedBooks();
   const [selectedBookIds, setSelectedBookIds] = React.useState<string[]>([]);
   const [pendingDeleteIds, setPendingDeleteIds] = React.useState<string[] | null>(null);
   const [selectionMode, setSelectionMode] = React.useState(false);
@@ -95,6 +97,8 @@ export default function BookshelfScreen() {
     active: false,
     message: '',
   });
+  const [followChecking, setFollowChecking] = React.useState(false);
+  const [followMessage, setFollowMessage] = React.useState('');
 
   const continueBook = React.useMemo(() => {
     const withHistory = books.filter(b => b.lastReadAt);
@@ -146,6 +150,8 @@ export default function BookshelfScreen() {
   }, [addBook, importState.active, navigation, setChapters]);
 
   const continuing = books.filter(b => b.progress < 100).length;
+  const followedCount = books.filter(b => b.following).length;
+  const unreadUpdates = books.reduce((sum, book) => sum + (book.unreadUpdates || 0), 0);
   const shown = applyFilter(books, filter);
 
   const openContinueBook = () => {
@@ -156,6 +162,17 @@ export default function BookshelfScreen() {
     );
     openChapter(continueBook.id, idx);
     navigation.navigate('Reader', { bookId: continueBook.id });
+  };
+
+  const onCheckFollowed = async () => {
+    if (followChecking || followedCount === 0) return;
+    setFollowChecking(true);
+    try {
+      const result = await checkFollowedBooks();
+      setFollowMessage(result.updated > 0 ? `发现 ${result.updated} 个新章节` : result.failed ? `${result.failed} 本检查失败` : '追更书籍已是最新');
+    } finally {
+      setFollowChecking(false);
+    }
   };
 
   return (
@@ -368,6 +385,15 @@ export default function BookshelfScreen() {
           })}
         </ScrollView>
 
+        {followedCount > 0 ? (
+          <Pressable onPress={onCheckFollowed} disabled={followChecking} style={[styles.followBar, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <Icon name="notifications-active" size={18} color={theme.colors.accentDark} />
+            <Text style={[styles.followText, { color: theme.colors.text }]}>{followChecking ? '正在检查追更…' : unreadUpdates > 0 ? `追更更新：${unreadUpdates} 章` : `检查 ${followedCount} 本追更书`}</Text>
+            <Icon name="chevron-right" size={18} color={theme.colors.textSecondary} />
+          </Pressable>
+        ) : null}
+        {followMessage ? <Text style={[styles.followMessage, { color: theme.colors.textSecondary }]}>{followMessage}</Text> : null}
+
         {books.length === 0 ? (
           <View style={styles.empty}>
             <Icon
@@ -414,7 +440,9 @@ export default function BookshelfScreen() {
             {shown.map(b => {
               const palette = paletteForId(b.id);
               const badge =
-                b.progress >= 100
+                (b.unreadUpdates || 0) > 0
+                  ? { label: `更新 ${b.unreadUpdates}`, color: theme.colors.danger }
+                  : b.progress >= 100
                   ? { label: '完结', color: theme.colors.badgeMuted }
                   : b.fileFormat === 'txt'
                   ? { label: '导入', color: theme.colors.accent }
@@ -753,6 +781,18 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   filterRow: { marginTop: 16, paddingHorizontal: 20 },
+  followBar: {
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginTop: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  followText: { flex: 1, fontSize: 13, fontWeight: '600', marginLeft: 8 },
+  followMessage: { fontSize: 12, marginHorizontal: 20, marginTop: 7 },
   filterChip: {
     paddingVertical: 7,
     paddingHorizontal: 14,
