@@ -14,6 +14,7 @@ const express = require('express');
 const compression = require('compression');
 const path = require('path');
 const { execFile } = require('child_process');
+const { webDavProxy } = require('./scripts/webdavProxy');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -78,6 +79,10 @@ app.use('/proxy', (req, res) => {
     },
   );
 });
+
+// WebDAV 同源代理：浏览器无法直接访问未开放 CORS 的服务。仅允许 HTTPS 及
+// WEBDAV_ALLOWED_HOSTS（默认坚果云），认证头只转发给指定上游，不写入日志。
+app.post('/api/webdav', webDavProxy);
 
 // ── 静态资源 ────────────────────────────────────────────────
 app.use(express.static(DIST, { maxAge: '1y', immutable: true }));

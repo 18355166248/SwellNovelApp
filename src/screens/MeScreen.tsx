@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, ScrollView, Switch, Platform, Pressable } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Button, Text, Icon } from '../components';
+import { Button, Input, Text, Icon } from '../components';
 import {
   useAllBooks,
   useReaderSettings,
@@ -14,9 +14,30 @@ import { isFullscreenSupported, setFullscreen } from '../utils/fullscreen';
 import { APP_VERSION } from '../config/appVersion';
 import { useLibraryBackup } from '../services/backup/useLibraryBackup';
 import { RestoredLibraryBackup } from '../services/backup/libraryBackup';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../types/navigation';
+import { readLibraryBackup } from '../services/backup/libraryBackup';
+import {
+  deleteWebDavBackup,
+  downloadWebDavBackup,
+  listWebDavBackups,
+  testWebDavConnection,
+  uploadWebDavBackup,
+  WebDavBackupFile,
+} from '../services/webdav/client';
 
-export default function MeScreen() {
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+export default function MeScreen({
+  settings = false,
+  webDavPage = false,
+}: {
+  settings?: boolean;
+  webDavPage?: boolean;
+}) {
   const { theme, isDarkMode, toggleTheme } = useTheme();
+  const navigation = useNavigation<NavigationProp>();
   const books = useAllBooks();
   const readerSettings = useReaderSettings();
   const setFullscreenPref = useSetFullscreenPref();
@@ -32,10 +53,14 @@ export default function MeScreen() {
   const {
     hydrated: libraryHydrated,
     createBackup,
+    createBackupArchive,
     selectBackupForRestore,
     restoreBackup,
   } = useLibraryBackup();
   const [backupBusy, setBackupBusy] = React.useState(false);
+  const [cloudBusy, setCloudBusy] = React.useState(false);
+  const [webDav, setWebDav] = React.useState({ endpoint: '', username: '', password: '', directory: 'qingdu-backups' });
+  const [cloudFiles, setCloudFiles] = React.useState<WebDavBackupFile[]>([]);
   const [pendingRestore, setPendingRestore] = React.useState<{
     name: string;
     backup: RestoredLibraryBackup;
@@ -60,6 +85,14 @@ export default function MeScreen() {
       setFeedback(null);
       feedbackTimerRef.current = null;
     }, 4000);
+  };
+
+  const webDavErrorMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : '请稍后重试';
+    if (Platform.OS === 'web' && message === '无法连接 WebDAV 服务，请检查网络和地址') {
+      return '当前 WebDAV 服务未开放浏览器跨域访问。请在 iOS/Android 使用，或配置受控的 WebDAV 代理。';
+    }
+    return message;
   };
 
   React.useEffect(
@@ -115,6 +148,85 @@ export default function MeScreen() {
     }
   };
 
+  const refreshCloudFiles = async () => {
+    const files = await listWebDavBackups(webDav);
+    setCloudFiles(files);
+  };
+
+  const handleTestWebDav = async () => {
+    setCloudBusy(true);
+    try {
+      await testWebDavConnection(webDav);
+      await refreshCloudFiles();
+      showMessage('WebDAV 已连接', '已验证连接，并读取了云端备份列表。');
+    } catch (error) {
+      showMessage('WebDAV 连接失败', webDavErrorMessage(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const handleUploadWebDav = async () => {
+    setCloudBusy(true);
+    try {
+      const backup = await createBackupArchive();
+      await uploadWebDavBackup(webDav, backup.fileName, backup.archive);
+      await refreshCloudFiles();
+      showMessage('已上传云端备份', `已备份 ${backup.bookCount} 本书籍。`);
+    } catch (error) {
+      showMessage('上传失败', webDavErrorMessage(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const handleDownloadWebDav = async (file: WebDavBackupFile) => {
+    setCloudBusy(true);
+    try {
+      const bytes = await downloadWebDavBackup(webDav, file);
+      setPendingRestore({ name: file.name, backup: readLibraryBackup(bytes) });
+    } catch (error) {
+      showMessage('下载失败', webDavErrorMessage(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const handleDeleteWebDav = async (file: WebDavBackupFile) => {
+    setCloudBusy(true);
+    try {
+      await deleteWebDavBackup(webDav, file);
+      await refreshCloudFiles();
+      showMessage('已删除云端备份', file.name);
+    } catch (error) {
+      showMessage('删除失败', webDavErrorMessage(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  if (!settings) {
+    return (
+      <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.headerRow}><Text style={[styles.title, { color: theme.colors.text }]}>我的</Text></View>
+        <View style={[styles.profile, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }, theme.shadows.sm]}>
+          <View style={[styles.avatar, { backgroundColor: theme.colors.accentDark }]}><Icon name="person-outline" size={26} color="#F3EAD6" /></View>
+          <View style={styles.profileInfo}><Text style={[styles.profileName, { color: theme.colors.text }]}>书友</Text><Text style={[styles.profileMeta, { color: theme.colors.textSecondary }]}>本地阅读 · 数据仅保存在当前设备</Text></View>
+        </View>
+        <View style={styles.stats}>
+          <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.text }]}>{books.length}</Text><Text variant="caption" color="textSecondary">书架</Text></View>
+          <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.text }]}>{finished}</Text><Text variant="caption" color="textSecondary">已读完</Text></View>
+          <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.accent }]}>{stats.streak}</Text><Text variant="caption" color="textSecondary">连续天数</Text></View>
+        </View>
+        <Pressable style={[styles.settingsEntry, { backgroundColor: theme.colors.surface }, theme.shadows.sm]} onPress={() => navigation.navigate('Settings')}>
+          <View style={styles.settingIcon}><Icon name="settings" size={20} color={theme.colors.text} /></View>
+          <View style={styles.settingInfo}><Text style={[styles.settingTitle, { color: theme.colors.text }]}>设置</Text><Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>数据安全、外观与云端备份</Text></View>
+          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
+        </Pressable>
+      </ScrollView>
+    );
+  }
+
   return (
     <View style={styles.root}>
       <ScrollView
@@ -123,12 +235,15 @@ export default function MeScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.headerRow}>
-        <Text style={[styles.title, { color: theme.colors.text }]}>我的</Text>
+        <Pressable style={styles.backButton} onPress={() => navigation.goBack()}><Icon name="arrow-back" size={22} color={theme.colors.text} /></Pressable>
+        <Text style={[styles.title, { color: theme.colors.text }]}>{webDavPage ? 'WebDAV 云端备份' : '设置'}</Text>
+        <View style={styles.backButton} />
       </View>
 
       <View
         style={[
           styles.profile,
+          styles.hidden,
           {
             backgroundColor: theme.colors.surface,
             borderColor: theme.colors.border,
@@ -169,7 +284,7 @@ export default function MeScreen() {
         </View>
       </View>
 
-      <View style={styles.stats}>
+      <View style={[styles.stats, styles.hidden]}>
         <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
           <Text style={[styles.statValue, { color: theme.colors.text }]}>
             {books.length}
@@ -196,7 +311,7 @@ export default function MeScreen() {
         </View>
       </View>
 
-      <View style={styles.stats}>
+      <View style={[styles.stats, styles.hidden]}>
         <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
           <Text style={[styles.statValue, { color: theme.colors.accent }]}>
             {stats.streak}
@@ -226,6 +341,7 @@ export default function MeScreen() {
       <View
         style={[
           styles.section,
+          webDavPage && styles.hidden,
           { backgroundColor: theme.colors.surface },
           theme.shadows.sm,
         ]}
@@ -252,9 +368,38 @@ export default function MeScreen() {
         </View>
       </View>
 
+      <View style={[styles.section, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
+        {!webDavPage ? <Pressable style={styles.cloudMenu} onPress={() => navigation.navigate('WebDavBackup')}>
+          <View style={styles.settingIcon}><Icon name="cloud" size={20} color={theme.colors.text} /></View>
+          <View style={styles.settingInfo}><Text style={[styles.settingTitle, { color: theme.colors.text }]}>WebDAV 云端备份</Text><Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>手动上传、恢复与管理云端备份</Text></View>
+          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
+        </Pressable> : <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>连接与备份</Text>}
+        {webDavPage ? <View style={styles.webDavForm}>
+          <Input label="服务地址" value={webDav.endpoint} onChangeText={endpoint => setWebDav(value => ({ ...value, endpoint }))} placeholder="https://dav.example.com/dav/" autoCapitalize="none" keyboardType="url" />
+          <Input label="用户名" value={webDav.username} onChangeText={username => setWebDav(value => ({ ...value, username }))} autoCapitalize="none" />
+          <Input label="密码" value={webDav.password} onChangeText={password => setWebDav(value => ({ ...value, password }))} secureTextEntry autoCapitalize="none" />
+          <Input label="云端目录" value={webDav.directory} onChangeText={directory => setWebDav(value => ({ ...value, directory }))} autoCapitalize="none" />
+          <View style={styles.backupActions}>
+            <Button title="测试连接" variant="outline" size="small" loading={cloudBusy} disabled={cloudBusy} onPress={() => { handleTestWebDav(); }} style={styles.backupAction} />
+            <Button title="上传备份" size="small" loading={cloudBusy} disabled={!libraryHydrated || cloudBusy} onPress={() => { handleUploadWebDav(); }} style={styles.backupAction} />
+          </View>
+          {cloudFiles.map(file => (
+            <View key={file.url} style={[styles.cloudFile, { borderTopColor: theme.colors.border }]}>
+              <View style={styles.cloudFileInfo}>
+                <Text numberOfLines={1} style={{ color: theme.colors.text }}>{file.name}</Text>
+                <Text variant="caption" color="textSecondary">{file.modifiedAt ? new Date(file.modifiedAt).toLocaleString() : '未知时间'} · {(file.size / 1024).toFixed(1)} KB</Text>
+              </View>
+              <Pressable onPress={() => { handleDownloadWebDav(file); }}><Icon name="download" size={20} color={theme.colors.accent} /></Pressable>
+              <Pressable onPress={() => { handleDeleteWebDav(file); }} style={styles.cloudDelete}><Icon name="delete-outline" size={20} color={theme.colors.danger} /></Pressable>
+            </View>
+          ))}
+        </View> : null}
+      </View>
+
       <View
         style={[
           styles.section,
+          webDavPage && styles.hidden,
           { backgroundColor: theme.colors.surface },
           theme.shadows.sm,
         ]}
@@ -311,6 +456,7 @@ export default function MeScreen() {
       <View
         style={[
           styles.section,
+          webDavPage && styles.hidden,
           { backgroundColor: theme.colors.surface },
           theme.shadows.sm,
         ]}
@@ -413,11 +559,23 @@ function SettingRow({
   );
 }
 
+export function SettingsScreen() {
+  return <MeScreen settings />;
+}
+
+export function WebDavBackupScreen() {
+  return <MeScreen settings webDavPage />;
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  hidden: { display: 'none' },
   container: { flex: 1 },
   content: { paddingTop: 8, paddingBottom: 88 },
   headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 6,
     paddingBottom: 6,
@@ -505,6 +663,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
+  backButton: { alignItems: 'center', height: 28, justifyContent: 'center', width: 28 },
   backupActions: {
     flexDirection: 'row',
     gap: 10,
@@ -513,6 +672,30 @@ const styles = StyleSheet.create({
     paddingBottom: 15,
   },
   backupAction: { flex: 1 },
+  settingsEntry: {
+    alignItems: 'center',
+    borderRadius: 8,
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginTop: 18,
+    minHeight: 68,
+    paddingHorizontal: 15,
+  },
+  cloudMenu: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    minHeight: 68,
+    paddingHorizontal: 15,
+  },
+  webDavForm: { paddingHorizontal: 15, paddingBottom: 15 },
+  cloudFile: {
+    alignItems: 'center',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    paddingTop: 10,
+  },
+  cloudFileInfo: { flex: 1, marginRight: 12 },
+  cloudDelete: { marginLeft: 14 },
   restoreBackdrop: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

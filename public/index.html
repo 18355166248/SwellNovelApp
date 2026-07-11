@@ -15,7 +15,10 @@
     rel="stylesheet"
   />
   <style>
-    html, body, #root { height: 100%; }
+    html, body, #root {
+      height: 100%;
+      overflow: hidden;
+    }
     body {
       margin: 0;
       font-family: 'Noto Sans SC', system-ui, -apple-system, sans-serif;
@@ -23,7 +26,13 @@
       -webkit-tap-highlight-color: transparent;
       overscroll-behavior: none;
     }
-    #root { display: flex; }
+    #root { display: flex; min-height: 0; }
+    /* 页面内容由 RN ScrollView 自身滚动，应用壳和滚动容器不显示浏览器轨道。 */
+    #root, #root * {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    #root *::-webkit-scrollbar { width: 0; height: 0; }
     /* 手机浏览器上把应用约束在竖屏阅读器的合理宽度内并居中 */
     @media (min-width: 720px) {
       body { background: radial-gradient(120% 120% at 50% 0%, #e6e3da 0%, #d2cfc5 100%); }

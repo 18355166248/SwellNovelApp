@@ -11,6 +11,7 @@ const path = require('path');
 const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const { execFile } = require('child_process');
+const { webDavProxy } = require('./scripts/webdavProxy');
 
 const appDirectory = path.resolve(__dirname);
 
@@ -182,6 +183,12 @@ module.exports = (_env, argv) => {
               },
             );
           },
+        });
+
+        middlewares.unshift({
+          name: 'webdav-proxy',
+          path: '/api/webdav',
+          middleware: webDavProxy,
         });
 
         return middlewares;

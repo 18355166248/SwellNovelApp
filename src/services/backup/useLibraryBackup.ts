@@ -41,7 +41,7 @@ export function useLibraryBackup() {
   const setReadingStats = useSetAtom(readingStatsAtom);
   const setSelectedBookId = useSetAtom(selectedBookIdAtom);
 
-  const createBackup = async () => {
+  const createBackupArchive = async () => {
     const chapters: Record<string, Chapter[]> = {};
     await Promise.all(
       books.map(async book => {
@@ -64,8 +64,17 @@ export function useLibraryBackup() {
       chapters,
       createdAt,
     );
-    await saveBackupFile(backupFileName(new Date(createdAt)), archive);
-    return { bookCount: books.length };
+    return {
+      archive,
+      fileName: backupFileName(new Date(createdAt)),
+      bookCount: books.length,
+    };
+  };
+
+  const createBackup = async () => {
+    const result = await createBackupArchive();
+    await saveBackupFile(result.fileName, result.archive);
+    return result;
   };
 
   const selectBackupForRestore = async (): Promise<{
@@ -89,5 +98,11 @@ export function useLibraryBackup() {
     setSelectedBookId(null);
   };
 
-  return { hydrated, createBackup, selectBackupForRestore, restoreBackup };
+  return {
+    hydrated,
+    createBackup,
+    createBackupArchive,
+    selectBackupForRestore,
+    restoreBackup,
+  };
 }

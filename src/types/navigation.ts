@@ -12,4 +12,6 @@ export type RootStackParamList = {
   Reader: { bookId: string; chapterId?: string; openDrawer?: boolean };
   BookDetail: { bookId: string };
   InAppBrowser: undefined;
+  Settings: undefined;
+  WebDavBackup: undefined;
 };

@@ -1,6 +1,10 @@
 import React from 'react';
 import { Platform } from 'react-native';
-import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  DefaultTheme,
+  LinkingOptions,
+} from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
@@ -18,13 +22,35 @@ import { WebViewFetcher } from '../components/WebViewFetcher';
 import BookshelfScreen from '../screens/BookshelfScreen';
 import DiscoverScreen from '../screens/DiscoverScreen';
 import SearchScreen from '../screens/SearchScreen';
-import MeScreen from '../screens/MeScreen';
+import MeScreen, { SettingsScreen, WebDavBackupScreen } from '../screens/MeScreen';
 import ReaderScreen from '../screens/ReaderScreen';
 import BookDetailScreen from '../screens/BookDetailScreen';
 import InAppBrowserScreen from '../screens/InAppBrowserScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
+
+const linking: LinkingOptions<RootStackParamList> = {
+  enabled: Platform.OS === 'web',
+  prefixes: [],
+  config: {
+    screens: {
+      MainTabs: {
+        screens: {
+          Bookshelf: '',
+          Discover: 'discover',
+          Search: 'search',
+          Me: 'me',
+        },
+      },
+      Settings: 'settings',
+      WebDavBackup: 'settings/webdav',
+      BookDetail: 'book/:bookId',
+      Reader: 'read/:bookId',
+      InAppBrowser: 'browser',
+    },
+  },
+};
 
 function MainTabs() {
   const { theme } = useTheme();
@@ -119,6 +145,7 @@ export default function AppNavigator() {
   return (
     <SafeAreaProvider>
       <NavigationContainer
+        linking={linking}
         theme={{
           ...DefaultTheme,
           dark: theme.colors.background === darkTheme.colors.background,
@@ -147,6 +174,8 @@ export default function AppNavigator() {
           <Stack.Screen name="BookDetail" component={BookDetailScreen} />
           <Stack.Screen name="Reader" component={ReaderScreen} />
           <Stack.Screen name="InAppBrowser" component={InAppBrowserScreen} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="WebDavBackup" component={WebDavBackupScreen} />
         </Stack.Navigator>
       </NavigationContainer>
       {/* bookshuku 真机 Release 下需要常驻隐藏 WebView 兜底取完整目录/正文；
