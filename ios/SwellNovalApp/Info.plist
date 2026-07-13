@@ -72,6 +72,7 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- 原生导航按页面控制状态栏；启动遮罩不再直接调用 RCTStatusBarManager，避免两套机制冲突。 -->
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>UIAppFonts</key>

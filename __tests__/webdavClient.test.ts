@@ -39,6 +39,22 @@ describe('WebDAV client', () => {
       .rejects.toThrow('HTTPS');
   });
 
+  it('支持坚果云 WebDAV 基础地址', async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(405))
+      .mockResolvedValueOnce(response(207));
+
+    await testWebDavConnection({
+      ...config,
+      endpoint: 'https://dav.jianguoyun.com/dav/',
+    });
+
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+      'https://dav.jianguoyun.com/dav/qingdu-backups',
+      'https://dav.jianguoyun.com/dav/qingdu-backups',
+    ]);
+  });
+
   it('创建目录后上传备份', async () => {
     fetchMock
       .mockResolvedValueOnce(response(201))
@@ -69,7 +85,8 @@ describe('WebDAV client', () => {
       name: 'qingdu-backup-1.swellbackup',
       size: 3,
       modifiedAt: null,
-      url: 'https://dav.example.com/dav/qingdu-backups/qingdu-backup-1.swellbackup',
+      // 即使服务端 href 解析出的 URL 不可信，读写操作也必须回到用户配置的目录。
+      url: 'https://unexpected.example.com/wrong-path/qingdu-backup-1.swellbackup',
     };
     fetchMock.mockResolvedValueOnce(response(200)).mockResolvedValueOnce(response(204));
 
@@ -78,5 +95,9 @@ describe('WebDAV client', () => {
 
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'GET' });
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'DELETE' });
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+      'https://dav.example.com/dav/qingdu-backups/qingdu-backup-1.swellbackup',
+      'https://dav.example.com/dav/qingdu-backups/qingdu-backup-1.swellbackup',
+    ]);
   });
 });

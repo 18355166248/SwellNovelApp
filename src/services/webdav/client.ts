@@ -39,15 +39,19 @@ const normalizedDirectory = (directory?: string) =>
     .filter(Boolean);
 
 const normalizedConfig = (config: WebDavConfig) => {
-  const endpoint = new URL(config.endpoint.trim());
-  if (endpoint.protocol !== 'https:') {
+  const endpointUrl = new URL(config.endpoint.trim());
+  if (endpointUrl.protocol !== 'https:') {
     throw new Error('WebDAV 地址必须使用 HTTPS');
   }
   if (!config.username.trim() || !config.password) {
     throw new Error('请填写 WebDAV 用户名和密码');
   }
-  endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/`;
-  return { endpoint, directory: normalizedDirectory(config.directory) };
+  endpointUrl.pathname = `${endpointUrl.pathname.replace(/\/+$/, '')}/`;
+  // iOS RN 的 URL polyfill 不可靠支持 URL 对象作为 base；统一返回字符串，避免真机抛 Invalid base URL。
+  return {
+    endpoint: endpointUrl.toString(),
+    directory: normalizedDirectory(config.directory),
+  };
 };
 
 const pathUrl = (config: WebDavConfig, name?: string) => {
@@ -185,7 +189,8 @@ export const listWebDavBackups = async (config: WebDavConfig) => {
           const value = Date.parse(valueOf(prop?.['d:getlastmodified'] ?? prop?.getlastmodified));
           return Number.isNaN(value) ? null : value;
         })(),
-        url: new URL(href, config.endpoint).toString(),
+        // 服务端 href 可能是绝对路径或带重复 dav 前缀；后续操作统一使用已校验配置重建 URL。
+        url: pathUrl(config, name),
         isCollection,
       };
     })
@@ -198,7 +203,7 @@ export const downloadWebDavBackup = async (
   config: WebDavConfig,
   file: WebDavBackupFile,
 ) => {
-  const response = await request(config, file.url, { method: 'GET' }, [200]);
+  const response = await request(config, pathUrl(config, file.name), { method: 'GET' }, [200]);
   return new Uint8Array(await response.arrayBuffer());
 };
 
@@ -206,5 +211,5 @@ export const deleteWebDavBackup = async (
   config: WebDavConfig,
   file: WebDavBackupFile,
 ) => {
-  await request(config, file.url, { method: 'DELETE' }, [200, 204]);
+  await request(config, pathUrl(config, file.name), { method: 'DELETE' }, [200, 204]);
 };

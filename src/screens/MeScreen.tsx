@@ -16,6 +16,7 @@ import { useLibraryBackup } from '../services/backup/useLibraryBackup';
 import { RestoredLibraryBackup } from '../services/backup/libraryBackup';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
 import { readLibraryBackup } from '../services/backup/libraryBackup';
 import {
@@ -66,10 +67,17 @@ export default function MeScreen({
   const [cloudBusy, setCloudBusy] = React.useState(false);
   const [webDav, setWebDav] = React.useState({ endpoint: '', username: '', password: '', directory: 'qingdu-backups' });
   const [cloudFiles, setCloudFiles] = React.useState<WebDavBackupFile[]>([]);
+  const [cloudFilesLoaded, setCloudFilesLoaded] = React.useState(false);
+  const [cloudFilesError, setCloudFilesError] = React.useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = React.useState<{
     name: string;
     backup: RestoredLibraryBackup;
   } | null>(null);
+  const [previewBackup, setPreviewBackup] = React.useState<{
+    name: string;
+    backup: RestoredLibraryBackup;
+  } | null>(null);
+  const [previewBookId, setPreviewBookId] = React.useState<string | null>(null);
   const [feedback, setFeedback] = React.useState<{
     title: string;
     message: string;
@@ -108,18 +116,6 @@ export default function MeScreen({
     },
     [],
   );
-
-  React.useEffect(() => {
-    let active = true;
-    loadWebDavCredentials()
-      .then(credentials => {
-        if (active && credentials) {
-          setWebDav({ ...credentials, directory: credentials.directory || 'qingdu-backups' });
-        }
-      })
-      .catch(() => {});
-    return () => { active = false; };
-  }, []);
 
   const handleCreateBackup = async () => {
     setBackupBusy(true);
@@ -165,24 +161,55 @@ export default function MeScreen({
     }
   };
 
-  const refreshCloudFiles = async () => {
-    const files = await listWebDavBackups(webDav);
+  const refreshCloudFiles = async (config = webDav) => {
+    const files = await listWebDavBackups(config);
     setCloudFiles(files);
+    setCloudFilesLoaded(true);
+    setCloudFilesError(null);
   };
 
-  const handleTestWebDav = async () => {
+  const connectAndRefreshWebDav = async (
+    config = webDav,
+    showSuccess = true,
+  ) => {
     setCloudBusy(true);
+    setCloudFilesError(null);
     try {
-      await testWebDavConnection(webDav);
-      await saveWebDavCredentials(webDav);
-      await refreshCloudFiles();
-      showMessage('WebDAV 已连接', '已验证连接，并读取了云端备份列表。');
+      await testWebDavConnection(config);
+      await saveWebDavCredentials(config);
+      await refreshCloudFiles(config);
+      if (showSuccess) {
+        showMessage('备份列表已刷新', '已连接 WebDAV 并读取云端备份。');
+      }
     } catch (error) {
-      showMessage('WebDAV 连接失败', webDavErrorMessage(error));
+      const message = webDavErrorMessage(error);
+      setCloudFilesError(message);
+      showMessage('WebDAV 连接失败', message);
     } finally {
       setCloudBusy(false);
     }
   };
+
+  React.useEffect(() => {
+    let active = true;
+    loadWebDavCredentials()
+      .then(credentials => {
+        if (!active || !credentials) return;
+        const savedConfig = {
+          ...credentials,
+          directory: credentials.directory || 'qingdu-backups',
+        };
+        setWebDav(savedConfig);
+        // 进入云备份页后直接读取列表，让连接是否可用由真实备份数据反馈；按钮仍可用于失败重试。
+        if (webDavPage) {
+          connectAndRefreshWebDav(savedConfig, false);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+    // 凭据只需在页面首次挂载时读取，避免输入配置时反复触发自动连接。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleClearWebDavCredentials = async () => {
     setCloudBusy(true);
@@ -190,6 +217,8 @@ export default function MeScreen({
       await clearWebDavCredentials();
       setWebDav({ endpoint: '', username: '', password: '', directory: 'qingdu-backups' });
       setCloudFiles([]);
+      setCloudFilesLoaded(false);
+      setCloudFilesError(null);
       showMessage('已清除 WebDAV 凭据', '下次连接需要重新填写地址、用户名和密码。');
     } finally {
       setCloudBusy(false);
@@ -217,6 +246,20 @@ export default function MeScreen({
       setPendingRestore({ name: file.name, backup: readLibraryBackup(bytes) });
     } catch (error) {
       showMessage('下载失败', webDavErrorMessage(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const handlePreviewWebDav = async (file: WebDavBackupFile) => {
+    setCloudBusy(true);
+    try {
+      // 备份包包含完整章节正文，按用户点击再下载解析，避免进入页面时批量消耗流量和内存。
+      const bytes = await downloadWebDavBackup(webDav, file);
+      setPreviewBookId(null);
+      setPreviewBackup({ name: file.name, backup: readLibraryBackup(bytes) });
+    } catch (error) {
+      showMessage('预览失败', webDavErrorMessage(error));
     } finally {
       setCloudBusy(false);
     }
@@ -258,7 +301,10 @@ export default function MeScreen({
   }
 
   return (
-    <View style={styles.root}>
+    <SafeAreaView
+      edges={['top']}
+      style={[styles.root, { backgroundColor: theme.colors.background }]}
+    >
       <ScrollView
       style={[styles.container, { backgroundColor: theme.colors.background }]}
       contentContainerStyle={styles.content}
@@ -410,20 +456,26 @@ export default function MeScreen({
           <Input label="密码" value={webDav.password} onChangeText={password => setWebDav(value => ({ ...value, password }))} secureTextEntry autoCapitalize="none" />
           <Input label="云端目录" value={webDav.directory} onChangeText={directory => setWebDav(value => ({ ...value, directory }))} autoCapitalize="none" />
           <View style={styles.backupActions}>
-            <Button title="测试连接" variant="outline" size="small" loading={cloudBusy} disabled={cloudBusy} onPress={() => { handleTestWebDav(); }} style={styles.backupAction} />
+            <Button title="刷新备份" variant="outline" size="small" loading={cloudBusy} disabled={cloudBusy} onPress={() => { connectAndRefreshWebDav(); }} style={styles.backupAction} />
             <Button title="上传备份" size="small" loading={cloudBusy} disabled={!libraryHydrated || cloudBusy} onPress={() => { handleUploadWebDav(); }} style={styles.backupAction} />
           </View>
           <Pressable disabled={cloudBusy} onPress={() => { handleClearWebDavCredentials(); }} style={styles.clearCredentials}>
             <Text style={{ color: theme.colors.danger, fontSize: 13 }}>清除已保存的 WebDAV 凭据</Text>
           </Pressable>
+          {cloudFilesError ? (
+            <Text style={[styles.cloudFilesStatus, { color: theme.colors.danger }]}>备份列表加载失败：{cloudFilesError}</Text>
+          ) : cloudFilesLoaded && cloudFiles.length === 0 ? (
+            <Text style={[styles.cloudFilesStatus, { color: theme.colors.textSecondary }]}>云端暂无备份</Text>
+          ) : null}
           {cloudFiles.map(file => (
             <View key={file.url} style={[styles.cloudFile, { borderTopColor: theme.colors.border }]}>
-              <View style={styles.cloudFileInfo}>
+              <Pressable disabled={cloudBusy} style={styles.cloudFileInfo} onPress={() => { handlePreviewWebDav(file); }}>
                 <Text numberOfLines={1} style={{ color: theme.colors.text }}>{file.name}</Text>
                 <Text variant="caption" color="textSecondary">{file.modifiedAt ? new Date(file.modifiedAt).toLocaleString() : '未知时间'} · {(file.size / 1024).toFixed(1)} KB</Text>
-              </View>
-              <Pressable onPress={() => { handleDownloadWebDav(file); }}><Icon name="download" size={20} color={theme.colors.accent} /></Pressable>
-              <Pressable onPress={() => { handleDeleteWebDav(file); }} style={styles.cloudDelete}><Icon name="delete-outline" size={20} color={theme.colors.danger} /></Pressable>
+              </Pressable>
+              <Pressable disabled={cloudBusy} onPress={() => { handlePreviewWebDav(file); }}><Icon name="visibility" size={20} color={theme.colors.textSecondary} /></Pressable>
+              <Pressable disabled={cloudBusy} style={styles.cloudRestore} onPress={() => { handleDownloadWebDav(file); }}><Icon name="download" size={20} color={theme.colors.accent} /></Pressable>
+              <Pressable disabled={cloudBusy} onPress={() => { handleDeleteWebDav(file); }} style={styles.cloudDelete}><Icon name="delete-outline" size={20} color={theme.colors.danger} /></Pressable>
             </View>
           ))}
         </View> : null}
@@ -508,6 +560,54 @@ export default function MeScreen({
       </View>
       </ScrollView>
 
+      {previewBackup ? (
+        <View style={styles.restoreBackdrop}>
+          <View style={[styles.previewDialog, { backgroundColor: theme.colors.surface }, theme.shadows.md]}>
+            <Text style={[styles.restoreTitle, { color: theme.colors.text }]}>备份内容</Text>
+            <Text numberOfLines={1} style={[styles.previewFileName, { color: theme.colors.textSecondary }]}>{previewBackup.name}</Text>
+            <Text style={[styles.previewSummary, { color: theme.colors.textSecondary }]}>共 {previewBackup.backup.meta.books.length} 本书 · 点击书名查看章节</Text>
+            <ScrollView style={styles.previewList} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+              {previewBackup.backup.meta.books.map(book => {
+                const chapters = previewBackup.backup.chapters[book.id] ?? [];
+                const expanded = previewBookId === book.id;
+                return (
+                  <View key={book.id} style={[styles.previewBook, { borderBottomColor: theme.colors.border }]}>
+                    <Pressable style={styles.previewBookHeader} onPress={() => setPreviewBookId(expanded ? null : book.id)}>
+                      <View style={styles.previewBookInfo}>
+                        <Text numberOfLines={1} style={[styles.previewBookTitle, { color: theme.colors.text }]}>{book.title}</Text>
+                        <Text variant="caption" color="textSecondary">{book.author || '未知作者'} · {chapters.length} 章</Text>
+                      </View>
+                      <Icon name={expanded ? 'expand-less' : 'expand-more'} size={22} color={theme.colors.textSecondary} />
+                    </Pressable>
+                    {expanded ? (
+                      <View style={styles.previewChapters}>
+                        {chapters.length > 0 ? chapters.map((chapter, index) => (
+                          <Text key={chapter.id} numberOfLines={1} style={[styles.previewChapter, { color: theme.colors.textSecondary }]}>{index + 1}. {chapter.title}</Text>
+                        )) : (
+                          <Text style={[styles.previewChapter, { color: theme.colors.textSecondary }]}>此备份未包含章节数据</Text>
+                        )}
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </ScrollView>
+            <View style={styles.restoreActions}>
+              <Button title="关闭" variant="outline" size="small" onPress={() => setPreviewBackup(null)} style={styles.restoreAction} />
+              <Button
+                title="恢复此备份"
+                size="small"
+                onPress={() => {
+                  setPendingRestore(previewBackup);
+                  setPreviewBackup(null);
+                }}
+                style={styles.restoreAction}
+              />
+            </View>
+          </View>
+        </View>
+      ) : null}
+
       {pendingRestore ? (
         <View style={styles.restoreBackdrop}>
           <View
@@ -557,7 +657,7 @@ export default function MeScreen({
           </View>
         </Pressable>
       ) : null}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -616,6 +716,8 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: SERIF_FONT,
     fontSize: 25,
+    // Songti SC 在 iOS 真机上的上沿度量更高，显式行高避免粗体标题被 Text 容器裁切。
+    lineHeight: 36,
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
     letterSpacing: 0.5,
   },
@@ -728,8 +830,20 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   cloudFileInfo: { flex: 1, marginRight: 12 },
+  cloudRestore: { marginLeft: 14 },
+  previewDialog: { borderRadius: 8, maxHeight: '78%', maxWidth: 400, padding: 20, width: '100%' },
+  previewFileName: { fontSize: 12, marginTop: 6 },
+  previewSummary: { fontSize: 13, marginTop: 8 },
+  previewList: { flexShrink: 1, marginTop: 12 },
+  previewBook: { borderBottomWidth: 1, paddingVertical: 8 },
+  previewBookHeader: { alignItems: 'center', flexDirection: 'row', minHeight: 42 },
+  previewBookInfo: { flex: 1, marginRight: 8 },
+  previewBookTitle: { fontSize: 14, fontWeight: '600' },
+  previewChapters: { paddingBottom: 6, paddingLeft: 10, paddingRight: 24 },
+  previewChapter: { fontSize: 12, lineHeight: 20 },
   cloudDelete: { marginLeft: 14 },
   clearCredentials: { alignItems: 'center', paddingTop: 6, paddingBottom: 8 },
+  cloudFilesStatus: { fontSize: 13, lineHeight: 19, paddingVertical: 12, textAlign: 'center' },
   restoreBackdrop: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

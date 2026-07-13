@@ -703,7 +703,7 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: SERIF_FONT,
     fontSize: 25,
-    lineHeight: 33,
+    lineHeight: 36,
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
     letterSpacing: 0.5,
   },

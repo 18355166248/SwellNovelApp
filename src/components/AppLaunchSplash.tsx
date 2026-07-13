@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Animated,
   Image,
-  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -53,11 +52,6 @@ export function AppLaunchSplash({ onFinished }: Props) {
         dark ? styles.darkBackground : styles.paperBackground,
         { opacity },
       ]}>
-      <StatusBar
-        animated
-        backgroundColor={dark ? INK : PAPER}
-        barStyle={dark ? 'light-content' : 'dark-content'}
-      />
       <View style={[styles.lockup, horizontal && styles.horizontalLockup]}>
         <Image
           accessibilityIgnoresInvertColors

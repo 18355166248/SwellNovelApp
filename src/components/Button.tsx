@@ -6,6 +6,7 @@ import {
   ViewStyle,
   TextStyle,
   Animated,
+  StyleProp,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 
@@ -16,7 +17,7 @@ interface ButtonProps {
   size?: 'small' | 'medium' | 'large';
   disabled?: boolean;
   loading?: boolean;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   textStyle?: TextStyle;
 }
 
@@ -96,12 +97,13 @@ export const Button: React.FC<ButtonProps> = ({
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
+      // flex、宽度和外边距必须作用在横向布局的直接子节点；放到动画层会在 iOS 弹窗中被压成零宽。
+      style={style}
       android_ripple={{ color: theme.colors.primary }}>
       <Animated.View
         style={[
           getButtonStyle(),
           { transform: [{ scale }] },
-          style,
         ]}
         onTouchStart={() => {
           if (disabled || loading) return;
