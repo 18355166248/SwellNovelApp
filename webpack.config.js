@@ -139,8 +139,13 @@ module.exports = (_env, argv) => {
       // 即使 header 完全伪装成手机端也会返回 403 challenge。
       // 改用 curl 子进程转发——curl 的 TLS 指纹被 Cloudflare 放行。
       setupMiddlewares: (middlewares, _devServer) => {
-        // 白名单：只代理已登记的书源域名，避免变成开放代理被滥用。新增书源在此加一条。
-        const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i, /(^|\.)mingzw\.net$/i];
+        // 白名单：只代理已登记书源和固定搜索引擎，避免变成开放代理被滥用。
+        const ALLOWED_HOSTS = [
+          /(^|\.)bookshuku\.org$/i,
+          /(^|\.)mingzw\.net$/i,
+          /^html\.duckduckgo\.com$/i,
+          /^www\.bing\.com$/i,
+        ];
         const MOBILE_UA =
           'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
 
@@ -161,10 +166,18 @@ module.exports = (_env, argv) => {
             execFile(
               'curl',
               [
-                '-s', '-L', '--max-redirs', '3',
-                '--connect-timeout', '10', '--max-time', '15',
-                '-H', `User-Agent: ${MOBILE_UA}`,
-                '-H', 'Accept: text/html',
+                '-s',
+                '-L',
+                '--max-redirs',
+                '3',
+                '--connect-timeout',
+                '10',
+                '--max-time',
+                '15',
+                '-H',
+                `User-Agent: ${MOBILE_UA}`,
+                '-H',
+                'Accept: text/html',
                 target,
               ],
               { timeout: 20000, maxBuffer: 10 * 1024 * 1024 },

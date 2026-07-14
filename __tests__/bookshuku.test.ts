@@ -59,10 +59,10 @@ ${Array.from({ length: 491 }, (_, i) => {
     seq === 1
       ? '第一章'
       : seq === 101
-        ? '第九十三章'
-        : seq === 491
-          ? '第四百五十章'
-          : `第${seq}章`;
+      ? '第九十三章'
+      : seq === 491
+      ? '第四百五十章'
+      : `第${seq}章`;
   return `<li><a href="http://wap.bookshuku.org/read/160297_${seq}.html">${title}</a></li>`;
 }).join('')}
 </ul>
@@ -75,7 +75,9 @@ const SPARSE_LATEST_CATALOG = `
 ${Array.from(
   { length: 11 },
   (_, i) =>
-    `<li><a href="http://wap.bookshuku.org/read/160297_${690 + i}.html">第${690 + i}章</a></li>`,
+    `<li><a href="http://wap.bookshuku.org/read/160297_${690 + i}.html">第${
+      690 + i
+    }章</a></li>`,
 ).join('')}
 </ul>
 `;
@@ -86,7 +88,9 @@ const EQUAL_LEN_BAD_CATALOG = `
 ${Array.from(
   { length: 491 },
   (_, i) =>
-    `<li><a href="http://wap.bookshuku.org/read/160297_${i + 1}.html">分节阅读 ${i + 1}</a></li>`,
+    `<li><a href="http://wap.bookshuku.org/read/160297_${
+      i + 1
+    }.html">分节阅读 ${i + 1}</a></li>`,
 ).join('')}
 </ul>
 `;
@@ -96,7 +100,9 @@ const BAD_SPLIT_CATALOG = `
 ${Array.from(
   { length: 11 },
   (_, i) =>
-    `<li><a href="http://wap.bookshuku.org/read/160297_${i + 1}.html">分节阅读 ${i + 1}</a></li>`,
+    `<li><a href="http://wap.bookshuku.org/read/160297_${
+      i + 1
+    }.html">分节阅读 ${i + 1}</a></li>`,
 ).join('')}
 </ul>
 `;
@@ -106,12 +112,17 @@ const DESKTOP_FULL_CATALOG = `
 ${Array.from(
   { length: 701 },
   (_, i) =>
-    `<li><a href="http://www.bookshuku.org/read/160297_${i + 1}.html">捞尸人 第${i + 1}章</a></li>`,
+    `<li><a href="http://www.bookshuku.org/read/160297_${
+      i + 1
+    }.html">捞尸人 第${i + 1}章</a></li>`,
 ).join('')}
 </ul>
 `;
 
-const LONG = '这一段正文用于测试章节分页加载完整，避免因为测试正文太短被当成无效页面。'.repeat(8);
+const LONG =
+  '这一段正文用于测试章节分页加载完整，避免因为测试正文太短被当成无效页面。'.repeat(
+    8,
+  );
 const CH1_P1 = `
 <div class="read-top">
   <li class="catalogue"><a href="http://wap.bookshuku.org/read/160297.html"><span>目录</span></a></li>
@@ -253,7 +264,9 @@ describe('bookshukuSource', () => {
       if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
       throw new Error(`unexpected url ${url}`);
     });
-    mockFetchWebViewHttpText.mockRejectedValueOnce(new Error('webview timeout'));
+    mockFetchWebViewHttpText.mockRejectedValueOnce(
+      new Error('webview timeout'),
+    );
 
     await expect(
       bookshukuSource.parseCatalog({
@@ -265,6 +278,27 @@ describe('bookshukuSource', () => {
     ).rejects.toThrow('目录解析不完整');
   });
 
+  it('parseCatalog 接受完整的分节阅读目录，并在阅读时再回填章节标题', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith('/read/160297.html')) return EQUAL_LEN_BAD_CATALOG;
+      if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
+      throw new Error(`unexpected url ${url}`);
+    });
+    mockFetchWebViewHttpText.mockRejectedValueOnce(
+      new Error('webview timeout'),
+    );
+
+    const chapters = await bookshukuSource.parseCatalog({
+      sourceBookId: '160297',
+      title: '捞尸人',
+      author: '纯洁滴小龙',
+      catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+    });
+
+    expect(chapters).toHaveLength(491);
+    expect(chapters[0].title).toBe('分节阅读 1');
+  });
+
   it('parseCatalog wap 占位目录失败时用桌面域名完整目录兜底，并转回 wap URL', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.startsWith('http://www.bookshuku.org/read/160297.html')) {
@@ -274,7 +308,9 @@ describe('bookshukuSource', () => {
       if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
       throw new Error(`unexpected url ${url}`);
     });
-    mockFetchWebViewHttpText.mockRejectedValueOnce(new Error('webview timeout'));
+    mockFetchWebViewHttpText.mockRejectedValueOnce(
+      new Error('webview timeout'),
+    );
 
     const chapters = await bookshukuSource.parseCatalog({
       sourceBookId: '160297',

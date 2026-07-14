@@ -38,7 +38,13 @@ app.use(
 // Cloudflare 通过 JA3/TLS 指纹拦截 Node.js http 模块的请求（即使 header
 // 完全伪装成手机端也返回 403 challenge）。curl 的 TLS 指纹被放行，因此用
 // 子进程调用 curl 来转发上游请求。
-const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i, /(^|\.)mingzw\.net$/i];
+const ALLOWED_HOSTS = [
+  /(^|\.)bookshuku\.org$/i,
+  /(^|\.)mingzw\.net$/i,
+  // 搜索页只用固定引擎定位已登记书源，仍不是开放代理。
+  /^html\.duckduckgo\.com$/i,
+  /^www\.bing\.com$/i,
+];
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 ' +
@@ -49,7 +55,9 @@ app.use('/proxy', (req, res) => {
   const m = /^\/(https?)\/([^/]+)(\/.*)?$/.exec(req.url || '');
   const host = m && m[2].toLowerCase();
   if (!host || !ALLOWED_HOSTS.some(re => re.test(host))) {
-    res.status(host ? 403 : 400).type('text/plain')
+    res
+      .status(host ? 403 : 400)
+      .type('text/plain')
       .send(host ? 'Host not allowed' : 'Bad proxy path');
     return;
   }
@@ -58,12 +66,20 @@ app.use('/proxy', (req, res) => {
   execFile(
     'curl',
     [
-      '-s', '-L', '--max-redirs', '3',
-      '--connect-timeout', '10',
-      '--max-time', '25',
-      '-H', `User-Agent: ${MOBILE_UA}`,
-      '-H', 'Accept: text/html',
-      '-H', 'Accept-Encoding:',
+      '-s',
+      '-L',
+      '--max-redirs',
+      '3',
+      '--connect-timeout',
+      '10',
+      '--max-time',
+      '25',
+      '-H',
+      `User-Agent: ${MOBILE_UA}`,
+      '-H',
+      'Accept: text/html',
+      '-H',
+      'Accept-Encoding:',
       target,
     ],
     { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
@@ -73,7 +89,8 @@ app.use('/proxy', (req, res) => {
         res.status(502).type('text/plain').send('Proxy upstream error');
         return;
       }
-      res.type('text/html; charset=utf-8')
+      res
+        .type('text/html; charset=utf-8')
         .set('cache-control', 'no-store')
         .send(stdout);
     },

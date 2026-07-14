@@ -6,14 +6,14 @@
  * 加入书架。多引擎兜底：先 DuckDuckGo（HTML 结构最稳），空则退回 Bing；原生请求
  * 走用户设备 IP，不受搜索引擎对数据中心 IP 的封锁。
  *
- * Web 端由 novelSearch.web.ts 覆盖为 no-op：浏览器有跨域限制、代理又是数据中心
- * IP 会被搜索引擎拦，因此 Web 保持“粘贴 URL 添加”模式。
+ * Web 端也会复用这套逻辑；浏览器请求由同源受限代理转发，避免 CORS 限制。
  */
 
 import { fetchHtml } from '../http/fetchHtml';
 import { SOURCES, resolveSource } from '../source/registry';
 import { decodeEntities, stripTags } from '../source/html';
 import { base64ToBytes } from '../../utils/decodeText';
+import { searchSourceCatalogs } from '../discover/sourceRecommendations';
 
 export const isNovelSearchSupported = true;
 
@@ -65,7 +65,8 @@ function decodeBingHref(href: string): string | null {
       while (b64.length % 4) b64 += '=';
       const bytes = base64ToBytes(b64);
       let out = '';
-      for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
+      for (let i = 0; i < bytes.length; i++)
+        out += String.fromCharCode(bytes[i]);
       return /^https?:\/\//i.test(out) ? out : null;
     } catch {
       return null;
@@ -95,10 +96,13 @@ const ENGINES: SearchEngine[] = [
   {
     name: 'bing',
     buildUrl: q =>
-      `https://www.bing.com/search?q=${encodeURIComponent(q)}&setlang=zh-CN&mkt=zh-CN`,
+      `https://www.bing.com/search?q=${encodeURIComponent(
+        q,
+      )}&setlang=zh-CN&mkt=zh-CN`,
     parse: html => {
       const hits: RawHit[] = [];
-      const re = /<h2>\s*<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+      // Bing 近版会输出 <h2 class="">，不能再假设 h2 没有属性。
+      const re = /<h2\b[^>]*>\s*<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(html)) !== null) {
         const url = decodeBingHref(m[1]);
@@ -142,12 +146,21 @@ export async function searchNovels(
   // 多引擎兜底：任一引擎拿到结果即返回；全部失败/空则返回空列表。
   for (const engine of ENGINES) {
     try {
-      const html = await fetchHtml(engine.buildUrl(query));
+      // 真机网络对搜索引擎的请求经常被限流或返回地区化页面，优先复用生产 curl
+      // 代理；代理不可用时 fetchHtml 会回退直连，避免单点故障。
+      const html = await fetchHtml(engine.buildUrl(query), undefined, {
+        preferLocalProxy: true,
+      });
       const results = filterToSources(engine.parse(html));
       if (results.length > 0) return results;
     } catch {
       // 该引擎失败，试下一个。
     }
   }
-  return [];
+  // 部分老书源页没有被搜索引擎收录，退回书库公开列表做轻量标题匹配。
+  return (await searchSourceCatalogs(kw)).map(item => ({
+    url: item.url,
+    title: item.title,
+    sourceName: item.sourceName,
+  }));
 }

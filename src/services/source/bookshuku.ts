@@ -28,7 +28,11 @@ import {
   ParsedChapterContent,
 } from './types';
 import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
-import { BAD_TITLE_CANDIDATES, HEADING_RE, isBlockedText } from './contentGuards';
+import {
+  BAD_TITLE_CANDIDATES,
+  HEADING_RE,
+  isBlockedText,
+} from './contentGuards';
 import { devInfo } from '../../utils/devLog';
 
 const HOST = 'wap.bookshuku.org';
@@ -166,7 +170,10 @@ async function fetchBookshukuProxyRenderedHtml(
 
 /** 抽取并清洗单个正文子页的纯文本。 */
 function cleanArticle(html: string): string {
-  const block = matchOne(/<div class="articlecon[^"]*">([\s\S]*?)<\/div>/, html);
+  const block = matchOne(
+    /<div class="articlecon[^"]*">([\s\S]*?)<\/div>/,
+    html,
+  );
   if (!block) return '';
   const text = decodeEntities(
     block
@@ -218,17 +225,24 @@ function normalizeReadTopTitle(raw?: string): string | undefined {
   const parts = title
     .split(/\s+/)
     .filter(part => part && !Object.values(KNOWN_TITLES).includes(part));
-  const candidate = parts.find(part => /第.+章|分节阅读/.test(part)) || parts[0];
+  const candidate =
+    parts.find(part => /第.+章|分节阅读/.test(part)) || parts[0];
   return normalizeTitle(candidate);
 }
 
 function extractChapterTitle(html: string): string | undefined {
   const candidates = [
     normalizeReadTopTitle(
-      matchOne(/<li[^>]+class="[^"]*\btitle\b[^"]*"[^>]*>([\s\S]*?)<\/li>/i, html),
+      matchOne(
+        /<li[^>]+class="[^"]*\btitle\b[^"]*"[^>]*>([\s\S]*?)<\/li>/i,
+        html,
+      ),
     ),
     matchOne(/<h1[^>]*>([\s\S]*?)<\/h1>/i, html),
-    matchOne(/<div[^>]+class="[^"]*(?:title|chapter)[^"]*"[^>]*>([\s\S]*?)<\/div>/i, html),
+    matchOne(
+      /<div[^>]+class="[^"]*(?:title|chapter)[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+      html,
+    ),
     matchOne(/<title[^>]*>([\s\S]*?)<\/title>/i, html),
   ];
   return candidates
@@ -312,11 +326,14 @@ async function fetchArticleText(
       length: html.length,
     });
   } catch (error) {
-    devInfo('[bookshuku] article direct failed, fallback source proxy WebView', {
-      url,
-      ms: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    devInfo(
+      '[bookshuku] article direct failed, fallback source proxy WebView',
+      {
+        url,
+        ms: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
     try {
       // 正文和目录保持同一条真机可用链路：通过代理首页里的同源 fetch 拿 curl HTML，
       // 避免 RN fetch 代理失败后又退回书源直连，导致章节页拿到提示页或超时。
@@ -327,11 +344,17 @@ async function fetchArticleText(
       });
       usedRenderedHtml = true;
     } catch (proxyError) {
-      devInfo('[bookshuku] article proxy WebView failed, fallback source WebView', {
-        url,
-        ms: Date.now() - startedAt,
-        error: proxyError instanceof Error ? proxyError.message : String(proxyError),
-      });
+      devInfo(
+        '[bookshuku] article proxy WebView failed, fallback source WebView',
+        {
+          url,
+          ms: Date.now() - startedAt,
+          error:
+            proxyError instanceof Error
+              ? proxyError.message
+              : String(proxyError),
+        },
+      );
       html = await fetchRenderedHtml(url, {
         timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
         waitMs: ARTICLE_WEBVIEW_WAIT_MS,
@@ -352,12 +375,15 @@ async function fetchArticleText(
   }
   if (!usedRenderedHtml) {
     try {
-      devInfo('[bookshuku] direct html has no valid article, retry WebView html', {
-        url,
-        ms: Date.now() - startedAt,
-        length: html.length,
-        challenge: isCloudflareChallenge(html),
-      });
+      devInfo(
+        '[bookshuku] direct html has no valid article, retry WebView html',
+        {
+          url,
+          ms: Date.now() - startedAt,
+          length: html.length,
+          challenge: isCloudflareChallenge(html),
+        },
+      );
       try {
         html = await fetchBookshukuProxyRenderedHtml(url, {
           timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
@@ -368,7 +394,10 @@ async function fetchArticleText(
         devInfo('[bookshuku] article proxy WebView html retry failed', {
           url,
           ms: Date.now() - startedAt,
-          error: proxyError instanceof Error ? proxyError.message : String(proxyError),
+          error:
+            proxyError instanceof Error
+              ? proxyError.message
+              : String(proxyError),
         });
         html = await fetchRenderedHtml(url, {
           timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
@@ -449,7 +478,8 @@ function normalizeReadUrl(raw: string): string {
 }
 
 function parseCatalogHtml(html: string, bookTitle?: string): ParsedChapter[] {
-  const re = /<a[^>]+href=["']([^"']*\/read\/\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/g;
+  const re =
+    /<a[^>]+href=["']([^"']*\/read\/\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/g;
   const chapters: ParsedChapter[] = [];
   const seen = new Set<string>();
   let m: RegExpExecArray | null;
@@ -473,17 +503,33 @@ function hasBadCatalogTitles(chapters: ParsedChapter[]): boolean {
   return chapters.some(chapter => isSyntheticSplitTitle(chapter.title));
 }
 
+function isTooShortSyntheticCatalog(chapters: ParsedChapter[]): boolean {
+  // “分节阅读 N”不是理想目录名，但部分完整 TXT 书籍只提供这种稳定序号。
+  // 短列表更可能是 Cloudflare 降级页，继续拒绝；长且连续的列表可先入库，正文
+  // 加载时会从页面标题/首句回填真实章节名，避免把可读作品整个拦在书架外。
+  return hasBadCatalogTitles(chapters) && chapters.length < 100;
+}
+
 function getBadCatalogTitle(chapters: ParsedChapter[]): string | undefined {
   return chapters.find(chapter => isSyntheticSplitTitle(chapter.title))?.title;
 }
 
-function parseTitleFromCatalogHtml(html: string, id: string): string | undefined {
+function parseTitleFromCatalogHtml(
+  html: string,
+  id: string,
+): string | undefined {
   const fromPath = matchOne(
-    new RegExp(`<a[^>]+href=["']https?:\\/\\/wap\\.bookshuku\\.org\\/bookinfo\\/${id}\\.html["'][^>]*>([\\s\\S]*?)<\\/a>`, 'i'),
+    new RegExp(
+      `<a[^>]+href=["']https?:\\/\\/wap\\.bookshuku\\.org\\/bookinfo\\/${id}\\.html["'][^>]*>([\\s\\S]*?)<\\/a>`,
+      'i',
+    ),
     html,
   );
   const fromTitle = matchOne(/<title>\s*([^_<\s]+)[\s\S]*?<\/title>/i, html);
-  const fromKeywords = matchOne(/<meta name="keywords" content="([^",]+)/i, html);
+  const fromKeywords = matchOne(
+    /<meta name="keywords" content="([^",]+)/i,
+    html,
+  );
   const title = fromPath || fromTitle || fromKeywords;
   return title ? decodeEntities(stripTags(title)).trim() : undefined;
 }
@@ -539,7 +585,10 @@ async function attemptCatalog(
       localProxyRetries: 2,
     });
     const chapters = parseCatalogHtml(html, bookTitle);
-    debug.push(`${label}Html=${html.length}`, `${label}Parsed=${chapters.length}`);
+    debug.push(
+      `${label}Html=${html.length}`,
+      `${label}Parsed=${chapters.length}`,
+    );
     return chapters;
   } catch (error) {
     debug.push(`${label}Error=${errMsg(error)}`);
@@ -636,29 +685,38 @@ export const bookshukuSource: BookSource = {
           priority: 'high',
         });
       } catch (proxyWebViewError) {
-        console.warn('[bookshuku] detail proxy WebView failed, try catalog title', {
-          url: detailUrl,
-          error:
-            proxyWebViewError instanceof Error
-              ? proxyWebViewError.message
-              : String(proxyWebViewError),
-        });
+        console.warn(
+          '[bookshuku] detail proxy WebView failed, try catalog title',
+          {
+            url: detailUrl,
+            error:
+              proxyWebViewError instanceof Error
+                ? proxyWebViewError.message
+                : String(proxyWebViewError),
+          },
+        );
       }
     }
 
     let title =
-      matchOne(/<div class="detail">[\s\S]*?<b>([\s\S]*?)<\/b>/, html)?.trim() ||
+      matchOne(
+        /<div class="detail">[\s\S]*?<b>([\s\S]*?)<\/b>/,
+        html,
+      )?.trim() ||
       matchOne(/<meta name="keywords" content="([^",]+)/, html)?.trim();
     if (!title) {
       try {
         // 详情页更容易触发挑战；目录页通常能直接返回，并且 path/title/meta 都带书名。
-        const catalogHtml = await fetchBookshukuHtml(`${ORIGIN}/read/${id}.html`, {
-          timeout: 8000,
-          renderedFallback: false,
-          preferLocalProxy: true,
-          requireLocalProxy: true,
-          localProxyRetries: 2,
-        });
+        const catalogHtml = await fetchBookshukuHtml(
+          `${ORIGIN}/read/${id}.html`,
+          {
+            timeout: 8000,
+            renderedFallback: false,
+            preferLocalProxy: true,
+            requireLocalProxy: true,
+            localProxyRetries: 2,
+          },
+        );
         title = parseTitleFromCatalogHtml(catalogHtml, id);
       } catch (error) {
         console.warn('[bookshuku] catalog title proxy fetch failed', {
@@ -695,7 +753,10 @@ export const bookshukuSource: BookSource = {
           priority: 'high',
         });
         title =
-          matchOne(/<div class="detail">[\s\S]*?<b>([\s\S]*?)<\/b>/, html)?.trim() ||
+          matchOne(
+            /<div class="detail">[\s\S]*?<b>([\s\S]*?)<\/b>/,
+            html,
+          )?.trim() ||
           matchOne(/<meta name="keywords" content="([^",]+)/, html)?.trim();
       } catch (error) {
         console.warn('[bookshuku] detail WebView title failed', {
@@ -707,8 +768,12 @@ export const bookshukuSource: BookSource = {
     if (!title) title = KNOWN_TITLES[id];
     if (!title) throw new Error('未能解析到书名，可能不是书籍详情页');
 
-    const author = matchOne(/作者：<a[^>]*>([\s\S]*?)<\/a>/, html)?.trim() || '佚名';
-    const rawCover = matchOne(/<div class="cover">\s*<img[^>]*src="([^"]+)"/, html);
+    const author =
+      matchOne(/作者：<a[^>]*>([\s\S]*?)<\/a>/, html)?.trim() || '佚名';
+    const rawCover = matchOne(
+      /<div class="cover">\s*<img[^>]*src="([^"]+)"/,
+      html,
+    );
     const cover = rawCover ? toAbsolute(ORIGIN, rawCover) : undefined;
     const description = matchOne(
       /<p class="intro">([\s\S]*?)<\/p>/,
@@ -728,7 +793,8 @@ export const bookshukuSource: BookSource = {
   },
 
   async parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]> {
-    const sourceBookId = info.sourceBookId || extractBookId(info.catalogUrl) || '';
+    const sourceBookId =
+      info.sourceBookId || extractBookId(info.catalogUrl) || '';
     const catalogUrl = normalizeCatalogUrl(info.catalogUrl, sourceBookId);
     const debug: string[] = [];
     const desktopUrl = `${DESKTOP_ORIGIN}/read/${sourceBookId}.html`;
@@ -756,10 +822,10 @@ export const bookshukuSource: BookSource = {
     }
     if (
       isSuspiciousPartialCatalog(chapters) ||
-      hasBadCatalogTitles(chapters)
+      isTooShortSyntheticCatalog(chapters)
     ) {
-      // 目录是书籍入库的基础数据，宁可提示重试，也不能把“分节阅读 11”
-      // 这类站点分页占位写进本地缓存，后续会污染详情页和阅读入口。
+      // 目录是书籍入库的基础数据，短“分节阅读 11”通常是站点降级占位，
+      // 不能写进本地缓存；完整长目录则在上面放行，供阅读时懒修正标题。
       const badTitle = getBadCatalogTitle(chapters);
       const reason = [
         `count=${chapters.length}`,
@@ -786,7 +852,9 @@ export const bookshukuSource: BookSource = {
     devInfo('[bookshuku] chapter start', { url });
     const firstPage = await fetchArticleText(url, options);
     const pageInfo = /第(\d+)\/(\d+)页/.exec(firstPage.html);
-    const currentPage = pageInfo ? parseInt(pageInfo[1], 10) : getReadPageNo(url);
+    const currentPage = pageInfo
+      ? parseInt(pageInfo[1], 10)
+      : getReadPageNo(url);
     const totalPages = pageInfo ? parseInt(pageInfo[2], 10) : undefined;
     const nextPageUrl = getNextReadPageUrl(
       url,
@@ -822,7 +890,8 @@ export const bookshukuSource: BookSource = {
     });
     return {
       content,
-      title: extractChapterTitle(firstPage.html) || inferTitleFromContent(content),
+      title:
+        extractChapterTitle(firstPage.html) || inferTitleFromContent(content),
       nextPageUrl: cursor,
       complete: !cursor,
     };
