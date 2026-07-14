@@ -1,5 +1,6 @@
 import {
   getChapterLanding,
+  getChapterLandingPage,
   getBoundaryTurn,
   isStaleScrollSync,
 } from '../src/utils/readerScrollGuard';
@@ -68,7 +69,15 @@ describe('readerScrollGuard', () => {
 
   it('lands on the previous chapter last page only for backward boundary navigation', () => {
     expect(getChapterLanding('prev')).toBe('last');
+    expect(getChapterLanding('prev', true)).toBe('last');
+    expect(getChapterLanding('prev', false)).toBe('first');
     expect(getChapterLanding('next')).toBe('first');
     expect(getChapterLanding('direct')).toBe('first');
+  });
+
+  it('calculates the target page before the new chapter list mounts', () => {
+    expect(getChapterLandingPage('first', 55)).toBe(0);
+    expect(getChapterLandingPage('last', 55)).toBe(54);
+    expect(getChapterLandingPage('last', 0)).toBe(0);
   });
 });

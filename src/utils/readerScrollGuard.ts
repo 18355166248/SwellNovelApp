@@ -51,6 +51,21 @@ export function isStaleScrollSync(
 
 export function getChapterLanding(
   intent: ChapterNavigationIntent = 'direct',
+  targetContentAvailable = true,
 ): ChapterLanding {
-  return intent === 'prev' ? 'last' : 'first';
+  // 返回上一章只有在正文已经就绪时才落末页；远程章先落首页，避免加载完成后
+  // 又做一次从首页到末页的远距离虚拟列表跳转。
+  return intent === 'prev' && targetContentAvailable ? 'last' : 'first';
+}
+
+/**
+ * 换章时首帧应该挂载的页码。上一章直接从末页创建列表，避免先露出首页再补滚；
+ * 下一章和目录直达则从首页开始。
+ */
+export function getChapterLandingPage(
+  landing: ChapterLanding,
+  pagesLength: number,
+): number {
+  if (landing !== 'last' || pagesLength <= 0) return 0;
+  return pagesLength - 1;
 }

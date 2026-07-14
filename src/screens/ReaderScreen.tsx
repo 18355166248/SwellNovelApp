@@ -14,6 +14,7 @@ import {
   BackHandler,
   Alert,
   useWindowDimensions,
+  InteractionManager,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,7 +57,10 @@ import {
   ReaderThemeKey,
 } from '../theme/readerThemes';
 import type { Chapter } from '../store/types/book';
-import { isBadChapterTitle, isBlockedText } from '../services/source/contentGuards';
+import {
+  isBadChapterTitle,
+  isBlockedText,
+} from '../services/source/contentGuards';
 import { SERIF_FONT } from '../theme/fonts';
 import { useReaderFontFamily } from '../services/fonts/useReaderFontFamily';
 import { FONTS, getFontDef } from '../theme/fontCatalog';
@@ -90,10 +94,12 @@ import {
 import {
   ChapterNavigationIntent,
   getChapterLanding,
+  getChapterLandingPage,
   getBoundaryTurn,
   isStaleScrollSync,
 } from '../utils/readerScrollGuard';
 import { resolveChapterSearchIndex } from '../utils/chapterSearch';
+import { getForwardPrefetchIndices } from '../utils/chapterPrefetch';
 import { useReaderGuards } from './reader/useReaderGuards';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -105,6 +111,22 @@ function isBlockedBookshukuText(content?: string): boolean {
   // 拦截页/广告卡片特征由 contentGuards 统一判定；这里再叠加“正文过短”这条
   // 阅读器专属规则:缓存里不足 200 字的正文按不可用处理,触发重新抓取。
   return isBlockedText(content) || content.replace(/\s+/g, '').length < 200;
+}
+
+function hasUsableChapterContent(
+  chapter: Chapter | undefined,
+  sourceName?: string,
+): boolean {
+  if (!chapter?.content) return false;
+  return (
+    sourceName !== 'bookshuku' ||
+    (chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
+      !isBlockedBookshukuText(chapter.content))
+  );
+}
+
+function paragraphsFromContent(content: string): string[] {
+  return content.split(/\n+/).filter(paragraph => paragraph.trim().length > 0);
 }
 
 function displayChapterTitle(chapter: Chapter, index: number): string {
@@ -185,13 +207,72 @@ function findReaderPageScrollNode(): HTMLElement | null {
 
 // onTextLayout 真实排版结果缓存：同章同排版参数只测一次。
 const measuredLinesCache = new Map<string, ReaderLine[]>();
+// 后续章节在交互空闲时先用跨端字符宽度表断行；真正展示后原生端仍会用
+// onTextLayout 的实测结果覆盖，兼顾切章速度和最终排版精度。
+const estimatedLinesCache = new Map<string, ReaderLine[]>();
 const MEASURED_CACHE_LIMIT = 16;
-function cacheMeasuredLines(key: string, lines: ReaderLine[]) {
-  if (measuredLinesCache.size >= MEASURED_CACHE_LIMIT) {
-    const oldest = measuredLinesCache.keys().next().value;
-    if (oldest != null) measuredLinesCache.delete(oldest);
+// 完整分页结果也要缓存。只缓存断行仍会在章节边界同步遍历所有行重新组页，
+// 大字号章节会占住 JS 线程，直接表现为手势结束时掉帧。
+const readerPagesCache = new Map<string, ReaderPageData[]>();
+const READER_PAGES_CACHE_LIMIT = 24;
+function cacheReaderLines(
+  cache: Map<string, ReaderLine[]>,
+  key: string,
+  lines: ReaderLine[],
+) {
+  if (cache.size >= MEASURED_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest != null) cache.delete(oldest);
   }
-  measuredLinesCache.set(key, lines);
+  cache.set(key, lines);
+}
+
+function readerLineCacheKey({
+  chapterId,
+  textLength,
+  maxWidth,
+  fontSize,
+  lineHeight,
+  fontFamily,
+}: {
+  chapterId: string;
+  textLength: number;
+  maxWidth: number;
+  fontSize: number;
+  lineHeight: number;
+  fontFamily?: string;
+}): string {
+  // 正文续载或解析修复后 chapter id 不变，必须带长度使旧断行缓存失效。
+  return `${chapterId}|${textLength}|${maxWidth}|${fontSize}|${lineHeight}|${
+    fontFamily || 'system'
+  }`;
+}
+
+function readerPagesCacheKey({
+  lineCacheKey,
+  measured,
+  lineHeight,
+  paraGap,
+  bodyHeight,
+  firstBodyHeight,
+}: {
+  lineCacheKey: string;
+  measured: boolean;
+  lineHeight: number;
+  paraGap: number;
+  bodyHeight: number;
+  firstBodyHeight: number;
+}): string {
+  return `${lineCacheKey}|${measured ? 'measured' : 'estimated'}|${lineHeight}|${paraGap}|${bodyHeight}|${firstBodyHeight}`;
+}
+
+function cacheReaderPages(key: string, pages: ReaderPageData[]) {
+  if (readerPagesCache.has(key)) readerPagesCache.delete(key);
+  if (readerPagesCache.size >= READER_PAGES_CACHE_LIMIT) {
+    const oldest = readerPagesCache.keys().next().value;
+    if (oldest != null) readerPagesCache.delete(oldest);
+  }
+  readerPagesCache.set(key, pages);
 }
 
 // 浮层进出场过渡：open 关闭后先播完退场动画再卸载，避免直接闪现/闪没。
@@ -236,10 +317,8 @@ export default function ReaderScreen() {
   const insets = useSafeAreaInsets();
   // 顶/底工具栏与进度提示按安全区避让刘海/灵动岛与底部手势条。
   // web 无状态栏/刘海，顶栏 44 的状态栏预留会变成大片空白，收到 12。
-  const topBarPad =
-    Platform.OS === 'web' ? 12 : Math.max(insets.top, 12) + 8;
-  const readerStatusTop =
-    Platform.OS === 'web' ? 10 : Math.max(insets.top, 8);
+  const topBarPad = Platform.OS === 'web' ? 12 : Math.max(insets.top, 12) + 8;
+  const readerStatusTop = Platform.OS === 'web' ? 10 : Math.max(insets.top, 8);
   // 正文标题必须落在常驻章节状态行下方；仅按安全区加偏移会在刘海屏上只剩
   // 1～2pt 间隔，大字号标题的字形上沿容易与状态行叠住。
   const readerTopPadding =
@@ -421,9 +500,10 @@ export default function ReaderScreen() {
   const pendingScrollPageRef = React.useRef<number | null>(null);
   const prevChapterIdRef = React.useRef<string | undefined>(undefined);
   // 续读：捕获打开时保存的页内偏移，仅在首个匹配章节应用一次。
-  const resumeRef = React.useRef<{ chapterId: string; position: number } | null>(
-    null,
-  );
+  const resumeRef = React.useRef<{
+    chapterId: string;
+    position: number;
+  } | null>(null);
   const resumeCapturedRef = React.useRef(false);
   if (!resumeCapturedRef.current && bookHistory) {
     resumeCapturedRef.current = true;
@@ -594,10 +674,7 @@ export default function ReaderScreen() {
   const progressPct =
     total > 0 ? Math.round(((chapterIndex + 1) / total) * 100) : 0;
   const paragraphs = React.useMemo(
-    () =>
-      (content || chapter?.content || '')
-        .split(/\n+/)
-        .filter(p => p.trim().length > 0),
+    () => paragraphsFromContent(content || chapter?.content || ''),
     [chapter?.content, content],
   );
   const chapterTextLength = React.useMemo(
@@ -663,13 +740,32 @@ export default function ReaderScreen() {
     const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
     // 断行随正文字体变化：不同字体字宽不同，缓存 key 必须带 bodyFont，
     // 否则切字体后仍复用旧字体的测量结果，断行/每页行数会对不上。
-    const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}|${bodyFont}`;
+    const lineCacheKey = readerLineCacheKey({
+      chapterId,
+      textLength: chapterTextLength,
+      maxWidth: pageMetrics.maxWidth,
+      fontSize: display.fontSize,
+      lineHeight: display.lineHeight,
+      fontFamily: bodyFont,
+    });
     // measureTick 是原生 onTextLayout 写入真实测量缓存后的失效版本，促使同一 cacheKey 重新取缓存。
+    const hasMeasuredLines = measuredLinesCache.has(lineCacheKey);
     const lines =
-      measureTick >= 0 && measuredLinesCache.has(cacheKey)
-        ? measuredLinesCache.get(cacheKey)!
-        : breakLines(paragraphs, pageMetrics.maxWidth, measure);
-    return buildPages({
+      measureTick >= 0 && hasMeasuredLines
+        ? measuredLinesCache.get(lineCacheKey)!
+        : estimatedLinesCache.get(lineCacheKey) ||
+          breakLines(paragraphs, pageMetrics.maxWidth, measure);
+    const pagesCacheKey = readerPagesCacheKey({
+      lineCacheKey,
+      measured: hasMeasuredLines,
+      lineHeight: pageMetrics.lineHeight,
+      paraGap: pageMetrics.paraGap,
+      bodyHeight: pageMetrics.bodyHeight,
+      firstBodyHeight: pageMetrics.firstBodyHeight,
+    });
+    const cachedPages = readerPagesCache.get(pagesCacheKey);
+    if (cachedPages) return cachedPages;
+    const builtPages = buildPages({
       chapterId,
       lines,
       lineHeight: pageMetrics.lineHeight,
@@ -677,9 +773,12 @@ export default function ReaderScreen() {
       bodyHeight: pageMetrics.bodyHeight,
       firstBodyHeight: pageMetrics.firstBodyHeight,
     });
+    cacheReaderPages(pagesCacheKey, builtPages);
+    return builtPages;
   }, [
     bookId,
     chapter?.id,
+    chapterTextLength,
     display.fontSize,
     display.lineHeight,
     pageMetrics.bodyHeight,
@@ -691,6 +790,20 @@ export default function ReaderScreen() {
     measureTick,
     bodyFont,
   ]);
+
+  // FlatList 在 data 换成新章节时会沿用旧横向 offset。首帧目标必须在列表挂载前
+  // 算好，并配合章节级 key 创建全新滚动容器，否则下一章会先露出末页，上一章
+  // 会先露出首页再远距离补滚。
+  const initialChapterPageIndex = React.useMemo(() => {
+    if (pendingLandRef.current === 'last') {
+      return getChapterLandingPage('last', pages.length);
+    }
+    const resume = resumeRef.current;
+    if (resume && resume.chapterId === chapter?.id && resume.position > 0) {
+      return findPageByOffset(pages, resume.position);
+    }
+    return 0;
+  }, [chapter?.id, pages]);
 
   React.useEffect(() => {
     const chapterChanged = prevChapterIdRef.current !== chapter?.id;
@@ -741,7 +854,9 @@ export default function ReaderScreen() {
       setPageIndex(landing);
       // 换章会复用同一个横向滚动容器。即使目标是首页，也要在新内容布局完成后
       // 显式滚到 0，否则上一章末页的 scrollLeft 会被浏览器夹到新章最后一页。
-      pendingScrollPageRef.current = landing;
+      // 原生端改为按章节重建 FlatList，并通过 initialScrollIndex 首帧直达；不再
+      // 等下一帧二次补位。Web 端仍保留 DOM 宽度就绪后的兜底定位。
+      pendingScrollPageRef.current = Platform.OS === 'web' ? landing : null;
       // 远距离落点先关吸附，避免程序滚动被 mandatory-snap 拽回；首页无需处理。
       if (Platform.OS === 'web') setSnapEnabled(landing <= 0);
       return;
@@ -782,7 +897,9 @@ export default function ReaderScreen() {
       ? `本章 ${Math.min(pageIndex + 1, pages.length)} / ${
           pages.length
         } 页 · ${pageProgressPct}%`
-      : `本章 ${Math.round(scrollChapterFraction * 100)}% · ${pageProgressPct}%`;
+      : `本章 ${Math.round(
+          scrollChapterFraction * 100,
+        )}% · ${pageProgressPct}%`;
 
   // 翻页/滚动落定后，把当前页内偏移与书籍进度持久化，重开时精确续读。
   React.useEffect(() => {
@@ -801,11 +918,10 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     if (!chapter) return;
     const tracker = contentRequestTrackerRef.current!;
-    const hasUsableCachedContent =
-      !!chapter.content &&
-      (book?.source?.name !== 'bookshuku' ||
-        (chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
-          !isBlockedBookshukuText(chapter.content)));
+    const hasUsableCachedContent = hasUsableChapterContent(
+      chapter,
+      book?.source?.name,
+    );
     if (hasUsableCachedContent) {
       tracker.reset();
       setStatus(prev => (prev === 'ready' ? prev : 'ready'));
@@ -818,17 +934,12 @@ export default function ReaderScreen() {
     let cancelled = false;
     const requestToken = tracker.start();
     setStatus('loading');
-    ensureRef.current(bookId, chapterIndex)
+    ensureRef
+      .current(bookId, chapterIndex)
       .then(filled => {
         if (cancelled || !tracker.isLatest(requestToken)) return;
         if (filled && filled.content) {
           setStatus('ready');
-          // 分页章节先保证本章后续页按需续载；只有本章完整后才预取下一章。
-          if (!filled.nextPageUrl && chapterIndex + 1 < chapters.length) {
-            ensureRef
-              .current(bookId, chapterIndex + 1, { background: true })
-              .catch(() => {});
-          }
         } else {
           setStatus('error');
         }
@@ -859,6 +970,120 @@ export default function ReaderScreen() {
   ]);
 
   React.useEffect(() => {
+    if (status !== 'ready' || !isOnline || !chapter) return;
+    let cancelled = false;
+    // 先让当前章完成首屏渲染，再顺序低优先级抓后续三章；串行可避免后台缓存
+    // 抢占书源/WebView，用户主动切章时则由请求合并逻辑直接复用在途结果。
+    const timer = setTimeout(() => {
+      (async () => {
+        const indices = getForwardPrefetchIndices(chapterIndex, total);
+        for (const index of indices) {
+          if (cancelled) return;
+          try {
+            await ensureRef.current(bookId, index, { background: true });
+          } catch (error) {
+            console.info('[ReaderScreen] background prefetch skipped', {
+              bookId,
+              index,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      })().catch(() => {});
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [bookId, chapter, chapterIndex, isOnline, status, total]);
+
+  React.useEffect(() => {
+    if (status !== 'ready' || settings.pageMode !== 'page') return;
+    const neighborIndices = [
+      ...(chapterIndex > 0 ? [chapterIndex - 1] : []),
+      ...getForwardPrefetchIndices(chapterIndex, total),
+    ];
+    const targets = neighborIndices
+      .map(index => chapters[index])
+      .filter((item): item is Chapter =>
+        hasUsableChapterContent(item, book?.source?.name),
+      );
+    if (targets.length === 0) return;
+
+    // 网络预取回填后，在所有触摸/导航动画结束再预断行；切到缓存章时直接复用，
+    // 原生端展示后仍会以 onTextLayout 的实测行数据校正。
+    const task = InteractionManager.runAfterInteractions(() => {
+      const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
+      targets.forEach(target => {
+        const targetParagraphs = paragraphsFromContent(target.content);
+        const textLength = targetParagraphs.reduce(
+          (sum, paragraph) => sum + Array.from(paragraph).length,
+          0,
+        );
+        const lineCacheKey = readerLineCacheKey({
+          chapterId: target.id,
+          textLength,
+          maxWidth: pageMetrics.maxWidth,
+          fontSize: display.fontSize,
+          lineHeight: display.lineHeight,
+          fontFamily: bodyFont,
+        });
+        if (
+          !measuredLinesCache.has(lineCacheKey) &&
+          !estimatedLinesCache.has(lineCacheKey)
+        ) {
+          cacheReaderLines(
+            estimatedLinesCache,
+            lineCacheKey,
+            breakLines(targetParagraphs, pageMetrics.maxWidth, measure),
+          );
+        }
+        const hasMeasuredLines = measuredLinesCache.has(lineCacheKey);
+        const lines = hasMeasuredLines
+          ? measuredLinesCache.get(lineCacheKey)!
+          : estimatedLinesCache.get(lineCacheKey)!;
+        const pagesCacheKey = readerPagesCacheKey({
+          lineCacheKey,
+          measured: hasMeasuredLines,
+          lineHeight: pageMetrics.lineHeight,
+          paraGap: pageMetrics.paraGap,
+          bodyHeight: pageMetrics.bodyHeight,
+          firstBodyHeight: pageMetrics.firstBodyHeight,
+        });
+        if (!readerPagesCache.has(pagesCacheKey)) {
+          cacheReaderPages(
+            pagesCacheKey,
+            buildPages({
+              chapterId: target.id,
+              lines,
+              lineHeight: pageMetrics.lineHeight,
+              paraGap: pageMetrics.paraGap,
+              bodyHeight: pageMetrics.bodyHeight,
+              firstBodyHeight: pageMetrics.firstBodyHeight,
+            }),
+          );
+        }
+      });
+    });
+    return () => task.cancel();
+  }, [
+    bodyFont,
+    book?.source?.name,
+    chapterIndex,
+    chapters,
+    display.fontSize,
+    display.lineHeight,
+    pageMetrics.bodyHeight,
+    pageMetrics.firstBodyHeight,
+    pageMetrics.lineHeight,
+    pageMetrics.maxWidth,
+    pageMetrics.paraGap,
+    settings.pageMode,
+    status,
+    total,
+  ]);
+
+  React.useEffect(() => {
     if (status === 'ready') unlockChapterTurnSoon();
   }, [chapter?.id, status, unlockChapterTurnSoon]);
 
@@ -873,28 +1098,24 @@ export default function ReaderScreen() {
   const goToChapter = React.useCallback(
     (idx: number, intent: ChapterNavigationIntent = 'direct') => {
       if (idx < 0 || idx >= total) return;
+      const targetReady = hasUsableChapterContent(
+        chapters[idx],
+        book?.source?.name,
+      );
       pendingLandRef.current =
-        getChapterLanding(intent) === 'last' ? 'last' : null;
+        getChapterLanding(intent, targetReady) === 'last' ? 'last' : null;
       lockChapterTurn();
       invalidateWebScrollSync();
-      setStatus('loading');
+      // 缓存命中时保持正文列表挂载并直接换数据，避免 loading 全屏闪断；只有
+      // 真正需要网络时才进入加载态。
+      setStatus(targetReady ? 'ready' : isOnline ? 'loading' : 'error');
       closeReadingChrome();
       if (transitionRef.current) clearTimeout(transitionRef.current);
       // 同一章节重试/重开时 chapter.id 不变；显式触发正文加载 effect，
       // 避免只进入 loading 覆盖层但没有重新发起 ensure 请求。
-      setContentReloadKey(key => key + 1);
+      if (!targetReady) setContentReloadKey(key => key + 1);
       openChapter(bookId, idx);
       // 目录点击要立即切章并启动正文抓取；抽屉退场动画不能阻塞网络请求，否则未缓存章节体感会多等一轮。
-      if (
-        chapters[idx]?.content &&
-        (book?.source?.name !== 'bookshuku' ||
-          (chapters[idx]?.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
-            !isBlockedBookshukuText(chapters[idx]?.content)))
-      ) {
-        setStatus('ready');
-      }
-      else if (isOnline) setStatus('loading');
-      else setStatus('error');
     },
     [
       bookId,
@@ -922,7 +1143,8 @@ export default function ReaderScreen() {
     pendingScrollPositionRef.current = resumePosition;
     pendingScrollPageRef.current = null;
     // 分页章续载只追加正文，不切换目录章节；加载完成后用旧正文末尾偏移定位到新分页开头。
-    loadNextPageRef.current(bookId, chapterIndex)
+    loadNextPageRef
+      .current(bookId, chapterIndex)
       .then(filled => {
         if (!tracker.isLatest(requestToken)) return;
         if (filled?.content) {
@@ -1223,7 +1445,9 @@ export default function ReaderScreen() {
             if (ne.locationX != null) {
               x = ne.locationX;
             } else if (ne.pageX != null && e?.currentTarget) {
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const rect = (
+                e.currentTarget as HTMLElement
+              ).getBoundingClientRect();
               x = ne.pageX - rect.left;
             } else {
               x = viewportWidth / 2;
@@ -1396,7 +1620,8 @@ export default function ReaderScreen() {
         goToChapter(chapterIndex - 1, 'prev');
       } else if (turn === 'next') {
         lockChapterTurn();
-        if (!loadCurrentChapterNextPage()) goToChapter(chapterIndex + 1, 'next');
+        if (!loadCurrentChapterNextPage())
+          goToChapter(chapterIndex + 1, 'next');
       }
     },
     [
@@ -1471,6 +1696,7 @@ export default function ReaderScreen() {
         (settings.pageMode === 'page' ? (
           <>
             <FlatList
+              key={chapter?.id || bookId}
               ref={flatListRef}
               testID="reader-page-list"
               data={pages}
@@ -1491,6 +1717,7 @@ export default function ReaderScreen() {
               windowSize={3}
               removeClippedSubviews
               getItemLayout={getPageLayout}
+              initialScrollIndex={initialChapterPageIndex}
               onScrollBeginDrag={() => {
                 markUserWebScroll();
                 setToolbarVisible(false);
@@ -1515,11 +1742,18 @@ export default function ReaderScreen() {
                 }}
                 onTextLayout={e => {
                   const chapterId = chapter?.id || bookId;
-                  const cacheKey = `${chapterId}|${pageMetrics.maxWidth}|${display.fontSize}|${display.lineHeight}|${bodyFont}`;
+                  const cacheKey = readerLineCacheKey({
+                    chapterId,
+                    textLength: chapterTextLength,
+                    maxWidth: pageMetrics.maxWidth,
+                    fontSize: display.fontSize,
+                    lineHeight: display.lineHeight,
+                    fontFamily: bodyFont,
+                  });
                   if (measuredLinesCache.has(cacheKey)) return;
                   const lineTexts = e.nativeEvent.lines.map(l => l.text);
                   const lines = linesFromTextLayout(paragraphs, lineTexts);
-                  cacheMeasuredLines(cacheKey, lines);
+                  cacheReaderLines(measuredLinesCache, cacheKey, lines);
                   setMeasureTick(t => t + 1);
                 }}
               >
@@ -1610,8 +1844,8 @@ export default function ReaderScreen() {
                     {chapter?.nextPageUrl
                       ? '继续本章 · 下一页'
                       : chapterIndex >= total - 1
-                        ? '已是最新章节'
-                        : `下一章 · ${chapters[chapterIndex + 1]?.title}`}
+                      ? '已是最新章节'
+                      : `下一章 · ${chapters[chapterIndex + 1]?.title}`}
                   </Text>
                 </Pressable>
               </View>
@@ -1703,19 +1937,11 @@ export default function ReaderScreen() {
       >
         <Text
           numberOfLines={1}
-          style={[
-            styles.readerStatusChapter,
-            { color: display.theme.sub },
-          ]}
+          style={[styles.readerStatusChapter, { color: display.theme.sub }]}
         >
           {topChapterLabel}
         </Text>
-        <Text
-          style={[
-            styles.readerStatusTime,
-            { color: display.theme.sub },
-          ]}
-        >
+        <Text style={[styles.readerStatusTime, { color: display.theme.sub }]}>
           {clockText}
         </Text>
       </View>
@@ -2250,7 +2476,9 @@ export default function ReaderScreen() {
                   marginTop: 3,
                 }}
               >
-                {drawerTab === 'toc' ? `共 ${total} 章` : `共 ${bookmarks.length} 条书签`}
+                {drawerTab === 'toc'
+                  ? `共 ${total} 章`
+                  : `共 ${bookmarks.length} 条书签`}
               </Text>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                 {(['toc', 'marks'] as const).map(tab => {
@@ -2282,53 +2510,53 @@ export default function ReaderScreen() {
                 })}
               </View>
               {drawerTab === 'toc' && (
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                <View
-                  style={[
-                    styles.drawerSearch,
-                    { backgroundColor: display.chrome.field },
-                  ]}
-                >
-                  <Icon
-                    name="search"
-                    size={14}
-                    color={display.chrome.sheetSub}
-                  />
-                  <TextInput
-                    value={drawerQuery}
-                    onChangeText={setDrawerQuery}
-                    placeholder="搜索章节"
-                    placeholderTextColor={display.chrome.sheetSub}
-                    style={{
-                      flex: 1,
-                      color: display.chrome.sheetInk,
-                      fontSize: 12,
-                      padding: 0,
-                      marginLeft: 7,
-                    }}
-                  />
-                </View>
-                <Pressable
-                  onPress={() =>
-                    setDrawerOrder(o => (o === 'asc' ? 'desc' : 'asc'))
-                  }
-                  style={[
-                    styles.orderBtn,
-                    { borderColor: display.chrome.hair },
-                  ]}
-                >
-                  <Icon
-                    name="swap-vert"
-                    size={14}
-                    color={display.chrome.sheetInk}
-                  />
-                  <Text
-                    style={{ color: display.chrome.sheetInk, fontSize: 12 }}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <View
+                    style={[
+                      styles.drawerSearch,
+                      { backgroundColor: display.chrome.field },
+                    ]}
                   >
-                    {drawerOrder === 'asc' ? '正序' : '倒序'}
-                  </Text>
-                </Pressable>
-              </View>
+                    <Icon
+                      name="search"
+                      size={14}
+                      color={display.chrome.sheetSub}
+                    />
+                    <TextInput
+                      value={drawerQuery}
+                      onChangeText={setDrawerQuery}
+                      placeholder="搜索章节"
+                      placeholderTextColor={display.chrome.sheetSub}
+                      style={{
+                        flex: 1,
+                        color: display.chrome.sheetInk,
+                        fontSize: 12,
+                        padding: 0,
+                        marginLeft: 7,
+                      }}
+                    />
+                  </View>
+                  <Pressable
+                    onPress={() =>
+                      setDrawerOrder(o => (o === 'asc' ? 'desc' : 'asc'))
+                    }
+                    style={[
+                      styles.orderBtn,
+                      { borderColor: display.chrome.hair },
+                    ]}
+                  >
+                    <Icon
+                      name="swap-vert"
+                      size={14}
+                      color={display.chrome.sheetInk}
+                    />
+                    <Text
+                      style={{ color: display.chrome.sheetInk, fontSize: 12 }}
+                    >
+                      {drawerOrder === 'asc' ? '正序' : '倒序'}
+                    </Text>
+                  </Pressable>
+                </View>
               )}
             </View>
             {drawerTab === 'marks' ? (
@@ -2367,7 +2595,9 @@ export default function ReaderScreen() {
                     .map(({ bm, idx }) => (
                       <Pressable
                         key={bm.id}
-                        onPress={() => jumpToBookmark(bm.chapterId, bm.position)}
+                        onPress={() =>
+                          jumpToBookmark(bm.chapterId, bm.position)
+                        }
                         onLongPress={() =>
                           toggleBookmark(bookId, bm.chapterId, bm.position)
                         }
@@ -2449,9 +2679,7 @@ export default function ReaderScreen() {
                     >
                       <Text
                         style={{
-                          color: isCur
-                            ? NOVEL_ACCENT
-                            : display.chrome.sheetSub,
+                          color: isCur ? NOVEL_ACCENT : display.chrome.sheetSub,
                           fontSize: 12,
                           width: 34,
                         }}
@@ -2463,9 +2691,7 @@ export default function ReaderScreen() {
                         style={{
                           flex: 1,
                           fontSize: 13.5,
-                          color: isCur
-                            ? NOVEL_ACCENT
-                            : display.chrome.sheetInk,
+                          color: isCur ? NOVEL_ACCENT : display.chrome.sheetInk,
                           fontWeight: isCur ? '700' : '400',
                         }}
                       >

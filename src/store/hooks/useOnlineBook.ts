@@ -32,6 +32,9 @@ const BAD_CHAPTER_TITLES = new Set([
 ]);
 const ENSURE_CHAPTER_TIMEOUT_MS = 45000;
 const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// 阅读器后台预取与用户主动切章可能同时命中同一章。按章节合并在途请求，
+// 避免重复占用书源连接；前台切章会直接等待已经开始的预取结果。
+const chapterContentRequests = new Map<string, Promise<Chapter | null>>();
 
 function scheduleCache(bookId: string, chapters: Chapter[]) {
   const existing = cacheTimers.get(bookId);
@@ -65,7 +68,9 @@ function isBlockedBookshukuText(content: string): boolean {
     /复制链接到浏览器/.test(content) ||
     /Just a moment/i.test(content) ||
     /Enable JavaScript and cookies/i.test(content) ||
-    /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载|约爱社区/.test(normalized) ||
+    /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载|约爱社区/.test(
+      normalized,
+    ) ||
     /👁️/.test(content) ||
     normalized.length < 200
   );
@@ -79,13 +84,19 @@ function titleWithoutChapterPrefix(title: string): string {
 }
 
 function isBadChapterTitle(title: string): boolean {
-  const normalized = title.replace(/[>»›]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = title
+    .replace(/[>»›]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const suffix = titleWithoutChapterPrefix(normalized);
   return BAD_CHAPTER_TITLES.has(normalized) || BAD_CHAPTER_TITLES.has(suffix);
 }
 
 function isFallbackChapterTitle(title: string): boolean {
-  const normalized = title.replace(/[>»›]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = title
+    .replace(/[>»›]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   return (
     // bookshuku 的目录页经常只有阿拉伯数字占位标题；页面 <title> 返回的
     // “第四百五十章”这类中文数字章名反而是真实标题，不能在这里误判成兜底名。
@@ -128,7 +139,8 @@ function titleFromFirstSentence(content: string): string | undefined {
 
 function withChapterNumber(chapter: Chapter, title: string): string {
   const normalized = sanitizeChapterTitleCandidate(title);
-  if (!normalized) return sanitizeChapterTitleCandidate(chapter.title) || '章节';
+  if (!normalized)
+    return sanitizeChapterTitleCandidate(chapter.title) || '章节';
   const chapterHeading =
     /^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/.exec(
       normalized,
@@ -205,7 +217,9 @@ export const useAddOnlineBook = () => {
           .map(c => [c.sourceUrl!, c.content]),
       );
       const mergedChapters = chapters.map(c => {
-        const cachedContent = c.sourceUrl ? contentBySource.get(c.sourceUrl) : undefined;
+        const cachedContent = c.sourceUrl
+          ? contentBySource.get(c.sourceUrl)
+          : undefined;
         return cachedContent
           ? { ...c, content: cachedContent, wordCount: cachedContent.length }
           : c;
@@ -343,144 +357,181 @@ export const useEnsureChapterContent = () => {
       return chapter;
     }
     if (!book?.source || !chapter.sourceUrl) return chapter; // 非在线书或缺 URL：按空正文处理
+    const bookSource = book.source;
 
-    // 注册书源（bookshuku/mingzw…）走 fetch 解析；浏览器识别源（source 为站点 host、
-    // 无注册书源）走隐藏 WebView 取渲染后正文。
-    const source = getSourceById(book.source.name);
-    let content: string;
-    let parsedMeta: Pick<
-      ReturnType<typeof unpackChapterContent>,
-      'nextPageUrl' | 'complete'
-    > = {};
-    if (source) {
-      const needsCatalogRefresh =
-        source.id === 'bookshuku' &&
-        chapters &&
-        isBadBookshukuCatalog(chapters);
-      if (needsCatalogRefresh) {
-        console.info('[useOnlineBook] refresh stale catalog start', {
-          bookId,
-          index,
-          oldCount: chapters.length,
-        });
-        const metas = await source.parseCatalog({
-          sourceBookId: source.extractId(book.source.bookUrl) ?? '',
-          title: book.title,
-          author: book.author,
-          catalogUrl: book.source.bookUrl,
-        });
-        const contentBySource = new Map(
-          chapters
-            .filter(c => c.content && c.sourceUrl)
-            .map(c => [c.sourceUrl!, c.content]),
-        );
-        const refreshed = metas.map((m, i) => {
-          const cachedContent = contentBySource.get(m.url);
-          return {
-            id: `${bookId}-${i}`,
-            bookId,
-            title: m.title,
-            content: cachedContent ?? '',
-            order: i,
-            sourceUrl: m.url,
-            wordCount: cachedContent ? cachedContent.length : undefined,
-          };
-        });
-
-        // 兼容旧版本错误目录：打开章节时自愈，避免用户必须删书重加才能得到完整 754 章目录。
-        store.set(chaptersAtom, prev => ({ ...prev, [bookId]: refreshed }));
-        store.set(booksAtom, prev =>
-          prev.map(b =>
-            b.id === bookId
-              ? { ...b, totalChapters: refreshed.length, updatedAt: Date.now() }
-              : b,
-          ),
-        );
-        saveBookChapters(bookId, refreshed).catch(error => {
-          console.warn('[useOnlineBook] refresh stale catalog failed', error);
-        });
-        console.info('[useOnlineBook] refresh stale catalog done', {
-          bookId,
-          oldCount: chapters.length,
-          newCount: refreshed.length,
-          ms: Date.now() - startedAt,
-        });
-        chapters = refreshed;
-        chapter = refreshed[index];
-        if (!chapter?.sourceUrl) return chapter ?? null;
-      }
-      console.info('[useOnlineBook] parse chapter start', {
+    const requestKey = `${bookId}:${chapter.id}`;
+    const existingRequest = chapterContentRequests.get(requestKey);
+    if (existingRequest) {
+      console.info('[useOnlineBook] ensure join in-flight request', {
         bookId,
         index,
-        url: chapter.sourceUrl,
+        title: chapter.title,
+        background: !!options.background,
       });
-      const parsed = unpackChapterContent(
-        await withTimeout(
-          source.parseChapterContent(chapter.sourceUrl, {
+      return existingRequest;
+    }
+
+    const request = (async (): Promise<Chapter | null> => {
+      // 注册书源（bookshuku/mingzw…）走 fetch 解析；浏览器识别源（source 为站点 host、
+      // 无注册书源）走隐藏 WebView 取渲染后正文。
+      const source = getSourceById(bookSource.name);
+      let content: string;
+      let parsedMeta: Pick<
+        ReturnType<typeof unpackChapterContent>,
+        'nextPageUrl' | 'complete'
+      > = {};
+      if (source) {
+        const needsCatalogRefresh =
+          source.id === 'bookshuku' &&
+          chapters &&
+          isBadBookshukuCatalog(chapters);
+        if (needsCatalogRefresh) {
+          console.info('[useOnlineBook] refresh stale catalog start', {
+            bookId,
+            index,
+            oldCount: chapters.length,
+          });
+          const metas = await source.parseCatalog({
+            sourceBookId: source.extractId(bookSource.bookUrl) ?? '',
+            title: book.title,
+            author: book.author,
+            catalogUrl: bookSource.bookUrl,
+          });
+          const contentBySource = new Map(
+            chapters
+              .filter(c => c.content && c.sourceUrl)
+              .map(c => [c.sourceUrl!, c.content]),
+          );
+          const refreshed = metas.map((m, i) => {
+            const cachedContent = contentBySource.get(m.url);
+            return {
+              id: `${bookId}-${i}`,
+              bookId,
+              title: m.title,
+              content: cachedContent ?? '',
+              order: i,
+              sourceUrl: m.url,
+              wordCount: cachedContent ? cachedContent.length : undefined,
+            };
+          });
+
+          // 兼容旧版本错误目录：打开章节时自愈，避免用户必须删书重加才能得到完整 754 章目录。
+          store.set(chaptersAtom, prev => ({ ...prev, [bookId]: refreshed }));
+          store.set(booksAtom, prev =>
+            prev.map(b =>
+              b.id === bookId
+                ? {
+                    ...b,
+                    totalChapters: refreshed.length,
+                    updatedAt: Date.now(),
+                  }
+                : b,
+            ),
+          );
+          saveBookChapters(bookId, refreshed).catch(error => {
+            console.warn('[useOnlineBook] refresh stale catalog failed', error);
+          });
+          console.info('[useOnlineBook] refresh stale catalog done', {
+            bookId,
+            oldCount: chapters.length,
+            newCount: refreshed.length,
+            ms: Date.now() - startedAt,
+          });
+          chapters = refreshed;
+          chapter = refreshed[index];
+          if (!chapter?.sourceUrl) return chapter ?? null;
+        }
+        console.info('[useOnlineBook] parse chapter start', {
+          bookId,
+          index,
+          url: chapter.sourceUrl,
+        });
+        const sourceUrl = chapter.sourceUrl;
+        if (!sourceUrl) return chapter;
+        const parsed = unpackChapterContent(
+          await withTimeout(
+            source.parseChapterContent(sourceUrl, {
+              priority: options.background ? 'low' : 'high',
+            }),
+            ENSURE_CHAPTER_TIMEOUT_MS,
+            `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+          ),
+        );
+        content = parsed.content;
+        if (source.id === 'bookshuku' && isBlockedBookshukuText(content)) {
+          throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+        }
+        parsedMeta = {
+          nextPageUrl: parsed.nextPageUrl,
+          complete: parsed.complete,
+        };
+        chapter = {
+          ...chapter,
+          title: resolveChapterTitle(chapter, parsed.title, content),
+        };
+      } else {
+        const sourceUrl = chapter.sourceUrl;
+        if (!sourceUrl) return chapter;
+        const raw = await withTimeout(
+          fetchRenderedContent(sourceUrl, {
             priority: options.background ? 'low' : 'high',
           }),
           ENSURE_CHAPTER_TIMEOUT_MS,
           `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-        ),
-      );
-      content = parsed.content;
-      if (source.id === 'bookshuku' && isBlockedBookshukuText(content)) {
-        throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+        );
+        content = cleanRenderedText(raw, chapter.title);
+        if (isBookshuku && isBlockedBookshukuText(content)) {
+          throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+        }
+        chapter = {
+          ...chapter,
+          title: resolveChapterTitle(chapter, undefined, content),
+        };
       }
-      parsedMeta = {
-        nextPageUrl: parsed.nextPageUrl,
-        complete: parsed.complete,
-      };
-      chapter = {
+
+      const filled: Chapter = {
         ...chapter,
-        title: resolveChapterTitle(chapter, parsed.title, content),
+        content,
+        wordCount: content.length,
+        contentVersion: isBookshuku
+          ? BOOKSHUKU_CONTENT_VERSION
+          : chapter.contentVersion,
+        nextPageUrl: parsedMeta.nextPageUrl,
+        contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
       };
-    } else {
-      const raw = await withTimeout(
-        fetchRenderedContent(chapter.sourceUrl),
-        ENSURE_CHAPTER_TIMEOUT_MS,
-        `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-      );
-      content = cleanRenderedText(raw, chapter.title);
-      if (isBookshuku && isBlockedBookshukuText(content)) {
-        throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+
+      let nextForBook: Chapter[] | undefined;
+      store.set(chaptersAtom, prev => {
+        const list = prev[bookId];
+        // 抓取期间列表可能被其它入口替换：以最新引用为准，按 id 精确回填。
+        if (!list) return prev;
+        const next = list.map(c => (c.id === filled.id ? filled : c));
+        nextForBook = next;
+        return { ...prev, [bookId]: next };
+      });
+      if (nextForBook) scheduleCache(bookId, nextForBook);
+
+      console.info('[useOnlineBook] ensure done', {
+        bookId,
+        index,
+        title: filled.title,
+        ms: Date.now() - startedAt,
+        length: filled.content.length,
+        contentComplete: filled.contentComplete,
+        nextPageUrl: filled.nextPageUrl,
+      });
+      return filled;
+    })();
+
+    chapterContentRequests.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      // 只清理由本次调用登记的 Promise，避免旧请求 finally 误删后来的重试。
+      if (chapterContentRequests.get(requestKey) === request) {
+        chapterContentRequests.delete(requestKey);
       }
-      chapter = {
-        ...chapter,
-        title: resolveChapterTitle(chapter, undefined, content),
-      };
     }
-
-    const filled: Chapter = {
-      ...chapter,
-      content,
-      wordCount: content.length,
-      contentVersion: isBookshuku ? BOOKSHUKU_CONTENT_VERSION : chapter.contentVersion,
-      nextPageUrl: parsedMeta.nextPageUrl,
-      contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
-    };
-
-    let nextForBook: Chapter[] | undefined;
-    store.set(chaptersAtom, prev => {
-      const list = prev[bookId];
-      // 抓取期间列表可能被其它入口替换：以最新引用为准，按 id 精确回填。
-      if (!list) return prev;
-      const next = list.map(c => (c.id === filled.id ? filled : c));
-      nextForBook = next;
-      return { ...prev, [bookId]: next };
-    });
-    if (nextForBook) scheduleCache(bookId, nextForBook);
-
-    console.info('[useOnlineBook] ensure done', {
-      bookId,
-      index,
-      title: filled.title,
-      ms: Date.now() - startedAt,
-      length: filled.content.length,
-      contentComplete: filled.contentComplete,
-      nextPageUrl: filled.nextPageUrl,
-    });
-    return filled;
   };
 };
 
@@ -619,7 +670,10 @@ export const useCacheWholeBook = () => {
         let parsed = unpackChapterContent(
           await source.parseChapterContent(ch.sourceUrl, { priority: 'low' }),
         );
-        if (source.id === 'bookshuku' && isBlockedBookshukuText(parsed.content)) {
+        if (
+          source.id === 'bookshuku' &&
+          isBlockedBookshukuText(parsed.content)
+        ) {
           throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
         }
         const firstParsedTitle = parsed.title;
@@ -660,7 +714,10 @@ export const useCacheWholeBook = () => {
         store.set(chaptersAtom, prev => {
           const list = prev[bookId];
           if (!list) return prev;
-          return { ...prev, [bookId]: list.map(c => (c.id === filled.id ? filled : c)) };
+          return {
+            ...prev,
+            [bookId]: list.map(c => (c.id === filled.id ? filled : c)),
+          };
         });
         done += 1;
         sinceFlush += 1;
@@ -699,9 +756,11 @@ export const useCheckBookUpdate = () => {
     const shouldReplaceCatalog =
       source.id === 'bookshuku' && isBadBookshukuCatalog(existing);
     if (!shouldReplaceCatalog && metas.length <= existing.length) {
-      store.set(booksAtom, prev => prev.map(b =>
-        b.id === bookId ? { ...b, lastUpdateCheckAt: Date.now() } : b,
-      ));
+      store.set(booksAtom, prev =>
+        prev.map(b =>
+          b.id === bookId ? { ...b, lastUpdateCheckAt: Date.now() } : b,
+        ),
+      );
       return 0;
     }
 
@@ -748,7 +807,8 @@ export const useCheckBookUpdate = () => {
               updatedAt: Date.now(),
               lastUpdateCheckAt: Date.now(),
               unreadUpdates: b.following
-                ? (b.unreadUpdates || 0) + Math.max(0, next.length - existing.length)
+                ? (b.unreadUpdates || 0) +
+                  Math.max(0, next.length - existing.length)
                 : b.unreadUpdates,
             }
           : b,
@@ -764,11 +824,17 @@ export const useCheckBookUpdate = () => {
 export const useToggleBookFollow = () => {
   const store = useStore();
   return (bookId: string) => {
-    store.set(booksAtom, prev => prev.map(book =>
-      book.id === bookId && book.source
-        ? { ...book, following: !book.following, unreadUpdates: book.following ? 0 : book.unreadUpdates || 0 }
-        : book,
-    ));
+    store.set(booksAtom, prev =>
+      prev.map(book =>
+        book.id === bookId && book.source
+          ? {
+              ...book,
+              following: !book.following,
+              unreadUpdates: book.following ? 0 : book.unreadUpdates || 0,
+            }
+          : book,
+      ),
+    );
   };
 };
 
@@ -776,7 +842,9 @@ export const useCheckFollowedBooks = () => {
   const store = useStore();
   const checkBookUpdate = useCheckBookUpdate();
   return async () => {
-    const followed = store.get(booksAtom).filter(book => book.source && book.following);
+    const followed = store
+      .get(booksAtom)
+      .filter(book => book.source && book.following);
     let updated = 0;
     let failed = 0;
     for (const book of followed) {
