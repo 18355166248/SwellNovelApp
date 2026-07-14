@@ -2665,6 +2665,9 @@ export default function ReaderScreen() {
                 }}
                 renderItem={({ item: { c, idx } }) => {
                   const isCur = idx === chapterIndex;
+                  const isCached =
+                    isOnline &&
+                    hasUsableChapterContent(c, book?.source?.name);
                   return (
                     <Pressable
                       onPress={() => goToChapter(idx)}
@@ -2686,17 +2689,28 @@ export default function ReaderScreen() {
                       >
                         {idx + 1}
                       </Text>
-                      <Text
-                        numberOfLines={1}
-                        style={{
-                          flex: 1,
-                          fontSize: 13.5,
-                          color: isCur ? NOVEL_ACCENT : display.chrome.sheetInk,
-                          fontWeight: isCur ? '700' : '400',
-                        }}
-                      >
-                        {displayChapterTitle(c, idx)}
-                      </Text>
+                      <View style={styles.chapterTitleGroup}>
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            flexShrink: 1,
+                            fontSize: 13.5,
+                            color: isCur
+                              ? NOVEL_ACCENT
+                              : display.chrome.sheetInk,
+                            fontWeight: isCur ? '700' : '400',
+                          }}
+                        >
+                          {displayChapterTitle(c, idx)}
+                        </Text>
+                        {isCached && (
+                          <View style={styles.chapterCacheBadge}>
+                            <Text style={styles.chapterCacheBadgeText}>
+                              已缓存
+                            </Text>
+                          </View>
+                        )}
+                      </View>
                       {isCur && (
                         <Text style={{ color: NOVEL_ACCENT, fontSize: 10 }}>
                           在读
@@ -2964,6 +2978,25 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 12,
     borderRadius: 8,
+  },
+  chapterTitleGroup: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  chapterCacheBadge: {
+    flexShrink: 0,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: 'rgba(46,107,94,.1)',
+  },
+  chapterCacheBadgeText: {
+    color: NOVEL_ACCENT,
+    fontSize: 9.5,
+    lineHeight: 12,
   },
   drawerFooterBtn: {
     marginHorizontal: 6,
