@@ -275,7 +275,32 @@ export const useAddRecognizedBook = () => {
     const bookId = `browser:${data.host}:${idFromUrl}`;
 
     const existing = store.get(booksAtom).find(b => b.id === bookId);
-    if (existing) return existing;
+    if (existing) {
+      // 同一详情页可能先导入第一页、后识别到完整分页目录；此时必须覆盖旧目录，
+      // 否则用户点击“加入书架”后仍只能看到旧的 40 章。
+      const chapters: Chapter[] = data.chapters.map((c, i) => ({
+        id: `${bookId}-${i}`,
+        bookId,
+        title: c.title,
+        content: '',
+        order: i,
+        sourceUrl: c.url,
+      }));
+      const updated: Book = {
+        ...existing,
+        title: data.title?.trim() || existing.title,
+        author: data.author?.trim() || existing.author,
+        cover: data.cover || existing.cover,
+        totalChapters: chapters.length,
+        updatedAt: Date.now(),
+      };
+      store.set(booksAtom, prev => prev.map(book => (book.id === bookId ? updated : book)));
+      store.set(chaptersAtom, prev => ({ ...prev, [bookId]: chapters }));
+      saveBookChapters(bookId, chapters).catch(error => {
+        console.warn('[useAddRecognizedBook] refresh catalog failed', error);
+      });
+      return updated;
+    }
 
     const now = Date.now();
     const book: Book = {

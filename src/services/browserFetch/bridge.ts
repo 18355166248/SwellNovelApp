@@ -163,6 +163,15 @@ function fetchRendered(
  */
 export function extractorJs(id: string): string {
   return `(function(){
+    function post(payload){
+      var message=JSON.stringify(payload);
+      try {
+        if(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ReactNativeWebView){
+          window.webkit.messageHandlers.ReactNativeWebView.postMessage(message); return;
+        }
+      } catch(ignore) {}
+      try { window.ReactNativeWebView.postMessage(message); } catch(ignore) {}
+    }
     try {
       var sels=['#chaptercontent','#content','.content','#booktext','#booktxt','#nr1','#nr','.read-content','.article-content','.txtnav','.neirong','.articlecon','.chapter-content','#htmlContent','#BookText','.RreadContent','#TXT','.txt','article'];
       function tlen(el){ return (el && el.innerText ? el.innerText.length : 0); }
@@ -176,9 +185,9 @@ export function extractorJs(id: string): string {
         }
       }
       var text = best ? (best.innerText||'') : '';
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:text }));
+      post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:text });
     } catch(e){
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) }));
+      post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) });
     }
   })(); true;`.replace(/__ID__/g, id);
 }
@@ -189,11 +198,20 @@ export function extractorJs(id: string): string {
  */
 export function htmlExtractorJs(id: string): string {
   return `(function(){
+    function post(payload){
+      var message=JSON.stringify(payload);
+      try {
+        if(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ReactNativeWebView){
+          window.webkit.messageHandlers.ReactNativeWebView.postMessage(message); return;
+        }
+      } catch(ignore) {}
+      try { window.ReactNativeWebView.postMessage(message); } catch(ignore) {}
+    }
     try {
       var html = document.documentElement ? document.documentElement.outerHTML : '';
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:html }));
+      post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:html });
     } catch(e){
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) }));
+      post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) });
     }
   })(); true;`.replace(/__ID__/g, id);
 }
@@ -206,13 +224,19 @@ function httpFetchExtractorJs(id: string, url: string): string {
   return `(function(){
     var target=${jsString(url)};
     function done(ok, text, error){
-      window.ReactNativeWebView.postMessage(JSON.stringify({
+      var message=JSON.stringify({
         type:'${CONTENT_MESSAGE}',
         id:'__ID__',
         ok:ok,
         text:text||'',
         error:error||''
-      }));
+      });
+      try {
+        if(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ReactNativeWebView){
+          window.webkit.messageHandlers.ReactNativeWebView.postMessage(message); return;
+        }
+      } catch(ignore) {}
+      try { window.ReactNativeWebView.postMessage(message); } catch(ignore) {}
     }
     try {
       fetch(target, {

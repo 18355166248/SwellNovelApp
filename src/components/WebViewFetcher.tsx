@@ -16,6 +16,7 @@ import {
   unregisterBrowserFetcher,
   FetchJob,
 } from '../services/browserFetch/bridge';
+import { isSameSiteNavigation } from '../services/browserFetch/navigationGuard';
 
 // react-native-webview 的 class 组件类型与 React 19 JSX 类型不完全兼容，以 any 渲染。
 const WebView = RNWebView as unknown as React.ComponentType<any>;
@@ -133,6 +134,11 @@ export function WebViewFetcher() {
         originWhitelist={['*']}
         userAgent={MOBILE_UA}
         source={job ? { uri: job.url } : EMPTY_SOURCE}
+        onShouldStartLoadWithRequest={(request: { url?: string }) => {
+          const current = jobRef.current;
+          // 隐藏抓取器不需要离开目标站；拦截广告重定向，保证回传的是目录/正文 DOM。
+          return !current || !request.url || isSameSiteNavigation(current.url, request.url);
+        }}
         onLoadEnd={() => {
           const cur = jobRef.current;
           if (!cur) return;

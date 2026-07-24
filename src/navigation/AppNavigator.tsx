@@ -16,7 +16,6 @@ import { RootStackParamList, MainTabParamList } from '../types/navigation';
 import { useTheme } from '../theme/ThemeContext';
 import { darkTheme } from '../theme/themes';
 import { Icon } from '../components';
-import { WebViewFetcher } from '../components/WebViewFetcher';
 
 // Screens
 import BookshelfScreen from '../screens/BookshelfScreen';
@@ -178,9 +177,6 @@ export default function AppNavigator() {
           <Stack.Screen name="WebDavBackup" component={WebDavBackupScreen} />
         </Stack.Navigator>
       </NavigationContainer>
-      {/* bookshuku 真机 Release 下需要常驻隐藏 WebView 兜底取完整目录/正文；
-          挂在根节点，保证弹窗导入和阅读页请求都能消费 browserFetch 队列。 */}
-      <WebViewFetcher />
     </SafeAreaProvider>
   );
 }
