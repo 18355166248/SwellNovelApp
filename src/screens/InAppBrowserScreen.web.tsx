@@ -2,7 +2,7 @@
  * 内置浏览器（Web 占位）。
  *
  * 浏览器不能内嵌外域站点（X-Frame-Options / CSP），且本功能依赖原生 WebView 的
- * DOM 注入，因此仅移动端可用。Web 端保持“粘贴 URL 添加网络书籍”。
+ * DOM 注入，因此仅移动端可用。Web 端可使用“搜书”页的全网搜索功能。
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -26,8 +26,7 @@ export default function InAppBrowserScreen() {
           maxWidth: 320,
         }}
       >
-        Web 端请在书架用「粘贴网址添加网络书籍」。移动端可在内置浏览器里浏览小说站点，
-        自动识别书籍并加入书架。
+        Web 端可使用“搜书”页搜索书名。移动端还可在内置浏览器里浏览小说站点，自动识别书籍并加入书架。
       </Text>
       <Pressable
         onPress={() => navigation.goBack()}

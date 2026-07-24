@@ -11,7 +11,7 @@ export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   Reader: { bookId: string; chapterId?: string; openDrawer?: boolean };
   BookDetail: { bookId: string };
-  InAppBrowser: undefined;
+  InAppBrowser: { initialUrl?: string } | undefined;
   Settings: undefined;
   WebDavBackup: undefined;
 };

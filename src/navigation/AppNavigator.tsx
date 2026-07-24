@@ -117,7 +117,7 @@ function MainTabs() {
           name="Search"
           component={SearchScreen}
           options={{
-            tabBarLabel: '搜索',
+            tabBarLabel: '搜书',
             tabBarIcon: ({ color, size }) => (
               <Icon name="search" color={color as string} size={size} />
             ),

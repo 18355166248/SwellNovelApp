@@ -11,7 +11,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../theme/ThemeContext';
-import { Text, Icon, LinearGradient } from '../components';
+import { Text, Icon } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
 import { RootStackParamList } from '../types/navigation';
 import { useAddOnlineBook, useAllBooks } from '../store';
@@ -20,10 +20,6 @@ import {
   fetchSourceRecommendations,
   SourceRecommendation,
 } from '../services/discover/sourceRecommendations';
-import {
-  CONTINUE_CARD_GRADIENT,
-  CONTINUE_CARD_GRADIENT_DIRECTION,
-} from '../theme/readerThemes';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -78,16 +74,10 @@ export default function DiscoverScreen() {
     [addOnlineBook, addingUrl, allBooks, navigation],
   );
 
-  // 本地阅读器无书城后端，「发现」改为呈现真实书库：按最近阅读/加入排序。
-  const recent = React.useMemo(
-    () =>
-      [...allBooks].sort(
-        (a, b) => (b.lastReadAt || b.addedAt) - (a.lastReadAt || a.addedAt),
-      ),
-    [allBooks],
-  );
-  const hero = recent[0];
-  const ranks = recent.filter(book => book.lastReadAt).slice(0, 6);
+  const ranks = allBooks
+    .filter(book => book.lastReadAt)
+    .sort((a, b) => (b.lastReadAt || 0) - (a.lastReadAt || 0))
+    .slice(0, 6);
   const updates = allBooks.filter(book => (book.unreadUpdates || 0) > 0);
   const recentlyAdded = [...allBooks]
     .sort((a, b) => b.addedAt - a.addedAt)
@@ -111,40 +101,6 @@ export default function DiscoverScreen() {
           </Text>
         </View>
       </View>
-
-      {hero ? (
-        <Pressable onPress={() => openDetail(hero.id)}>
-          <LinearGradient
-            colors={CONTINUE_CARD_GRADIENT}
-            {...CONTINUE_CARD_GRADIENT_DIRECTION}
-            style={styles.feature}
-          >
-            <View style={styles.featureDeco} pointerEvents="none" />
-            <Text style={styles.featureLabel}>
-              {hero.progress > 0 ? '继续阅读' : '开始阅读'}
-            </Text>
-            <Text style={styles.featureTitle} numberOfLines={1}>
-              {hero.title}
-            </Text>
-            <Text style={styles.featureDesc} numberOfLines={2}>
-              {`${hero.author || '本地导入'} · 已读 ${hero.progress}%`}
-            </Text>
-          </LinearGradient>
-        </Pressable>
-      ) : (
-        <LinearGradient
-          colors={CONTINUE_CARD_GRADIENT}
-          {...CONTINUE_CARD_GRADIENT_DIRECTION}
-          style={styles.feature}
-        >
-          <View style={styles.featureDeco} pointerEvents="none" />
-          <Text style={styles.featureLabel}>书架空空</Text>
-          <Text style={styles.featureTitle}>先去书架导入一本 TXT</Text>
-          <Text style={styles.featureDesc}>
-            导入后这里会展示你最近在读与书库速览。
-          </Text>
-        </LinearGradient>
-      )}
 
       <View style={styles.section}>
         <View style={styles.recommendHeading}>
@@ -419,41 +375,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  feature: {
-    marginHorizontal: 20,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  featureDeco: {
-    position: 'absolute',
-    right: -20,
-    top: -28,
-    width: 126,
-    height: 126,
-    borderRadius: 63,
-    backgroundColor: 'rgba(255,255,255,.05)',
-  },
-  featureLabel: {
-    color: 'rgba(255,255,255,.62)',
-    fontSize: 11,
-    letterSpacing: 1,
-  },
-  featureTitle: {
-    marginTop: 12,
-    color: '#fff',
-    fontFamily: SERIF_FONT,
-    fontSize: 19,
-    lineHeight: 25,
-    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
-  },
-  featureDesc: {
-    marginTop: 8,
-    color: 'rgba(255,255,255,.68)',
-    fontSize: 12.5,
-    lineHeight: 19,
   },
   section: { paddingHorizontal: 20, paddingTop: 22 },
   recommendHeading: {

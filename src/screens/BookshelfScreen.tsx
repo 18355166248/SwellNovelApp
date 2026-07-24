@@ -7,6 +7,7 @@ import {
   ScrollView,
   Pressable,
   Platform,
+  TextInput,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon, LinearGradient } from '../components';
@@ -18,20 +19,13 @@ import {
   useAllBooks,
   useAddBook,
   useSetChapters,
-  useOpenChapter,
-  useBookChapters,
   useRemoveBook,
   useCheckFollowedBooks,
 } from '../store';
-import { AddOnlineBookModal } from '../components/AddOnlineBookModal';
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
 import { pickTxtFile } from '../utils/importBook';
-import { resumeChapterIndex } from '../utils/chapters';
 import {
-  CONTINUE_CARD_GRADIENT,
-  CONTINUE_CARD_GRADIENT_DIRECTION,
-  NOVEL_GOLD,
   paletteForId,
   COVER_GRADIENT_DIRECTION,
 } from '../theme/readerThemes';
@@ -72,7 +66,6 @@ export default function BookshelfScreen() {
   const books = useAllBooks();
   const addBook = useAddBook();
   const setChapters = useSetChapters();
-  const openChapter = useOpenChapter();
   const removeBook = useRemoveBook();
   const checkFollowedBooks = useCheckFollowedBooks();
   const [selectedBookIds, setSelectedBookIds] = React.useState<string[]>([]);
@@ -92,22 +85,14 @@ export default function BookshelfScreen() {
 
   const [filter, setFilter] = React.useState<(typeof FILTERS)[number]>('全部');
   const [gridView, setGridView] = React.useState(true);
-  const [onlineOpen, setOnlineOpen] = React.useState(false);
+  const [shelfSearchOpen, setShelfSearchOpen] = React.useState(false);
+  const [shelfQuery, setShelfQuery] = React.useState('');
   const [importState, setImportState] = React.useState({
     active: false,
     message: '',
   });
   const [followChecking, setFollowChecking] = React.useState(false);
   const [followMessage, setFollowMessage] = React.useState('');
-
-  const continueBook = React.useMemo(() => {
-    const withHistory = books.filter(b => b.lastReadAt);
-    if (withHistory.length === 0) return null;
-    return withHistory.reduce((a, b) =>
-      (a.lastReadAt || 0) > (b.lastReadAt || 0) ? a : b,
-    );
-  }, [books]);
-  const continueChapters = useBookChapters(continueBook?.id || null);
 
   const handleImportTxt = React.useCallback(async () => {
     if (importState.active) return;
@@ -152,17 +137,17 @@ export default function BookshelfScreen() {
   const continuing = books.filter(b => b.progress < 100).length;
   const followedCount = books.filter(b => b.following).length;
   const unreadUpdates = books.reduce((sum, book) => sum + (book.unreadUpdates || 0), 0);
-  const shown = applyFilter(books, filter);
+  const shown = React.useMemo(() => {
+    const keyword = shelfQuery.trim().toLowerCase();
+    return applyFilter(books, filter).filter(book => {
+      if (!keyword) return true;
+      return `${book.title} ${book.author}`.toLowerCase().includes(keyword);
+    });
+  }, [books, filter, shelfQuery]);
 
-  const openContinueBook = () => {
-    if (!continueBook) return;
-    const idx = resumeChapterIndex(
-      continueChapters,
-      continueBook.currentChapterId,
-    );
-    openChapter(continueBook.id, idx);
-    navigation.navigate('Reader', { bookId: continueBook.id });
-  };
+  const openBookFinder = React.useCallback(() => {
+    navigation.navigate('MainTabs', { screen: 'Search' });
+  }, [navigation]);
 
   const onCheckFollowed = async () => {
     if (followChecking || followedCount === 0) return;
@@ -234,19 +219,11 @@ export default function BookshelfScreen() {
               </Pressable>
             )}
             {!selectionMode ? <Pressable
-              onPress={() => setOnlineOpen(true)}
-              style={[
-                styles.iconBtn,
-                { backgroundColor: theme.colors.surface },
-                theme.shadows.sm,
-              ]}
-            >
-              <Icon name="add-link" size={18} color={theme.colors.text} />
-            </Pressable> : null}
-            {!selectionMode ? <Pressable
-              onPress={() =>
-                navigation.navigate('MainTabs', { screen: 'Search' })
-              }
+              accessibilityLabel={shelfSearchOpen ? '关闭书架搜索' : '搜索书架'}
+              onPress={() => {
+                setShelfSearchOpen(open => !open);
+                if (shelfSearchOpen) setShelfQuery('');
+              }}
               style={[
                 styles.iconBtn,
                 { backgroundColor: theme.colors.surface },
@@ -272,80 +249,20 @@ export default function BookshelfScreen() {
           </View>
         </View>
 
-        {continueBook && (
-          <Pressable onPress={openContinueBook}>
-            <LinearGradient
-              colors={CONTINUE_CARD_GRADIENT}
-              {...CONTINUE_CARD_GRADIENT_DIRECTION}
-              style={styles.continueCard}
-            >
-              <View style={styles.continueDeco} pointerEvents="none" />
-              <View style={styles.continueRow}>
-                <LinearGradient
-                  colors={[
-                    paletteForId(continueBook.id).from,
-                    paletteForId(continueBook.id).to,
-                  ]}
-                  {...COVER_GRADIENT_DIRECTION}
-                  style={styles.continueCover}
-                >
-                  <View style={styles.coverTitleLayer}>
-                    <Text
-                      numberOfLines={2}
-                      maxFontSizeMultiplier={1}
-                      style={[
-                        styles.continueCoverText,
-                        {
-                          fontSize: coverTitleFontSize(continueBook.title, 12),
-                          lineHeight:
-                            coverTitleFontSize(continueBook.title, 12) + 3,
-                        },
-                        { color: paletteForId(continueBook.id).ink },
-                      ]}
-                    >
-                      {continueBook.title}
-                    </Text>
-                  </View>
-                </LinearGradient>
-                <View style={styles.continueInfo}>
-                  <Text
-                    style={styles.continueLabel}
-                    maxFontSizeMultiplier={1}
-                  >
-                    继续阅读
-                  </Text>
-                  <Text
-                    style={styles.continueTitle}
-                    numberOfLines={1}
-                    maxFontSizeMultiplier={1}
-                  >
-                    {continueBook.title}
-                  </Text>
-                  <Text
-                    style={styles.continueChapter}
-                    numberOfLines={1}
-                    maxFontSizeMultiplier={1}
-                  >
-                    {continueChapters[
-                      resumeChapterIndex(
-                        continueChapters,
-                        continueBook.currentChapterId,
-                      )
-                    ]?.title || '开始阅读'}
-                  </Text>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        { width: `${continueBook.progress}%` },
-                      ]}
-                    />
-                  </View>
-                </View>
-              </View>
-            </LinearGradient>
-          </Pressable>
-        )}
+        {shelfSearchOpen ? (
+          <View style={[styles.shelfSearch, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <Icon name="search" size={17} color={theme.colors.textSecondary} />
+            <TextInput
+              value={shelfQuery}
+              onChangeText={setShelfQuery}
+              placeholder="在书架中搜索书名、作者"
+              placeholderTextColor={theme.colors.textSecondary}
+              autoFocus
+              style={[styles.shelfSearchInput, { color: theme.colors.text }]}
+            />
+            {shelfQuery ? <Pressable onPress={() => setShelfQuery('')} hitSlop={8}><Icon name="close" size={17} color={theme.colors.textSecondary} /></Pressable> : null}
+          </View>
+        ) : null}
 
         <ScrollView
           horizontal
@@ -406,10 +323,10 @@ export default function BookshelfScreen() {
               color="textSecondary"
               style={{ marginTop: 12, marginBottom: 20 }}
             >
-              书架空空如也，先粘贴书源网址添加网络书籍
+              书架空空如也，先去搜一本喜欢的书
             </Text>
             <Pressable
-              onPress={() => setOnlineOpen(true)}
+              onPress={openBookFinder}
               style={[
                 styles.emptyImportBtn,
                 { backgroundColor: theme.colors.accentDark },
@@ -422,7 +339,7 @@ export default function BookshelfScreen() {
                   fontSize: 14,
                 }}
               >
-                粘贴网址添加
+                去搜书
               </Text>
             </Pressable>
             <Pressable
@@ -434,6 +351,13 @@ export default function BookshelfScreen() {
                 导入本地 TXT
               </Text>
             </Pressable>
+          </View>
+        ) : shown.length === 0 ? (
+          <View style={styles.emptyFiltered}>
+            <Icon name="search-off" size={32} color={theme.colors.textSecondary} />
+            <Text variant="body" color="textSecondary" style={{ marginTop: 10 }}>
+              书架中没有匹配的书籍
+            </Text>
           </View>
         ) : gridView ? (
           <View style={styles.grid}>
@@ -526,7 +450,7 @@ export default function BookshelfScreen() {
                 styles.addTile,
                 { borderColor: theme.colors.border },
               ]}
-              onPress={() => setOnlineOpen(true)}
+              onPress={openBookFinder}
             >
               <Icon name="add" size={26} color={theme.colors.textSecondary} />
               <Text
@@ -534,7 +458,7 @@ export default function BookshelfScreen() {
                 color="textSecondary"
                 style={{ marginTop: 6 }}
               >
-                添加网络书籍
+                去搜书
               </Text>
             </Pressable> : null}
           </View>
@@ -589,7 +513,7 @@ export default function BookshelfScreen() {
               </Pressable>
             ))}
             {!selectionMode ? <Pressable
-              onPress={() => setOnlineOpen(true)}
+              onPress={openBookFinder}
               style={[
                 styles.listImportBtn,
                 { borderColor: theme.colors.border },
@@ -601,7 +525,7 @@ export default function BookshelfScreen() {
                 color="textSecondary"
                 style={{ marginLeft: 6 }}
               >
-                添加网络书籍
+                去搜书
               </Text>
             </Pressable> : null}
             {!selectionMode ? <Pressable
@@ -677,11 +601,6 @@ export default function BookshelfScreen() {
           </View>
         </View>
       ) : null}
-      <AddOnlineBookModal
-        visible={onlineOpen}
-        onClose={() => setOnlineOpen(false)}
-        onAdded={bookId => navigation.navigate('BookDetail', { bookId })}
-      />
     </View>
   );
 }
@@ -708,6 +627,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   headerActions: { flexDirection: 'row', gap: 8 },
+  shelfSearch: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    height: 42,
+    marginHorizontal: 20,
+    marginTop: 6,
+    paddingHorizontal: 12,
+  },
+  shelfSearchInput: { flex: 1, fontSize: 13.5, padding: 0 },
   iconBtn: {
     width: 38,
     height: 38,
@@ -715,72 +646,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  continueCard: {
-    marginHorizontal: 20,
-    marginTop: 12,
-    height: 126,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  // 设计稿右上角的半透明装饰圆
-  continueDeco: {
-    position: 'absolute',
-    right: -20,
-    top: -20,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255,255,255,.04)',
-  },
-  continueLabel: {
-    fontSize: 10.5,
-    color: 'rgba(255,255,255,.6)',
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  continueRow: {
-    flexDirection: 'row',
-    gap: 13,
-    alignItems: 'flex-start',
-  },
-  continueCover: {
-    width: 68,
-    height: 94,
-    borderRadius: 5,
-    overflow: 'hidden',
-  },
-  continueCoverText: {
-    fontFamily: SERIF_FONT,
-    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
-    textAlign: 'center',
-  },
-  continueInfo: { flex: 1 },
-  continueTitle: {
-    fontFamily: SERIF_FONT,
-    fontSize: 16,
-    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
-    color: '#fff',
-  },
-  continueChapter: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,.65)',
-    marginTop: 3,
-  },
-  progressTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,.18)',
-    marginTop: 7,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: NOVEL_GOLD,
-    borderRadius: 2,
-  },
-  filterRow: { marginTop: 16, paddingHorizontal: 20 },
+  filterRow: { marginTop: 14, paddingHorizontal: 20 },
   followBar: {
     alignItems: 'center',
     borderRadius: 8,
@@ -800,6 +666,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
+  emptyFiltered: { alignItems: 'center', paddingTop: 52, paddingHorizontal: 32 },
   emptyImportBtn: {
     paddingVertical: 12,
     paddingHorizontal: 26,

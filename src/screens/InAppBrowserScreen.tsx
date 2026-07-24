@@ -17,7 +17,7 @@ import {
   Platform,
 } from 'react-native';
 import { WebView as RNWebView } from 'react-native-webview';
-import { useNavigation } from '@react-navigation/native';
+import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
@@ -44,6 +44,7 @@ import {
 // 以 any 组件形式渲染，绕过构造签名不匹配（不影响运行时）。
 const WebView = RNWebView as unknown as React.ComponentType<any>;
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+type BrowserRoute = RouteProp<RootStackParamList, 'InAppBrowser'>;
 
 const START_URL = 'http://wap.xuanhuange.info/';
 const RECOGNIZE_CALLBACK_PREFIX = 'nvl-recognize://result?data=';
@@ -206,6 +207,7 @@ function displayUrl(url: string): string {
 
 export default function InAppBrowserScreen() {
   const navigation = useNavigation<Nav>();
+  const route = useRoute<BrowserRoute>();
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const addRecognized = useAddRecognizedBook();
@@ -246,6 +248,14 @@ export default function InAppBrowserScreen() {
     loadBrowserHistory()
       .then(items => {
         setHistory(items);
+        const initialUrl = route.params?.initialUrl;
+        // 从“搜书”页粘贴链接进入时，链接优先于最近历史，避免用户又被带回上次网页。
+        if (initialUrl) {
+          setUrl(initialUrl);
+          setInput(initialUrl);
+          currentPageUrlRef.current = initialUrl;
+          return;
+        }
         // 有历史时直接恢复最近书页；无历史则展示起始页，不再强制加载 Bing。
         if (items[0]) {
           setUrl(items[0]);
@@ -254,7 +264,7 @@ export default function InAppBrowserScreen() {
         }
       })
       .finally(() => setHistoryReady(true));
-  }, []);
+  }, [route.params?.initialUrl]);
 
   const openUrl = React.useCallback((next: string) => {
     if (!next) return;
