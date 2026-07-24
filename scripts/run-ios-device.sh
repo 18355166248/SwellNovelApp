@@ -115,7 +115,9 @@ echo ""
 echo "3. 构建并安装 Release 到真机..."
 echo "   设备 UDID: $DEVICE_UDID"
 echo "   说明: Release 会内置 JS，不使用 Metro 端口。"
-npx react-native run-ios --mode Release --udid "$DEVICE_UDID" --port 8082
+# 真机首次签名或设备变化时，允许 Xcode 自动创建/更新开发证书与描述文件。
+npx react-native run-ios --mode Release --udid "$DEVICE_UDID" --no-packager \
+  --extra-params "-allowProvisioningUpdates -allowProvisioningDeviceRegistration"
 
 echo ""
 echo "========================================="

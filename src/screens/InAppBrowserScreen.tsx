@@ -27,9 +27,11 @@ import { useAddRecognizedBook } from '../store';
 import {
   RECOGNIZER_JS,
   RECOGNIZE_MESSAGE,
+  expandRecognizedCatalog,
   inputToUrl,
   RecognizedBook,
 } from '../services/recognize/recognizer';
+import { fetchRenderedHtml } from '../services/browserFetch/bridge';
 
 // react-native-webview 的 class 组件类型与 React 19 的 JSX 类型不完全兼容，
 // 以 any 组件形式渲染，绕过构造签名不匹配（不影响运行时）。
@@ -53,6 +55,7 @@ export default function InAppBrowserScreen() {
     null,
   );
   const [adding, setAdding] = React.useState(false);
+  const [addMessage, setAddMessage] = React.useState('');
 
   const go = () => {
     const next = inputToUrl(input);
@@ -77,10 +80,26 @@ export default function InAppBrowserScreen() {
   const onAdd = async () => {
     if (!recognized || adding) return;
     setAdding(true);
+    setAddMessage('正在整理目录…');
     try {
-      const book = await addRecognized(recognized);
+      const expanded = await expandRecognizedCatalog(
+        recognized,
+        url =>
+          fetchRenderedHtml(url, {
+            // 分页目录通常是静态 HTML；缩短等待以免 20 多页目录需要数分钟。
+            waitMs: 1800,
+            timeout: 20000,
+            priority: 'high',
+          }),
+        (done, total) => setAddMessage(`正在加载目录 ${done}/${total}`),
+      );
+      const book = await addRecognized(expanded);
       setRecognized(null);
       navigation.navigate('BookDetail', { bookId: book.id });
+    } catch (error) {
+      setAddMessage(
+        error instanceof Error ? error.message : '目录加载失败，请重试',
+      );
     } finally {
       setAdding(false);
     }
@@ -212,8 +231,19 @@ export default function InAppBrowserScreen() {
               {(recognized.author || '佚名') +
                 ' · 共 ' +
                 recognized.chapters.length +
-                ' 章'}
+                ' 章' +
+                (recognized.pageUrls?.length
+                  ? ` · ${recognized.pageUrls.length + 1} 页目录`
+                  : '')}
             </Text>
+            {!!addMessage && (
+              <Text
+                numberOfLines={2}
+                style={{ fontSize: 11, color: adding ? theme.colors.textSecondary : theme.colors.danger, marginTop: 3 }}
+              >
+                {addMessage}
+              </Text>
+            )}
           </View>
           <Pressable onPress={() => setRecognized(null)} style={styles.sheetGhost}>
             <Icon name="close" size={18} color={theme.colors.textSecondary} />
@@ -224,7 +254,7 @@ export default function InAppBrowserScreen() {
             style={[styles.sheetAdd, { backgroundColor: theme.colors.primary }]}
           >
             <Text style={styles.sheetAddText}>
-              {adding ? '加入中…' : '加入书架'}
+              {adding ? '导入中…' : '加入书架'}
             </Text>
           </Pressable>
         </View>

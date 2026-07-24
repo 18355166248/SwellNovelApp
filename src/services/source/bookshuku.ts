@@ -503,11 +503,11 @@ function hasBadCatalogTitles(chapters: ParsedChapter[]): boolean {
   return chapters.some(chapter => isSyntheticSplitTitle(chapter.title));
 }
 
-function isTooShortSyntheticCatalog(chapters: ParsedChapter[]): boolean {
-  // “分节阅读 N”不是理想目录名，但部分完整 TXT 书籍只提供这种稳定序号。
-  // 短列表更可能是 Cloudflare 降级页，继续拒绝；长且连续的列表可先入库，正文
-  // 加载时会从页面标题/首句回填真实章节名，避免把可读作品整个拦在书架外。
-  return hasBadCatalogTitles(chapters) && chapters.length < 100;
+function isSyntheticSplitCatalog(chapters: ParsedChapter[]): boolean {
+  // “分节阅读 N”是 TXT 文件按字数切出的阅读片段，并不对应小说的真实章节。
+  // 片段边界可能落在章节中间，不能靠正文首句回填为目录；一旦入库就会造成
+  // 《凡人修仙传》这类长书的章节乱序、标题错误。因此无论数量多少都拒绝。
+  return hasBadCatalogTitles(chapters);
 }
 
 function getBadCatalogTitle(chapters: ParsedChapter[]): string | undefined {
@@ -822,10 +822,10 @@ export const bookshukuSource: BookSource = {
     }
     if (
       isSuspiciousPartialCatalog(chapters) ||
-      isTooShortSyntheticCatalog(chapters)
+      isSyntheticSplitCatalog(chapters)
     ) {
-      // 目录是书籍入库的基础数据，短“分节阅读 11”通常是站点降级占位，
-      // 不能写进本地缓存；完整长目录则在上面放行，供阅读时懒修正标题。
+      // 目录是书籍入库的基础数据；“分节阅读 N”是切片序号而非章节名，
+      // 不能写进本地缓存，否则阅读器无法正确跳章和显示标题。
       const badTitle = getBadCatalogTitle(chapters);
       const reason = [
         `count=${chapters.length}`,

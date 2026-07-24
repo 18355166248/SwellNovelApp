@@ -19,6 +19,7 @@ import {
   searchHistoryAtom,
   useAllBooks,
   useAddOnlineBook,
+  useRemoveBook,
 } from '../store';
 import { paletteForId, COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
 import {
@@ -26,6 +27,7 @@ import {
   searchNovels,
   NovelSearchResult,
 } from '../services/search/novelSearch';
+import { confirmAction } from '../utils/confirm';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -38,6 +40,7 @@ export default function SearchScreen() {
   const [history, setHistory] = useAtom(searchHistoryAtom);
   const allBooks = useAllBooks();
   const addOnlineBook = useAddOnlineBook();
+  const removeBook = useRemoveBook();
 
   // 在线搜书（仅原生）：把书名经搜索引擎解析成受支持书源的书籍链接。
   const [onlineResults, setOnlineResults] = React.useState<NovelSearchResult[]>(
@@ -46,6 +49,7 @@ export default function SearchScreen() {
   const [onlineState, setOnlineState] = React.useState<
     'idle' | 'loading' | 'error' | 'empty' | 'done'
   >('idle');
+  const [onlineError, setOnlineError] = React.useState('');
   const [addingUrl, setAddingUrl] = React.useState<string | null>(null);
   const [scope, setScope] = React.useState<'shelf' | 'network'>('shelf');
   const searchSeqRef = React.useRef(0);
@@ -56,13 +60,21 @@ export default function SearchScreen() {
       const seq = ++searchSeqRef.current;
       setOnlineState('loading');
       setOnlineResults([]);
+      setOnlineError('');
       try {
         const res = await searchNovels(kw);
         if (seq !== searchSeqRef.current) return; // 已有更新的搜索，丢弃旧结果
         setOnlineResults(res);
         setOnlineState(res.length ? 'done' : 'empty');
-      } catch {
-        if (seq === searchSeqRef.current) setOnlineState('error');
+      } catch (error) {
+        if (seq === searchSeqRef.current) {
+          setOnlineError(
+            error instanceof Error && error.message
+              ? error.message
+              : '请检查网络后重试',
+          );
+          setOnlineState('error');
+        }
       }
     },
     [],
@@ -80,13 +92,31 @@ export default function SearchScreen() {
       try {
         const book = await addOnlineBook(r.url);
         navigation.navigate('BookDetail', { bookId: book.id });
-      } catch {
+      } catch (error) {
+        // 加书失败必须保留底层原因；此前只显示“搜索失败”，真机无法判断是书源还是代理异常。
+        setOnlineError(
+          error instanceof Error && error.message
+            ? `添加失败：${error.message}`
+            : '添加失败，请检查网络后重试',
+        );
         setOnlineState('error');
       } finally {
         setAddingUrl(null);
       }
     },
     [addingUrl, addOnlineBook, allBooks, navigation],
+  );
+
+  const onDeleteOnlineBook = React.useCallback(
+    (bookId: string, title: string) => {
+      // 网络搜索页中的“已在书架”书籍允许就地移除，避免用户必须先进入详情页才能清理错误书源。
+      confirmAction(
+        '删除书籍',
+        `确定删除《${title}》？章节缓存、阅读进度与书签都会被永久清除。`,
+        () => removeBook(bookId),
+      );
+    },
+    [removeBook],
   );
   // 本地阅读器无热搜后端，改为按最近阅读/加入列出书库速览。
   const shelf = React.useMemo(
@@ -101,6 +131,7 @@ export default function SearchScreen() {
     const trimmed = q.trim();
     setQuery(trimmed);
     if (trimmed) {
+      setOnlineError('');
       // 去重后置顶，最多保留 8 条；持久化到本地。
       setHistory(prev => [trimmed, ...prev.filter(h => h !== trimmed)].slice(0, 8));
       if (scope === 'network') runOnlineSearch(trimmed);
@@ -306,8 +337,11 @@ export default function SearchScreen() {
               </Text>
             )}
             {onlineState === 'error' && (
-              <Text variant="caption" color="textSecondary">
-                搜索失败，请检查网络后重试
+              <Text
+                variant="caption"
+                style={{ color: theme.colors.danger, lineHeight: 18 }}
+              >
+                {onlineError || '搜索失败，请检查网络后重试'}
               </Text>
             )}
             {onlineState === 'empty' && (
@@ -358,7 +392,20 @@ export default function SearchScreen() {
                         添加中…
                       </Text>
                     ) : existing ? (
-                      <Icon name="menu-book" size={18} color={theme.colors.accent} />
+                      <View style={styles.onlineActions}>
+                        <Text style={[styles.inShelfText, { color: theme.colors.accent }]}>已在书架</Text>
+                        <Pressable
+                          accessibilityLabel={`删除${r.title}`}
+                          hitSlop={8}
+                          onPress={event => {
+                            event.stopPropagation();
+                            onDeleteOnlineBook(existing.id, existing.title);
+                          }}
+                          style={styles.onlineDeleteButton}
+                        >
+                          <Icon name="delete-outline" size={18} color={theme.colors.danger} />
+                        </Pressable>
+                      </View>
                     ) : (
                       <Icon
                         name="add"
@@ -518,6 +565,18 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
+  },
+  onlineActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 7,
+    marginLeft: 10,
+  },
+  inShelfText: {
+    fontSize: 11,
+  },
+  onlineDeleteButton: {
+    padding: 3,
   },
   browserEntry: {
     marginHorizontal: 20,

@@ -19,8 +19,10 @@ export interface RecognizedBook {
   host: string;
   title?: string;
   author?: string;
-  cover?: string;
+ cover?: string;
   chapters: RecognizedChapter[];
+  /** 当前目录页发现的其他分页链接（不含当前页），加入时由 WebView 聚合。 */
+  pageUrls?: string[];
   error?: string;
 }
 
@@ -37,7 +39,7 @@ export const MIN_CHAPTERS = 5;
 export const RECOGNIZER_JS = `(function(){
   try {
     var reChap = /第\\s*[0-9零一二三四五六七八九十百千两]+\\s*[章节回卷]/;
-    var seen = {}, chapters = [];
+    var seen = {}, chapters = [], pageSeen = {}, pageUrls = [];
     var as = document.querySelectorAll('a[href]');
     for (var i = 0; i < as.length; i++) {
       var a = as[i];
@@ -48,6 +50,17 @@ export const RECOGNIZER_JS = `(function(){
       if (seen[href]) continue;
       seen[href] = 1;
       chapters.push({ title: t, url: href });
+    }
+    // 常见小说站把目录拆成“1 2 3 … 下一页”形式。只收集短数字/翻页文案，
+    // 不把“第 N 章”正文链接误当分页；实际章节仍由上面的规则单独识别。
+    for (var p = 0; p < as.length; p++) {
+      var pa = as[p];
+      var pt = (pa.textContent || '').replace(/\s+/g, ' ').trim();
+      var ph = pa.href;
+      if (!ph || ph === location.href || pageSeen[ph]) continue;
+      if (!(/^[0-9]{1,3}$/.test(pt) || /^(上一页|下一页|上页|下页|首页|尾页|末页)$/.test(pt))) continue;
+      pageSeen[ph] = 1;
+      pageUrls.push(ph);
     }
     function meta(sel){ var m = document.querySelector(sel); return m ? (m.getAttribute('content') || '').trim() : ''; }
     var title = meta('meta[property="og:novel:book_name"]') || meta('meta[property="og:title"]');
@@ -61,13 +74,93 @@ export const RECOGNIZER_JS = `(function(){
       isDetail: chapters.length >= ${MIN_CHAPTERS},
       url: location.href, host: location.host,
       title: title, author: author, cover: cover,
-      chapters: chapters.slice(0, 5000)
+      chapters: chapters.slice(0, 5000), pageUrls: pageUrls.slice(0, 100)
     };
     window.ReactNativeWebView.postMessage(JSON.stringify(payload));
   } catch (e) {
     window.ReactNativeWebView.postMessage(JSON.stringify({ type: '${RECOGNIZE_MESSAGE}', ok: false, error: String(e), chapters: [] }));
   }
 })(); true;`;
+
+const CHAPTER_TITLE_RE = /第\s*[0-9零一二三四五六七八九十百千两]+\s*[章节回卷]/;
+
+function resolveHref(base: string, href: string): string {
+  const value = href.trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  const origin = /^(https?:\/\/[^/]+)/i.exec(base)?.[1];
+  if (!origin) return value;
+  if (value.startsWith('//')) return `${base.split(':')[0]}:${value}`;
+  if (value.startsWith('/')) return `${origin}${value}`;
+  const directory = base.replace(/[?#].*$/, '').replace(/\/[^/]*$/, '/');
+  return `${directory}${value}`;
+}
+
+/** 从 WebView 回传的单个目录页 HTML 提取章节，供分页目录聚合使用。 */
+export function parseRecognizedChaptersHtml(
+  html: string,
+  baseUrl: string,
+): RecognizedChapter[] {
+  const chapters: RecognizedChapter[] = [];
+  const seen = new Set<string>();
+  const re = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html)) !== null) {
+    const title = match[2]
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!title || title.length > 80 || !CHAPTER_TITLE_RE.test(title)) continue;
+    const url = resolveHref(baseUrl, match[1]);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    chapters.push({ title, url });
+  }
+  return chapters;
+}
+
+/**
+ * 把当前目录页和其余分页目录合并。必须逐页成功才允许入库，
+ * 否则用户会误以为整本书已经加入，实际只读得到第一页章节。
+ */
+export async function expandRecognizedCatalog(
+  book: RecognizedBook,
+  fetchPageHtml: (url: string) => Promise<string>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<RecognizedBook> {
+  const currentUrl = book.url.replace(/#.*$/, '');
+  const pages = (book.pageUrls || []).filter(
+    (url, index, all) =>
+      url.replace(/#.*$/, '') !== currentUrl && all.indexOf(url) === index,
+  );
+  if (pages.length === 0) return book;
+
+  const chapters = [...book.chapters];
+  const seen = new Set(chapters.map(chapter => chapter.url));
+  for (let index = 0; index < pages.length; index += 1) {
+    const pageUrl = pages[index];
+    onProgress?.(index + 1, pages.length);
+    let html: string;
+    try {
+      html = await fetchPageHtml(pageUrl);
+    } catch (error) {
+      const detail = error instanceof Error ? `：${error.message}` : '';
+      throw new Error(`目录第 ${index + 2} 页加载失败${detail}`);
+    }
+    const pageChapters = parseRecognizedChaptersHtml(html, pageUrl);
+    if (pageChapters.length === 0) {
+      throw new Error(`目录第 ${index + 2} 页未识别到章节`);
+    }
+    pageChapters.forEach(chapter => {
+      if (!seen.has(chapter.url)) {
+        seen.add(chapter.url);
+        chapters.push(chapter);
+      }
+    });
+  }
+  return { ...book, chapters, pageUrls: [] };
+}
 
 /** 把地址栏输入解析成要加载的 URL：像网址则直连，否则走 Bing 搜索。 */
 export function inputToUrl(input: string): string {

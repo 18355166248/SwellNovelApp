@@ -57,7 +57,7 @@ export function parseMingzwRecommendations(
 ): SourceRecommendation[] {
   const items: SourceRecommendation[] = [];
   const re =
-    /<a\b[^>]*href="([^"]*\/mibook\/\d+\.html)"[^>]*>([\s\S]*?)<\/a>/gi;
+    /<a\b[^>]*href="([^"]*\/(?:mibook|mzwbook)\/\d+\.html)"[^>]*>([\s\S]*?)<\/a>/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(html)) !== null) {
     const title = decodeEntities(stripTags(match[2]))

@@ -28,13 +28,10 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<!-- 书源与自建 curl 代理均为明文 HTTP，且代理用 IP:端口访问（ATS 例外域不支持
-		     IP 字面量），故放开明文加载；书源域名例外仍保留作为文档说明。 -->
+		<!-- 临时真机验证：生产代理仍是 HTTP IP，而 ATS 的域名例外不能匹配 IP。
+		     不可同时设置 WebContent/LocalNetworking；苹果会使此总开关对原生 URLSession
+		     失效，导致 React Native fetch 无法获取推荐和搜索结果。正式发布应改为 HTTPS 域名。 -->
 		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsArbitraryLoadsInWebContent</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
 		<true/>
 		<key>NSExceptionDomains</key>
 		<dict>

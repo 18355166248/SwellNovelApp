@@ -278,7 +278,7 @@ describe('bookshukuSource', () => {
     ).rejects.toThrow('目录解析不完整');
   });
 
-  it('parseCatalog 接受完整的分节阅读目录，并在阅读时再回填章节标题', async () => {
+  it('parseCatalog 拒绝长分节阅读切片目录，不能把片段当成真实章节', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.endsWith('/read/160297.html')) return EQUAL_LEN_BAD_CATALOG;
       if (url.endsWith('/bookinfo/160297.html')) return BOOKINFO;
@@ -288,15 +288,14 @@ describe('bookshukuSource', () => {
       new Error('webview timeout'),
     );
 
-    const chapters = await bookshukuSource.parseCatalog({
-      sourceBookId: '160297',
-      title: '捞尸人',
-      author: '纯洁滴小龙',
-      catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
-    });
-
-    expect(chapters).toHaveLength(491);
-    expect(chapters[0].title).toBe('分节阅读 1');
+    await expect(
+      bookshukuSource.parseCatalog({
+        sourceBookId: '160297',
+        title: '捞尸人',
+        author: '纯洁滴小龙',
+        catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+      }),
+    ).rejects.toThrow('目录解析不完整');
   });
 
   it('parseCatalog wap 占位目录失败时用桌面域名完整目录兜底，并转回 wap URL', async () => {

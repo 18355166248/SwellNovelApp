@@ -21,12 +21,18 @@ describe('书源推荐解析', () => {
   it('仅保留明智屋可加入书架的详情链接并去重', () => {
     const items = parseMingzwRecommendations(
       '<a href="/mibook/26.html">笨蛋美人替嫁后被疯批王爷宠上天</a>' +
-        '<a href="/mibook/26.html">笨蛋美人替嫁后被疯批王爷宠上天 阅读&gt;&gt;</a>',
+        '<a href="/mibook/26.html">笨蛋美人替嫁后被疯批王爷宠上天 阅读&gt;&gt;</a>' +
+        '<a href="/mzwbook/17482.html">凡人修仙传</a>',
     );
     expect(items).toEqual([
       {
         url: 'https://www.mingzw.net/mibook/26.html',
         title: '笨蛋美人替嫁后被疯批王爷宠上天',
+        sourceName: '明智屋中文网',
+      },
+      {
+        url: 'https://www.mingzw.net/mzwbook/17482.html',
+        title: '凡人修仙传',
         sourceName: '明智屋中文网',
       },
     ]);
