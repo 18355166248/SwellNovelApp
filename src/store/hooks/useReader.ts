@@ -12,7 +12,12 @@ import {
   isLoadingChapterAtom,
 } from '../atoms';
 import { ReaderState } from '../types/reader';
-import { ReaderThemeKey, FONT_SIZES, LINE_HEIGHTS } from '../../theme/readerThemes';
+import {
+  ReaderThemeKey,
+  FONT_SIZES,
+  LINE_HEIGHTS,
+  resolveReaderThemeChange,
+} from '../../theme/readerThemes';
 
 /**
  * 获取阅读设置
@@ -34,7 +39,21 @@ export const useReaderDisplay = () => {
 export const useSetReaderTheme = () => {
   const setSettings = useSetAtom(readerSettingsAtom);
   return (theme: ReaderThemeKey) => {
-    setSettings((prev) => ({ ...prev, theme }));
+    setSettings((prev) => ({
+      ...prev,
+      ...resolveReaderThemeChange(prev.theme, prev.dayTheme, theme),
+    }));
+  };
+};
+
+/** 设置意境背景浓度；素色主题保留该值，切回意境时继续沿用。 */
+export const useSetReaderBackgroundOpacity = () => {
+  const setSettings = useSetAtom(readerSettingsAtom);
+  return (opacity: number) => {
+    setSettings(prev => ({
+      ...prev,
+      backgroundOpacity: Math.max(0, Math.min(1, opacity)),
+    }));
   };
 };
 

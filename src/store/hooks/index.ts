@@ -25,6 +25,7 @@ export {
   useReaderSettings,
   useReaderDisplay,
   useSetReaderTheme,
+  useSetReaderBackgroundOpacity,
   useAdjustFontSize,
   useSetLineHeightIndex,
   useSetPageMode,

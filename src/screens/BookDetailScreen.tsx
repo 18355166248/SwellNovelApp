@@ -195,8 +195,10 @@ export default function BookDetailScreen() {
   const preview = chapters.slice(-4).reverse();
   const latest = chapters[chapters.length - 1];
   const isFinished = book.progress >= 100;
+  const chaptersReady = chapters.length > 0;
 
   const goReader = (idx: number) => {
+    if (!chaptersReady) return;
     openChapter(book.id, idx);
     navigation.navigate('Reader', { bookId: book.id });
   };
@@ -422,16 +424,20 @@ export default function BookDetailScreen() {
               目录
             </Text>
             <Pressable
-              onPress={() =>
+              disabled={!chaptersReady}
+              accessibilityState={{ disabled: !chaptersReady }}
+              onPress={() => {
+                // 目录入口也要先恢复本书的续读章，避免复用上一册的全局章节索引。
+                openChapter(book.id, resumeIdx);
                 navigation.navigate('Reader', {
                   bookId: book.id,
                   openDrawer: true,
-                })
-              }
-              style={styles.tocMore}
+                });
+              }}
+              style={[styles.tocMore, { opacity: chaptersReady ? 1 : 0.45 }]}
             >
               <Text variant="caption" color="textSecondary">
-                共 {chapters.length} 章
+                {chaptersReady ? `共 ${chapters.length} 章` : '目录加载中…'}
               </Text>
               <Icon
                 name="chevron-right"
@@ -560,10 +566,15 @@ export default function BookDetailScreen() {
             </Text>
           </Pressable>
           <Pressable
+            disabled={!chaptersReady}
+            accessibilityState={{ disabled: !chaptersReady }}
             onPress={() => goReader(resumeIdx)}
             style={[
               styles.readBtn,
-              { backgroundColor: theme.colors.accentDark },
+              {
+                backgroundColor: theme.colors.accentDark,
+                opacity: chaptersReady ? 1 : 0.45,
+              },
             ]}
           >
             <Text
@@ -571,7 +582,9 @@ export default function BookDetailScreen() {
               numberOfLines={1}
               maxFontSizeMultiplier={1}
             >
-              {book.progress > 0
+              {!chaptersReady
+                ? '章节加载中…'
+                : book.progress > 0
                 ? `继续阅读 · 第 ${resumeIdx + 1} 章`
                 : '开始阅读'}
             </Text>

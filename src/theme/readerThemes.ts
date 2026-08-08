@@ -3,7 +3,43 @@
  * 对应设计稿 SwellNovel.dc.html 中的 THEMES / chrome 配置
  */
 
-export type ReaderThemeKey = 'paper' | 'gray' | 'green' | 'night';
+export type ReaderThemeKey =
+  | 'paper'
+  | 'gray'
+  | 'green'
+  | 'lake'
+  | 'cosmos'
+  | 'bamboo'
+  | 'sunset'
+  | 'night';
+export type ReaderNightThemeKey = 'night' | 'cosmos';
+export type ReaderDayThemeKey = Exclude<ReaderThemeKey, ReaderNightThemeKey>;
+
+export function isReaderNightTheme(
+  theme: ReaderThemeKey,
+): theme is ReaderNightThemeKey {
+  return theme === 'night' || theme === 'cosmos';
+}
+
+/**
+ * 阅读背景切换状态机：进入夜间前保留当前日间背景，退出时才能恢复用户原选择。
+ * 旧版设置没有 dayTheme 时回退米白，保证历史数据仍可直接读取。
+ */
+export function resolveReaderThemeChange(
+  currentTheme: ReaderThemeKey,
+  dayTheme: ReaderDayThemeKey | undefined,
+  nextTheme: ReaderThemeKey,
+): { theme: ReaderThemeKey; dayTheme: ReaderDayThemeKey } {
+  if (!isReaderNightTheme(nextTheme)) {
+    return { theme: nextTheme, dayTheme: nextTheme };
+  }
+  return {
+    theme: nextTheme,
+    dayTheme: isReaderNightTheme(currentTheme)
+      ? dayTheme ?? 'paper'
+      : currentTheme,
+  };
+}
 
 export interface ReaderThemeTokens {
   bg: string;
@@ -11,6 +47,7 @@ export interface ReaderThemeTokens {
   sub: string;
   hair: string;
   label: string;
+  category: 'solid' | 'scenic';
 }
 
 export const READER_THEMES: Record<ReaderThemeKey, ReaderThemeTokens> = {
@@ -20,6 +57,7 @@ export const READER_THEMES: Record<ReaderThemeKey, ReaderThemeTokens> = {
     sub: '#9a8f76',
     hair: 'rgba(0,0,0,.1)',
     label: '米白',
+    category: 'solid',
   },
   gray: {
     bg: '#e7e5de',
@@ -27,6 +65,7 @@ export const READER_THEMES: Record<ReaderThemeKey, ReaderThemeTokens> = {
     sub: '#8c8a82',
     hair: 'rgba(0,0,0,.1)',
     label: '浅灰',
+    category: 'solid',
   },
   green: {
     bg: '#d5e2d1',
@@ -34,6 +73,39 @@ export const READER_THEMES: Record<ReaderThemeKey, ReaderThemeTokens> = {
     sub: '#6f7d68',
     hair: 'rgba(0,0,0,.1)',
     label: '护眼',
+    category: 'solid',
+  },
+  lake: {
+    bg: '#eef5ef',
+    text: '#27443c',
+    sub: '#718a80',
+    hair: 'rgba(39,68,60,.12)',
+    label: '一叶漾波',
+    category: 'scenic',
+  },
+  cosmos: {
+    bg: '#0b0d0e',
+    text: '#b9bab7',
+    sub: '#747977',
+    hair: 'rgba(255,255,255,.12)',
+    label: '星河苍穹',
+    category: 'scenic',
+  },
+  bamboo: {
+    bg: '#f1f5f4',
+    text: '#254750',
+    sub: '#71868b',
+    hair: 'rgba(37,71,80,.12)',
+    label: '清筠扫壁',
+    category: 'scenic',
+  },
+  sunset: {
+    bg: '#faf7f0',
+    text: '#315252',
+    sub: '#8a877c',
+    hair: 'rgba(49,82,82,.12)',
+    label: '长河落日',
+    category: 'scenic',
   },
   night: {
     bg: '#16191a',
@@ -41,6 +113,7 @@ export const READER_THEMES: Record<ReaderThemeKey, ReaderThemeTokens> = {
     sub: '#6a6f6c',
     hair: 'rgba(255,255,255,.12)',
     label: '夜间',
+    category: 'solid',
   },
 };
 
@@ -98,7 +171,7 @@ export const CONTINUE_CARD_GRADIENT_DIRECTION = {
 export const DRAWER_WIDTH = '80%';
 
 export function getReaderChrome(themeKey: ReaderThemeKey): ReaderChromeTokens {
-  return themeKey === 'night' ? CHROME_NIGHT : CHROME_DAY;
+  return isReaderNightTheme(themeKey) ? CHROME_NIGHT : CHROME_DAY;
 }
 
 /** 书脊/封面渐变色板（对应设计稿 linear-gradient(160deg, from, to)）*/

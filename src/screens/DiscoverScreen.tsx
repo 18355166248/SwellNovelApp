@@ -20,6 +20,10 @@ import {
   fetchSourceRecommendations,
   SourceRecommendation,
 } from '../services/discover/sourceRecommendations';
+import {
+  loadSourceRecommendationCache,
+  saveSourceRecommendationCache,
+} from '../utils/sourceRecommendationCache';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -35,16 +39,40 @@ export default function DiscoverScreen() {
     'loading' | 'done' | 'empty'
   >('loading');
   const [addingUrl, setAddingUrl] = React.useState<string | null>(null);
+  const recommendationsRef = React.useRef<SourceRecommendation[]>([]);
 
   const loadRecommendations = React.useCallback(async () => {
     setRecommendState('loading');
     const items = await fetchSourceRecommendations();
+    // 刷新失败时保留已展示的缓存，不把“发现”页回退为空白状态。
+    if (!items.length && recommendationsRef.current.length) {
+      setRecommendState('done');
+      return;
+    }
+    recommendationsRef.current = items;
     setRecommendations(items);
     setRecommendState(items.length ? 'done' : 'empty');
+    if (items.length) {
+      // 网络刷新成功后再替换本地旧结果；下次打开“发现”无需等待书源首页抓取。
+      saveSourceRecommendationCache(items).catch(() => {});
+    }
   }, []);
 
   React.useEffect(() => {
-    loadRecommendations();
+    let cancelled = false;
+    const bootstrapRecommendations = async () => {
+      const cached = await loadSourceRecommendationCache();
+      if (!cancelled && cached.length) {
+        recommendationsRef.current = cached;
+        setRecommendations(cached);
+        setRecommendState('done');
+      }
+      if (!cancelled) loadRecommendations();
+    };
+    bootstrapRecommendations();
+    return () => {
+      cancelled = true;
+    };
   }, [loadRecommendations]);
 
   const addRecommendation = React.useCallback(

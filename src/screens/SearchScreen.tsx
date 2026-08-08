@@ -236,7 +236,12 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { paddingBottom: 40 },
   heading: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 12 },
-  title: { fontSize: 26, fontWeight: Platform.select({ ios: '700', android: 'bold' }) },
+  // Text 默认 body 行高小于 26px 标题字高；显式撑开以避免 iOS 裁掉中文字形顶部。
+  title: {
+    fontSize: 26,
+    lineHeight: 36,
+    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
+  },
   subtitle: { marginTop: 3 },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20 },
   searchField: { flex: 1, height: 46, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 13 },

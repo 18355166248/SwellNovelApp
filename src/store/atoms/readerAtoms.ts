@@ -10,11 +10,14 @@ import {
   PARA_GAPS,
   READER_THEMES,
   getReaderChrome,
+  isReaderNightTheme,
 } from '../../theme/readerThemes';
 
 // 默认阅读设置
 const defaultReaderSettings: ReaderSettings = {
   theme: 'paper',
+  dayTheme: 'paper',
+  backgroundOpacity: 0.45,
   // FONT_SIZES 现从 16 起以 1px 步进，索引 4 → 20px（原默认字号）。
   fontSizeIndex: 4,
   lineHeightIndex: 1,
@@ -50,7 +53,7 @@ export const readerDisplayAtom = atom((get) => {
   return {
     theme,
     chrome,
-    isNight: s.theme === 'night',
+    isNight: isReaderNightTheme(s.theme),
     fontSize: FONT_SIZES[s.fontSizeIndex],
     titleSize: FONT_SIZES[s.fontSizeIndex] + 4,
     lineHeight: LINE_HEIGHTS[s.lineHeightIndex],

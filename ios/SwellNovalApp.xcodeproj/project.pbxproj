@@ -12,6 +12,7 @@
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		A10000012CA45674006654EE /* ReaderFontLoader.m in Sources */ = {isa = PBXBuildFile; fileRef = A10000022CA45674006654EE /* ReaderFontLoader.m */; };
+		B20000012CA45674006654EE /* Orientation.m in Sources */ = {isa = PBXBuildFile; fileRef = B20000022CA45674006654EE /* Orientation.m */; };
 		FBAB9473DE8B469E836C9F57 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
@@ -41,6 +42,8 @@
 		A22F66C1AC3543ECA4F2021B /* FontAwesome6_Solid.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = FontAwesome6_Solid.ttf; path = "../node_modules/react-native-vector-icons/Fonts/FontAwesome6_Solid.ttf"; sourceTree = "<group>"; };
 		A3290EAF79CC42B29999530B /* Octicons.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = Octicons.ttf; path = "../node_modules/react-native-vector-icons/Fonts/Octicons.ttf"; sourceTree = "<group>"; };
 		ACF3EC8F63D44760814AE88F /* Feather.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = Feather.ttf; path = "../node_modules/react-native-vector-icons/Fonts/Feather.ttf"; sourceTree = "<group>"; };
+		B20000022CA45674006654EE /* Orientation.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = Orientation.m; path = SwellNovalApp/Orientation.m; sourceTree = "<group>"; };
+		B20000032CA45674006654EE /* Orientation.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = Orientation.h; path = SwellNovalApp/Orientation.h; sourceTree = "<group>"; };
 		B3AEE372FD444F9A80C1938B /* FontAwesome6_Brands.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = FontAwesome6_Brands.ttf; path = "../node_modules/react-native-vector-icons/Fonts/FontAwesome6_Brands.ttf"; sourceTree = "<group>"; };
 		B9715F3AFCC042BA838EBC85 /* AntDesign.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = AntDesign.ttf; path = "../node_modules/react-native-vector-icons/Fonts/AntDesign.ttf"; sourceTree = "<group>"; };
 		D9C05EBB7D7F4C86B704AC66 /* Ionicons.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = Ionicons.ttf; path = "../node_modules/react-native-vector-icons/Fonts/Ionicons.ttf"; sourceTree = "<group>"; };
@@ -68,6 +71,8 @@
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				A10000022CA45674006654EE /* ReaderFontLoader.m */,
 				A10000032CA45674006654EE /* ReaderFontLoader.h */,
+				B20000022CA45674006654EE /* Orientation.m */,
+				B20000032CA45674006654EE /* Orientation.h */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
@@ -299,6 +304,7 @@
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				A10000012CA45674006654EE /* ReaderFontLoader.m in Sources */,
+				B20000012CA45674006654EE /* Orientation.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

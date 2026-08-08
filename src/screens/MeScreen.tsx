@@ -25,6 +25,7 @@ import {
   listWebDavBackups,
   testWebDavConnection,
   uploadWebDavBackup,
+  WebDavConfig,
   WebDavBackupFile,
 } from '../services/webdav/client';
 import {
@@ -65,7 +66,7 @@ export default function MeScreen({
   } = useLibraryBackup();
   const [backupBusy, setBackupBusy] = React.useState(false);
   const [cloudBusy, setCloudBusy] = React.useState(false);
-  const [webDav, setWebDav] = React.useState({ endpoint: '', username: '', password: '', directory: 'qingdu-backups' });
+  const [webDav, setWebDav] = React.useState<WebDavConfig>({ endpoint: '', username: '', password: '', directory: 'qingdu-backups', autoBackup: true });
   const [cloudFiles, setCloudFiles] = React.useState<WebDavBackupFile[]>([]);
   const [cloudFilesLoaded, setCloudFilesLoaded] = React.useState(false);
   const [cloudFilesError, setCloudFilesError] = React.useState<string | null>(null);
@@ -198,6 +199,8 @@ export default function MeScreen({
         const savedConfig = {
           ...credentials,
           directory: credentials.directory || 'qingdu-backups',
+          // 旧凭据没有开关字段时默认启用；用户曾明确关闭才尊重关闭选择。
+          autoBackup: credentials.autoBackup !== false,
         };
         setWebDav(savedConfig);
         // 进入云备份页后直接读取列表，让连接是否可用由真实备份数据反馈；按钮仍可用于失败重试。
@@ -215,7 +218,7 @@ export default function MeScreen({
     setCloudBusy(true);
     try {
       await clearWebDavCredentials();
-      setWebDav({ endpoint: '', username: '', password: '', directory: 'qingdu-backups' });
+      setWebDav({ endpoint: '', username: '', password: '', directory: 'qingdu-backups', autoBackup: true });
       setCloudFiles([]);
       setCloudFilesLoaded(false);
       setCloudFilesError(null);
@@ -455,9 +458,33 @@ export default function MeScreen({
           <Input label="用户名" value={webDav.username} onChangeText={username => setWebDav(value => ({ ...value, username }))} autoCapitalize="none" />
           <Input label="密码" value={webDav.password} onChangeText={password => setWebDav(value => ({ ...value, password }))} secureTextEntry autoCapitalize="none" />
           <Input label="云端目录" value={webDav.directory} onChangeText={directory => setWebDav(value => ({ ...value, directory }))} autoCapitalize="none" />
+          <View style={styles.autoBackupRow}>
+            <View style={styles.autoBackupInfo}>
+              <Text style={[styles.settingTitle, { color: theme.colors.text }]}>阅读时自动备份</Text>
+              <Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>前台连续阅读满 10 分钟后上传一次</Text>
+              {webDav.lastAutoBackupAt ? <Text variant="caption" color="textSecondary" style={styles.autoBackupTime}>上次自动备份：{new Date(webDav.lastAutoBackupAt).toLocaleString()}</Text> : null}
+            </View>
+            <Switch
+              value={!!webDav.autoBackup}
+              disabled={!webDav.endpoint.trim() || !webDav.username.trim() || !webDav.password}
+              onValueChange={async autoBackup => {
+                const next = { ...webDav, autoBackup };
+                setWebDav(next);
+                try {
+                  await saveWebDavCredentials(next);
+                  showMessage(autoBackup ? '已开启自动备份' : '已关闭自动备份', autoBackup ? '阅读满 10 分钟后会自动上传。' : '仍可随时手动备份。');
+                } catch (error) {
+                  setWebDav(webDav);
+                  showMessage('保存失败', webDavErrorMessage(error));
+                }
+              }}
+              trackColor={{ false: theme.colors.border, true: theme.colors.accentDark }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
           <View style={styles.backupActions}>
             <Button title="刷新备份" variant="outline" size="small" loading={cloudBusy} disabled={cloudBusy} onPress={() => { connectAndRefreshWebDav(); }} style={styles.backupAction} />
-            <Button title="上传备份" size="small" loading={cloudBusy} disabled={!libraryHydrated || cloudBusy} onPress={() => { handleUploadWebDav(); }} style={styles.backupAction} />
+            <Button title="立即备份" size="small" loading={cloudBusy} disabled={!libraryHydrated || cloudBusy} onPress={() => { handleUploadWebDav(); }} style={styles.backupAction} />
           </View>
           <Pressable disabled={cloudBusy} onPress={() => { handleClearWebDavCredentials(); }} style={styles.clearCredentials}>
             <Text style={{ color: theme.colors.danger, fontSize: 13 }}>清除已保存的 WebDAV 凭据</Text>
@@ -807,6 +834,13 @@ const styles = StyleSheet.create({
     paddingBottom: 15,
   },
   backupAction: { flex: 1 },
+  autoBackupRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    marginBottom: 14,
+  },
+  autoBackupInfo: { flex: 1, paddingRight: 12 },
+  autoBackupTime: { marginTop: 4 },
   settingsEntry: {
     alignItems: 'center',
     borderRadius: 8,

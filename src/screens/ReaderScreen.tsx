@@ -13,12 +13,15 @@ import {
   Easing,
   BackHandler,
   Alert,
+  Image,
+  ImageBackground,
   useWindowDimensions,
   InteractionManager,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Brightness from '../native/Brightness';
+import * as Orientation from '../native/Orientation';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { Icon } from '../components';
@@ -34,6 +37,7 @@ import {
   useReaderSettings,
   useReaderDisplay,
   useSetReaderTheme,
+  useSetReaderBackgroundOpacity,
   useAdjustFontSize,
   useSetLineHeightIndex,
   useSetReaderFont,
@@ -55,7 +59,14 @@ import {
   NOVEL_GOLD,
   READER_THEMES,
   ReaderThemeKey,
+  getReaderChrome,
+  isReaderNightTheme,
 } from '../theme/readerThemes';
+import {
+  getReaderArtworkOpacity,
+  READER_BACKGROUND_ARTWORK,
+  READER_BACKGROUND_DECORATION,
+} from '../theme/readerBackgroundAssets';
 import type { Chapter } from '../store/types/book';
 import {
   isBadChapterTitle,
@@ -101,6 +112,7 @@ import {
 import { resolveChapterSearchIndex } from '../utils/chapterSearch';
 import { getForwardPrefetchIndices } from '../utils/chapterPrefetch';
 import { useReaderGuards } from './reader/useReaderGuards';
+import { useWebDavAutoBackup } from '../services/webdav/useWebDavAutoBackup';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
@@ -156,7 +168,36 @@ function needsDrawerTitleResolve(chapter: Chapter): boolean {
 }
 
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
-const THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
+const SOLID_THEME_ORDER: ReaderThemeKey[] = ['paper', 'gray', 'green', 'night'];
+const SCENIC_THEME_ORDER: ReaderThemeKey[] = [
+  'cosmos',
+  'lake',
+  'bamboo',
+  'sunset',
+];
+/** 一级设置只保留高频且差异明显的四种背景，其余主题继续在完整背景面板中选择。 */
+const QUICK_THEME_ORDER: ReaderThemeKey[] = [
+  'paper',
+  'green',
+  'cosmos',
+  'bamboo',
+];
+const BACKGROUND_INTENSITY_PRESETS = [
+  { label: '淡', value: 0.3 },
+  { label: '适中', value: 0.5 },
+  { label: '清晰', value: 0.75 },
+  { label: '原图', value: 1 },
+] as const;
+
+function closestBackgroundIntensity(value: number): number {
+  let closest: number = BACKGROUND_INTENSITY_PRESETS[0].value;
+  for (const preset of BACKGROUND_INTENSITY_PRESETS) {
+    if (Math.abs(preset.value - value) < Math.abs(closest - value)) {
+      closest = preset.value;
+    }
+  }
+  return closest;
+}
 /**
  * 正文左右固定留白。字号和字体只改变排版测量，不参与边距计算，避免切换设置后
  * 阅读列左右跳动；28pt 延续大字号（36）下已经确认过的视觉间距。
@@ -333,6 +374,8 @@ export default function ReaderScreen() {
   const progressHintBottom =
     Platform.OS === 'web' ? 10 : Math.max(insets.bottom, 10);
   const { bookId, openDrawer } = route.params;
+  // 仅阅读器存活期间检查自动备份，避免书架浏览也产生不必要的云端上传。
+  const { trackReadingPosition } = useWebDavAutoBackup();
 
   const books = useAllBooks();
   const book = books.find(b => b.id === bookId);
@@ -357,11 +400,12 @@ export default function ReaderScreen() {
   });
 
   const settings = useReaderSettings();
-  const display = useReaderDisplay();
+  const storedDisplay = useReaderDisplay();
   // 阅读正文字体：随设置切换，远程字体就绪后自动重渲染；用于正文与分页测量。
   const bodyFont = useReaderFontFamily();
   const fontDownloadBusy = isAnyFontLoading();
   const setReaderTheme = useSetReaderTheme();
+  const setReaderBackgroundOpacity = useSetReaderBackgroundOpacity();
   const { inc: incFont, dec: decFont } = useAdjustFontSize();
   const setLineHeightIndex = useSetLineHeightIndex();
   const setReaderFont = useSetReaderFont();
@@ -379,7 +423,7 @@ export default function ReaderScreen() {
     navigation.setOptions({
       statusBarHidden: !isToolbarVisible,
       statusBarAnimation: 'fade',
-      statusBarStyle: settings.theme === 'night' ? 'light' : 'dark',
+      statusBarStyle: isReaderNightTheme(settings.theme) ? 'light' : 'dark',
     });
   }, [isToolbarVisible, navigation, settings.theme]);
   React.useEffect(
@@ -407,13 +451,81 @@ export default function ReaderScreen() {
   const toggleBookmark = useToggleBookmark();
 
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [backgroundOpen, setBackgroundOpen] = React.useState(false);
+  const [backgroundPreviewTheme, setBackgroundPreviewTheme] =
+    React.useState<ReaderThemeKey>(settings.theme);
+  const [backgroundPreviewOpacity, setBackgroundPreviewOpacity] =
+    React.useState(settings.backgroundOpacity ?? 0.45);
+  const [backgroundCategory, setBackgroundCategory] = React.useState<
+    'solid' | 'scenic'
+  >(() => READER_THEMES[settings.theme].category);
+  const [readerOrientation, setReaderOrientation] = React.useState<
+    Orientation.AppOrientation
+  >('portrait');
   const [drawerOpen, setDrawerOpen] = React.useState(!!openDrawer);
+
+  React.useEffect(() => {
+    // 阅读页每次进入都从竖屏开始，离开前也恢复竖屏，避免横屏状态泄漏到书架等页面。
+    Orientation.lockTo('portrait');
+    return () => Orientation.lockTo('portrait');
+  }, []);
+
+  const toggleReaderOrientation = React.useCallback(() => {
+    const next = readerOrientation === 'portrait' ? 'landscape' : 'portrait';
+    setReaderOrientation(next);
+    Orientation.lockTo(next);
+    setToolbarVisible(false);
+  }, [readerOrientation, setToolbarVisible]);
+  // 目录首次挂载会先渲染列表顶部、再定位当前章；定位完成前锁住条目，避免快速点击误入第一章。
+  const [drawerPositioning, setDrawerPositioning] = React.useState(
+    !!openDrawer,
+  );
 
   // 工具栏 / 设置面板 / 目录抽屉的进出场过渡。
   const barsTransition = useOverlayTransition(isToolbarVisible);
   const sheetTransition = useOverlayTransition(settingsOpen);
+  const backgroundTransition = useOverlayTransition(backgroundOpen);
   const drawerTransition = useOverlayTransition(drawerOpen);
   const [sheetHeight, setSheetHeight] = React.useState(420);
+  const [backgroundSheetHeight, setBackgroundSheetHeight] = React.useState(330);
+
+  const activeThemeKey = backgroundOpen
+    ? backgroundPreviewTheme
+    : settings.theme;
+  const activeBackgroundOpacity = backgroundOpen
+    ? backgroundPreviewOpacity
+    : settings.backgroundOpacity ?? 0.45;
+  const display = React.useMemo(
+    () => ({
+      ...storedDisplay,
+      theme: READER_THEMES[activeThemeKey],
+      chrome: getReaderChrome(activeThemeKey),
+      isNight: isReaderNightTheme(activeThemeKey),
+    }),
+    [activeThemeKey, storedDisplay],
+  );
+
+  const openBackgroundStudio = React.useCallback(() => {
+    // 工作台打开时同步当前值；后续每次选择直接持久化，关闭只负责收起面板。
+    setBackgroundPreviewTheme(settings.theme);
+    setBackgroundPreviewOpacity(settings.backgroundOpacity ?? 0.45);
+    setBackgroundCategory(READER_THEMES[settings.theme].category);
+    setSettingsOpen(false);
+    setBackgroundOpen(true);
+  }, [settings.backgroundOpacity, settings.theme]);
+
+  const closeBackgroundStudio = React.useCallback(() => {
+    setBackgroundOpen(false);
+  }, []);
+
+  const updateBackgroundOpacity = React.useCallback(
+    (value: number) => {
+      const next = Math.max(0, Math.min(1, value));
+      setBackgroundPreviewOpacity(next);
+      setReaderBackgroundOpacity(next);
+    },
+    [setReaderBackgroundOpacity],
+  );
 
   // 亮度（仅原生）：进入阅读器记住系统原始亮度、套用已保存的阅读亮度，离开时恢复。
   const [brightnessLevel, setBrightnessLevel] = React.useState(
@@ -592,13 +704,25 @@ export default function ReaderScreen() {
 
   React.useEffect(() => {
     if (!drawerOpen || !drawerTransition.mounted || drawerTab !== 'toc') return;
+    if (drawerList.length === 0) return;
     // 目录不再按搜索词过滤，输入只驱动滚动定位；打开目录时默认把当前阅读章节带到视野中。
     scrollDrawerToIndex(drawerTargetIndex, drawerQuery.trim().length > 0);
+    if (!drawerPositioning) return;
+
+    // 等抽屉动画和列表定位都提交后再放开点击；章节仍在磁盘懒加载时保持锁定。
+    const task = InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => setDrawerPositioning(false)),
+      );
+    });
+    return () => task.cancel();
   }, [
     drawerOpen,
     drawerTab,
     drawerTargetIndex,
     drawerQuery,
+    drawerList.length,
+    drawerPositioning,
     drawerTransition.mounted,
     scrollDrawerToIndex,
   ]);
@@ -667,7 +791,7 @@ export default function ReaderScreen() {
   const [clockText, setClockText] = React.useState(() =>
     formatReaderClock(new Date()),
   );
-  const isNight = settings.theme === 'night';
+  const isNight = isReaderNightTheme(settings.theme);
   const hasBookmark = chapter
     ? bookmarks.some(b => b.chapterId === chapter.id)
     : false;
@@ -912,6 +1036,15 @@ export default function ReaderScreen() {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, chapter?.id, pageIndex, pageProgressPct, scrollPosition, status]);
+
+  React.useEffect(() => {
+    if (status !== 'ready' || !chapter) return;
+    trackReadingPosition({
+      chapterId: chapter.id,
+      pageIndex,
+      pageMode: settings.pageMode,
+    });
+  }, [chapter, pageIndex, settings.pageMode, status, trackReadingPosition]);
 
   // 在线书：当前章正文尚未抓取时按需拉取并缓存，复用现成的 loading / error 态。
   // 本地书章节已带正文，直接置为 ready。effect 以 chapter.id 为键，换章会自动重跑。
@@ -1407,11 +1540,15 @@ export default function ReaderScreen() {
     return () => window.removeEventListener('keydown', onKey);
   }, [settings.pageMode]);
 
-  // 安卓硬件返回键：优先关闭已打开的浮层（设置面板 / 目录抽屉 / 工具栏），
+  // 安卓硬件返回键：优先关闭已打开的浮层（背景工作台 / 设置面板 / 目录抽屉 / 工具栏），
   // 都关闭后才交回导航栈退出阅读页，符合安卓返回习惯。
   React.useEffect(() => {
     if (Platform.OS !== 'android') return;
     const onBack = () => {
+      if (backgroundOpen) {
+        closeBackgroundStudio();
+        return true;
+      }
       if (settingsOpen) {
         setSettingsOpen(false);
         return true;
@@ -1428,37 +1565,28 @@ export default function ReaderScreen() {
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [settingsOpen, drawerOpen, isToolbarVisible, setToolbarVisible]);
+  }, [
+    backgroundOpen,
+    closeBackgroundStudio,
+    settingsOpen,
+    drawerOpen,
+    isToolbarVisible,
+    setToolbarVisible,
+  ]);
 
   const renderPage = React.useCallback(
     ({ item, index }: { item: ReaderPageData; index: number }) => {
       const isLastPage = index === pages.length - 1;
 
       return (
-        <Pressable
-          onPress={(e: any) => {
-            // react-native-web 上 onPress 来自 DOM click，其 nativeEvent 是 MouseEvent，
-            // 没有 locationX，只有 pageX/offsetX；pageX 是相对浏览器视口的坐标，
-            // 大屏下 #root 居中（margin: 0 auto），必须减去面板左偏移才能得到面板内坐标。
-            const ne = e?.nativeEvent ?? {};
-            let x: number;
-            if (ne.locationX != null) {
-              x = ne.locationX;
-            } else if (ne.pageX != null && e?.currentTarget) {
-              const rect = (
-                e.currentTarget as HTMLElement
-              ).getBoundingClientRect();
-              x = ne.pageX - rect.left;
-            } else {
-              x = viewportWidth / 2;
-            }
-            if (x < viewportWidth / 3) {
-              goToPage(-1);
-            } else if (x > (viewportWidth * 2) / 3) {
-              goToPage(1);
-            } else {
-              toggleToolbar();
-            }
+        <ImageBackground
+          source={READER_BACKGROUND_ARTWORK[activeThemeKey]!}
+          resizeMode="stretch"
+          imageStyle={{
+            opacity: getReaderArtworkOpacity(
+              activeThemeKey,
+              activeBackgroundOpacity,
+            ),
           }}
           style={[
             styles.pagePanel,
@@ -1471,73 +1599,108 @@ export default function ReaderScreen() {
             WEB_SNAP_ITEM,
           ]}
         >
-          {item.showHeader && (
-            <>
+          <Pressable
+            onPress={(e: any) => {
+              // react-native-web 上 onPress 来自 DOM click，其 nativeEvent 是 MouseEvent，
+              // 没有 locationX，只有 pageX/offsetX；pageX 是相对浏览器视口的坐标，
+              // 大屏下 #root 居中（margin: 0 auto），必须减去面板左偏移才能得到面板内坐标。
+              const ne = e?.nativeEvent ?? {};
+              let x: number;
+              if (ne.locationX != null) {
+                x = ne.locationX;
+              } else if (ne.pageX != null && e?.currentTarget) {
+                const rect = (
+                  e.currentTarget as HTMLElement
+                ).getBoundingClientRect();
+                x = ne.pageX - rect.left;
+              } else {
+                x = viewportWidth / 2;
+              }
+              if (x < viewportWidth / 3) {
+                goToPage(-1);
+              } else if (x > (viewportWidth * 2) / 3) {
+                goToPage(1);
+              } else {
+                toggleToolbar();
+              }
+            }}
+            // ImageBackground 负责页内原画，Pressable 只承载正文和翻页点击，避免原生分页裁掉绝对定位图片。
+            style={styles.pagePressTarget}
+          >
+            {item.showHeader && (
+              <>
+                <Text
+                  style={[
+                    styles.chapterTitle,
+                    {
+                      fontSize: display.titleSize,
+                      lineHeight: chapterTitleLineHeight,
+                      color: display.theme.text,
+                    },
+                  ]}
+                >
+                  {chapter?.title || book?.title}
+                </Text>
+                <Text
+                  style={[styles.chapterMeta, { color: display.theme.sub }]}
+                >
+                  {book?.title} · {book?.author}
+                </Text>
+              </>
+            )}
+            {item.blocks.length === 0 ? (
               <Text
-                style={[
-                  styles.chapterTitle,
-                  {
-                    fontSize: display.titleSize,
-                    lineHeight: chapterTitleLineHeight,
-                    color: display.theme.text,
-                  },
-                ]}
-              >
-                {chapter?.title || book?.title}
-              </Text>
-              <Text style={[styles.chapterMeta, { color: display.theme.sub }]}>
-                {book?.title} · {book?.author}
-              </Text>
-            </>
-          )}
-          {item.blocks.length === 0 ? (
-            <Text
-              style={{
-                fontFamily: bodyFont,
-                fontSize: display.fontSize,
-                lineHeight: display.fontSize * display.lineHeight,
-                color: display.theme.text,
-                textAlign: 'justify',
-              }}
-            >
-              本章暂无内容
-            </Text>
-          ) : (
-            // 每段独立成块，块间用 marginTop 留段间距（首块不留），页首续段块也不留。
-            item.blocks.map((block, i) => (
-              <Text
-                key={block.startOffset}
-                selectable
                 style={{
                   fontFamily: bodyFont,
                   fontSize: display.fontSize,
                   lineHeight: display.fontSize * display.lineHeight,
                   color: display.theme.text,
                   textAlign: 'justify',
-                  marginTop: i === 0 ? 0 : display.paraGap,
                 }}
               >
-                {
-                  // 分页器保存的换行只用于计算页高，不能作为正文硬换行渲染。
-                  // iOS 会把每个硬换行都视为段落末行，导致两端对齐失效，
-                  // 尤其在 31 等字号下表现为右侧残留一块明显空白。
-                  block.text.replace(/\n/g, '')
-                }
+                本章暂无内容
               </Text>
-            ))
-          )}
-          {isLastPage && (
-            <Text style={[styles.pageEndText, { color: display.theme.sub }]}>
-              {chapter?.nextPageUrl ? '本页完' : '本章完'}
-            </Text>
-          )}
-        </Pressable>
+            ) : (
+              // 每段独立成块，块间用 marginTop 留段间距（首块不留），页首续段块也不留。
+              item.blocks.map((block, i) => (
+                <Text
+                  key={block.startOffset}
+                  selectable
+                  style={{
+                    fontFamily: bodyFont,
+                    fontSize: display.fontSize,
+                    lineHeight: display.fontSize * display.lineHeight,
+                    color: display.theme.text,
+                    textAlign: 'justify',
+                    marginTop: i === 0 ? 0 : display.paraGap,
+                  }}
+                >
+                  {
+                    // 分页器保存的换行只用于计算页高，不能作为正文硬换行渲染。
+                    // iOS 会把每个硬换行都视为段落末行，导致两端对齐失效，
+                    // 尤其在 31 等字号下表现为右侧残留一块明显空白。
+                    block.text.replace(/\n/g, '')
+                  }
+                </Text>
+              ))
+            )}
+            {isLastPage && (
+              <Text
+                style={[styles.pageEndText, { color: display.theme.sub }]}
+              >
+                {chapter?.nextPageUrl ? '本页完' : '本章完'}
+              </Text>
+            )}
+          </Pressable>
+        </ImageBackground>
       );
     },
     [
       book?.author,
       book?.title,
       bodyFont,
+      activeBackgroundOpacity,
+      activeThemeKey,
       chapter?.title,
       chapter?.nextPageUrl,
       display.fontSize,
@@ -1692,6 +1855,23 @@ export default function ReaderScreen() {
         );
       }}
     >
+      {settings.pageMode !== 'page' &&
+        READER_BACKGROUND_ARTWORK[activeThemeKey] && (
+          <Image
+            source={READER_BACKGROUND_ARTWORK[activeThemeKey]!}
+            // 滚动模式只在页面底层绘制一次；翻页模式由各分页单元绘制，避免透明度叠加失真。
+            resizeMode="stretch"
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                opacity: getReaderArtworkOpacity(
+                  activeThemeKey,
+                  activeBackgroundOpacity,
+                ),
+              },
+            ]}
+          />
+        )}
       {status === 'ready' &&
         (settings.pageMode === 'page' ? (
           <>
@@ -1715,7 +1895,8 @@ export default function ReaderScreen() {
               initialNumToRender={2}
               maxToRenderPerBatch={2}
               windowSize={3}
-              removeClippedSubviews
+              // 页面内有绝对定位的边缘原画；iOS 开启裁剪会误删这类子视图，窗口仅保留 3 页，关闭后内存增量可控。
+              removeClippedSubviews={false}
               getItemLayout={getPageLayout}
               initialScrollIndex={initialChapterPageIndex}
               onScrollBeginDrag={() => {
@@ -2055,6 +2236,7 @@ export default function ReaderScreen() {
             label="目录"
             color={display.chrome.ink}
             onPress={() => {
+              setDrawerPositioning(true);
               setDrawerOpen(true);
               setToolbarVisible(false);
             }}
@@ -2072,8 +2254,18 @@ export default function ReaderScreen() {
             icon={isNight ? 'wb-sunny' : 'brightness-2'}
             label={isNight ? '日间' : '夜间'}
             color={display.chrome.ink}
-            onPress={() => setReaderTheme(isNight ? 'paper' : 'night')}
+            onPress={() =>
+              setReaderTheme(isNight ? settings.dayTheme ?? 'paper' : 'night')
+            }
           />
+          {Orientation.isSupported && (
+            <ReaderAction
+              icon="screen-rotation"
+              label={readerOrientation === 'portrait' ? '横屏' : '竖屏'}
+              color={display.chrome.ink}
+              onPress={toggleReaderOrientation}
+            />
+          )}
           <ReaderAction
             icon="tune"
             label="设置"
@@ -2332,54 +2524,87 @@ export default function ReaderScreen() {
               </View>
             </View>
 
-            <View style={{ marginBottom: 18 }}>
-              <Text
-                style={{
-                  color: display.chrome.sheetSub,
-                  fontSize: 12,
-                  marginBottom: 9,
-                }}
-              >
-                阅读背景
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 12 }}>
-                {THEME_ORDER.map(key => {
-                  const t = READER_THEMES[key];
-                  const on = settings.theme === key;
+            <View style={styles.quickThemeSection}>
+              <View style={styles.quickThemeHeader}>
+                <View>
+                  <Text
+                    style={{ color: display.chrome.sheetSub, fontSize: 12 }}
+                  >
+                    常用背景
+                  </Text>
+                  <Text
+                    style={{ color: display.chrome.sheetSub, fontSize: 10 }}
+                  >
+                    点击立即生效
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="打开全部阅读背景"
+                  onPress={openBackgroundStudio}
+                  style={styles.quickThemeMore}
+                >
+                  <Text style={{ color: NOVEL_ACCENT, fontSize: 12 }}>
+                    更多背景
+                  </Text>
+                  <Icon name="chevron-right" size={16} color={NOVEL_ACCENT} />
+                </Pressable>
+              </View>
+              <View style={styles.quickThemeRow}>
+                {QUICK_THEME_ORDER.map(key => {
+                  const theme = READER_THEMES[key];
+                  const selected = settings.theme === key;
+                  const artwork =
+                    READER_BACKGROUND_DECORATION[key] ||
+                    READER_BACKGROUND_ARTWORK[key];
                   return (
                     <Pressable
                       key={key}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`快捷阅读背景 ${theme.label}`}
                       onPress={() => setReaderTheme(key)}
-                      style={styles.themeItem}
+                      style={[
+                        styles.quickThemeItem,
+                        {
+                          borderColor: selected
+                            ? NOVEL_ACCENT
+                            : display.chrome.hair,
+                          backgroundColor: selected
+                            ? `${NOVEL_ACCENT}12`
+                            : 'transparent',
+                        },
+                      ]}
                     >
                       <View
                         style={[
-                          styles.swatch,
-                          {
-                            backgroundColor: t.bg,
-                            borderColor: on
-                              ? NOVEL_ACCENT
-                              : display.chrome.hair,
-                          },
+                          styles.quickThemePreview,
+                          { backgroundColor: theme.bg },
                         ]}
                       >
-                        <Text
-                          style={{
-                            color: t.text,
-                            fontFamily: SERIF_FONT,
-                            fontSize: 16,
-                          }}
-                        >
-                          文
-                        </Text>
+                        {artwork && (
+                          <Image
+                            source={artwork}
+                            resizeMode="stretch"
+                            style={StyleSheet.absoluteFill}
+                          />
+                        )}
+                        {selected && (
+                          <View style={styles.quickThemeCheck}>
+                            <Icon name="check" size={10} color="#fff" />
+                          </View>
+                        )}
                       </View>
                       <Text
+                        numberOfLines={1}
                         style={{
-                          color: on ? NOVEL_ACCENT : display.chrome.sheetSub,
-                          fontSize: 11,
+                          color: selected
+                            ? NOVEL_ACCENT
+                            : display.chrome.sheetInk,
+                          fontSize: 10.5,
                         }}
                       >
-                        {t.label}
+                        {theme.label}
                       </Text>
                     </Pressable>
                   );
@@ -2428,6 +2653,232 @@ export default function ReaderScreen() {
                 })}
               </View>
             </View>
+          </Animated.View>
+        </>
+      )}
+
+      {backgroundTransition.mounted && (
+        <>
+          <Animated.View
+            style={[
+              styles.backgroundOverlay,
+              { opacity: backgroundTransition.value },
+            ]}
+          >
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={closeBackgroundStudio}
+            />
+          </Animated.View>
+          <Animated.View
+            onLayout={e =>
+              setBackgroundSheetHeight(e.nativeEvent.layout.height)
+            }
+            style={[
+              styles.backgroundSheet,
+              {
+                backgroundColor: display.chrome.sheetBg,
+                transform: [
+                  {
+                    translateY: backgroundTransition.value.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [backgroundSheetHeight + 40, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <View
+              style={[styles.grabber, { backgroundColor: display.chrome.hair }]}
+            />
+            <View style={styles.backgroundHeader}>
+              <View>
+                <Text
+                  style={[
+                    styles.backgroundTitle,
+                    { color: display.chrome.sheetInk },
+                  ]}
+                >
+                  阅读背景
+                </Text>
+                <Text
+                  style={{ color: display.chrome.sheetSub, fontSize: 10.5 }}
+                >
+                  点击即生效
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="取消背景选择"
+                onPress={closeBackgroundStudio}
+                style={styles.backgroundClose}
+              >
+                <Icon name="close" size={22} color={display.chrome.sheetSub} />
+              </Pressable>
+            </View>
+
+            <View style={styles.backgroundTabs}>
+              {(
+                [
+                  { key: 'solid', label: '素色' },
+                  { key: 'scenic', label: '意境' },
+                ] as const
+              ).map(item => {
+                const active = backgroundCategory === item.key;
+                return (
+                  <Pressable
+                    key={item.key}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: active }}
+                    onPress={() => setBackgroundCategory(item.key)}
+                    style={styles.backgroundTab}
+                  >
+                    <Text
+                      style={{
+                        color: active
+                          ? NOVEL_ACCENT
+                          : display.chrome.sheetSub,
+                        fontSize: 15,
+                        fontWeight: active ? '600' : '400',
+                      }}
+                    >
+                      {item.label}
+                    </Text>
+                    {active && <View style={styles.backgroundTabIndicator} />}
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.backgroundThemeList}
+            >
+              {(backgroundCategory === 'solid'
+                ? SOLID_THEME_ORDER
+                : SCENIC_THEME_ORDER
+              ).map(key => {
+                const theme = READER_THEMES[key];
+                const selected = backgroundPreviewTheme === key;
+                const artwork =
+                  READER_BACKGROUND_DECORATION[key] ||
+                  READER_BACKGROUND_ARTWORK[key];
+                return (
+                  <Pressable
+                    key={key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`阅读背景 ${theme.label}`}
+                    onPress={() => {
+                      setBackgroundPreviewTheme(key);
+                      setReaderTheme(key);
+                    }}
+                    style={styles.backgroundThemeItem}
+                  >
+                    <View
+                      style={[
+                        styles.backgroundThemePreview,
+                        {
+                          backgroundColor: theme.bg,
+                          borderColor: selected
+                            ? NOVEL_ACCENT
+                            : display.chrome.hair,
+                        },
+                      ]}
+                    >
+                      {artwork ? (
+                        <Image
+                          source={artwork}
+                          resizeMode="contain"
+                          // 缩略卡片必须给出明确尺寸；部分 iOS Release 构建不会为 absoluteFill 图片推导父级尺寸。
+                          style={styles.backgroundThemeArtwork}
+                        />
+                      ) : (
+                        <Text
+                          style={{
+                            color: theme.text,
+                            fontFamily: SERIF_FONT,
+                            fontSize: 23,
+                          }}
+                        >
+                          文
+                        </Text>
+                      )}
+                      {selected && (
+                        <View style={styles.backgroundCheck}>
+                          <Icon name="check" size={13} color="#fff" />
+                        </View>
+                      )}
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        color: selected
+                          ? NOVEL_ACCENT
+                          : display.chrome.sheetSub,
+                        fontSize: 11,
+                      }}
+                    >
+                      {theme.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {READER_THEMES[backgroundPreviewTheme].category === 'scenic' && (
+              <View style={styles.backgroundIntensitySection}>
+                <Text
+                  style={{ color: display.chrome.sheetInk, fontSize: 12 }}
+                >
+                  背景浓度
+                </Text>
+                <View style={styles.backgroundIntensityRow}>
+                  {BACKGROUND_INTENSITY_PRESETS.map(preset => {
+                    const selected =
+                      closestBackgroundIntensity(backgroundPreviewOpacity) ===
+                      preset.value;
+                    return (
+                      <Pressable
+                        key={preset.label}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        accessibilityLabel={`背景浓度 ${preset.label} ${Math.round(
+                          preset.value * 100,
+                        )}%`}
+                        // 离散点击只触发一次图片更新，避免拖动时连续重绘原生分页导致闪动。
+                        onPress={() => updateBackgroundOpacity(preset.value)}
+                        style={[
+                          styles.backgroundIntensityButton,
+                          {
+                            borderColor: selected
+                              ? NOVEL_ACCENT
+                              : display.chrome.hair,
+                            backgroundColor: selected
+                              ? NOVEL_ACCENT
+                              : 'transparent',
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            color: selected
+                              ? '#fff'
+                              : display.chrome.sheetInk,
+                            fontSize: 11.5,
+                          }}
+                        >
+                          {preset.label} {Math.round(preset.value * 100)}%
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
           </Animated.View>
         </>
       )}
@@ -2670,6 +3121,8 @@ export default function ReaderScreen() {
                     hasUsableChapterContent(c, book?.source?.name);
                   return (
                     <Pressable
+                      disabled={drawerPositioning}
+                      accessibilityState={{ disabled: drawerPositioning }}
                       onPress={() => goToChapter(idx)}
                       style={[
                         styles.chapterRow,
@@ -2677,6 +3130,7 @@ export default function ReaderScreen() {
                           backgroundColor: isCur
                             ? 'rgba(46,107,94,.1)'
                             : 'transparent',
+                          opacity: drawerPositioning ? 0.56 : 1,
                         },
                       ]}
                     >
@@ -2767,6 +3221,7 @@ const styles = StyleSheet.create({
   pagePanel: {
     paddingHorizontal: PAGE_HORIZONTAL_PADDING,
   },
+  pagePressTarget: { flex: 1 },
   pageEndText: {
     marginTop: 18,
     fontSize: 12,
@@ -2804,7 +3259,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: 'center',
+    zIndex: 2,
   },
+  // 原生分页列表可能拥有独立合成层；显式抬高透明装饰，才能稳定显示在正文页之上。
   readerStatus: {
     position: 'absolute',
     left: 0,
@@ -2835,6 +3292,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
+    zIndex: 2,
   },
   barBtn: {
     width: 40,
@@ -2857,6 +3315,7 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 22,
     borderTopWidth: 1,
+    zIndex: 2,
   },
   chapterNav: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   sliderTrack: { flex: 1, height: 4, borderRadius: 2, position: 'relative' },
@@ -2888,6 +3347,17 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: 'rgba(0,0,0,.35)',
+    zIndex: 3,
+  },
+  // 背景工作台本身就是实时预览，遮罩只做层级提示，不能像普通弹窗一样压暗正文。
+  backgroundOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,.07)',
+    zIndex: 3,
   },
   sheet: {
     position: 'absolute',
@@ -2898,6 +3368,19 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     padding: 20,
     paddingTop: 8,
+    zIndex: 4,
+  },
+  backgroundSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 6,
+    paddingBottom: 24,
+    zIndex: 4,
   },
   grabber: {
     width: 38,
@@ -2938,12 +3421,136 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  themeItem: { flex: 1, alignItems: 'center', gap: 6 },
-  swatch: {
-    width: 44,
-    height: 44,
+  quickThemeSection: {
+    marginBottom: 18,
+    gap: 9,
+  },
+  quickThemeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  quickThemeMore: {
+    minHeight: 32,
+    paddingLeft: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  quickThemeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  quickThemeItem: {
+    flex: 1,
+    minWidth: 0,
+    height: 60,
+    borderWidth: 1,
     borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  quickThemePreview: {
+    width: 28,
+    height: 28,
+    overflow: 'hidden',
+    borderRadius: 8,
+  },
+  quickThemeCheck: {
+    position: 'absolute',
+    right: 2,
+    bottom: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: NOVEL_ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backgroundHeader: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  backgroundTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  backgroundClose: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backgroundTabs: {
+    flexDirection: 'row',
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  backgroundTab: {
+    minWidth: 72,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  backgroundTabIndicator: {
+    position: 'absolute',
+    bottom: 1,
+    width: 24,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: NOVEL_GOLD,
+  },
+  backgroundThemeList: {
+    gap: 12,
+    paddingRight: 8,
+    paddingBottom: 16,
+  },
+  backgroundThemeItem: {
+    width: 92,
+    alignItems: 'center',
+    gap: 7,
+  },
+  backgroundThemePreview: {
+    width: 92,
+    height: 86,
+    borderRadius: 12,
     borderWidth: 2,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backgroundThemeArtwork: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+  },
+  backgroundCheck: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: NOVEL_ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backgroundIntensitySection: {
+    gap: 8,
+  },
+  backgroundIntensityRow: {
+    flexDirection: 'row',
+    gap: 7,
+    marginBottom: 0,
+  },
+  backgroundIntensityButton: {
+    flex: 1,
+    height: 34,
+    borderWidth: 1,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },

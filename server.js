@@ -50,6 +50,36 @@ const MOBILE_UA =
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 ' +
   'Mobile/15E148 Safari/604.1';
 
+// “发现”页只会读取这两个书源首页。首页内容变化频率低，却容易受到上游限流影响，
+// 因此由服务端共享 10 分钟缓存；抓取失败时仍返回最近一次成功内容，避免真机首屏空白。
+const RECOMMENDATION_CACHE_TTL_MS = 10 * 60 * 1000;
+const RECOMMENDATION_STALE_TTL_MS = 24 * 60 * 60 * 1000;
+const recommendationCache = new Map();
+const RECOMMENDATION_URLS = new Set([
+  'http://wap.bookshuku.org/txt/',
+  'https://www.mingzw.net/',
+]);
+
+function recommendationCacheKey(target) {
+  try {
+    const parsed = new URL(target);
+    // 客户端为避免章节旧缓存会附加时间戳；推荐首页需要共享缓存，故忽略这个参数。
+    parsed.searchParams.delete('__nvl_proxy_ts');
+    const normalized = parsed.toString();
+    return RECOMMENDATION_URLS.has(normalized) ? normalized : null;
+  } catch {
+    return null;
+  }
+}
+
+function sendProxyHtml(res, html, cacheState) {
+  res
+    .type('text/html; charset=utf-8')
+    .set('cache-control', 'no-store')
+    .set('x-source-cache', cacheState)
+    .send(html);
+}
+
 app.use('/proxy', (req, res) => {
   // Express app.use('/proxy', fn) 已剥掉前缀，req.url 形如 /<scheme>/<host>/<上游路径>
   const m = /^\/(https?)\/([^/]+)(\/.*)?$/.exec(req.url || '');
@@ -62,6 +92,12 @@ app.use('/proxy', (req, res) => {
     return;
   }
   const target = `${m[1]}://${host}${m[3] || '/'}`;
+  const cacheKey = recommendationCacheKey(target);
+  const cached = cacheKey ? recommendationCache.get(cacheKey) : null;
+  if (cached && Date.now() - cached.savedAt < RECOMMENDATION_CACHE_TTL_MS) {
+    sendProxyHtml(res, cached.html, 'HIT');
+    return;
+  }
 
   execFile(
     'curl',
@@ -89,13 +125,18 @@ app.use('/proxy', (req, res) => {
     (err, stdout) => {
       if (err) {
         console.error('[source-proxy]', err.message);
+        // 上游临时不可达时，宁可返回当天已验证的旧推荐，也不让发现页等待到超时。
+        if (cached && Date.now() - cached.savedAt < RECOMMENDATION_STALE_TTL_MS) {
+          sendProxyHtml(res, cached.html, 'STALE');
+          return;
+        }
         res.status(502).type('text/plain').send('Proxy upstream error');
         return;
       }
-      res
-        .type('text/html; charset=utf-8')
-        .set('cache-control', 'no-store')
-        .send(stdout);
+      if (cacheKey && stdout.trim()) {
+        recommendationCache.set(cacheKey, { html: stdout, savedAt: Date.now() });
+      }
+      sendProxyHtml(res, stdout, cacheKey ? 'MISS' : 'BYPASS');
     },
   );
 });

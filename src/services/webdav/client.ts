@@ -8,6 +8,9 @@ export interface WebDavConfig {
   username: string;
   password: string;
   directory?: string;
+  /** 仅在前台阅读时启用，避免后台网络任务被 iOS 非确定性终止。 */
+  autoBackup?: boolean;
+  lastAutoBackupAt?: number;
 }
 
 export interface WebDavBackupFile {

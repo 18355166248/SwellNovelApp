@@ -7,6 +7,9 @@ import ReactAppDependencyProvider
 class AppDelegate: UIResponder, UIApplicationDelegate {
   var window: UIWindow?
 
+  // 默认及非阅读页面只允许竖屏；阅读页通过原生桥显式改成单一横屏或竖屏方向。
+  @objc var orientationMask: UIInterfaceOrientationMask = .portrait
+
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
@@ -36,6 +39,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     )
 
     return true
+  }
+
+  func application(
+    _ application: UIApplication,
+    supportedInterfaceOrientationsFor window: UIWindow?
+  ) -> UIInterfaceOrientationMask {
+    orientationMask
   }
 }
 
