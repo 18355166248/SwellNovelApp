@@ -1,4 +1,5 @@
 import React from 'react';
+import { useAtomValue } from 'jotai';
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +22,7 @@ import {
   useSetChapters,
   useRemoveBook,
   useCheckFollowedBooks,
+  libraryHydratedAtom,
 } from '../store';
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
@@ -60,6 +62,30 @@ function coverTitleFontSize(title: string, base: number) {
   return title.length >= 3 ? base - 2 : base;
 }
 
+function isToday(timestamp?: number) {
+  if (!timestamp) return false;
+  const checked = new Date(timestamp);
+  const now = new Date();
+  return (
+    checked.getFullYear() === now.getFullYear() &&
+    checked.getMonth() === now.getMonth() &&
+    checked.getDate() === now.getDate()
+  );
+}
+
+function formatFollowResult(result: {
+  updated: number;
+  failed: number;
+  cached: number;
+}) {
+  if (result.updated > 0) {
+    return result.cached > 0
+      ? `发现 ${result.updated} 个新章节，已自动缓存 ${result.cached} 章`
+      : `发现 ${result.updated} 个新章节`;
+  }
+  return result.failed ? `${result.failed} 本检查失败` : '追更书籍已是最新';
+}
+
 export default function BookshelfScreen() {
   const { theme } = useTheme();
   const navigation = useNavigation<NavigationProp>();
@@ -68,6 +94,7 @@ export default function BookshelfScreen() {
   const setChapters = useSetChapters();
   const removeBook = useRemoveBook();
   const checkFollowedBooks = useCheckFollowedBooks();
+  const libraryHydrated = useAtomValue(libraryHydratedAtom);
   const [selectedBookIds, setSelectedBookIds] = React.useState<string[]>([]);
   const [pendingDeleteIds, setPendingDeleteIds] = React.useState<string[] | null>(null);
   const [selectionMode, setSelectionMode] = React.useState(false);
@@ -93,6 +120,17 @@ export default function BookshelfScreen() {
   });
   const [followChecking, setFollowChecking] = React.useState(false);
   const [followMessage, setFollowMessage] = React.useState('');
+  const automaticCheckStartedRef = React.useRef(false);
+  const screenMountedRef = React.useRef(true);
+  const checkFollowedBooksRef = React.useRef(checkFollowedBooks);
+  checkFollowedBooksRef.current = checkFollowedBooks;
+
+  React.useEffect(() => {
+    screenMountedRef.current = true;
+    return () => {
+      screenMountedRef.current = false;
+    };
+  }, []);
 
   const handleImportTxt = React.useCallback(async () => {
     if (importState.active) return;
@@ -137,6 +175,9 @@ export default function BookshelfScreen() {
   const continuing = books.filter(b => b.progress < 100).length;
   const followedCount = books.filter(b => b.following).length;
   const unreadUpdates = books.reduce((sum, book) => sum + (book.unreadUpdates || 0), 0);
+  const needsDailyFollowCheck = books.some(
+    book => book.following && !isToday(book.lastUpdateCheckAt),
+  );
   const shown = React.useMemo(() => {
     const keyword = shelfQuery.trim().toLowerCase();
     return applyFilter(books, filter).filter(book => {
@@ -153,12 +194,36 @@ export default function BookshelfScreen() {
     if (followChecking || followedCount === 0) return;
     setFollowChecking(true);
     try {
-      const result = await checkFollowedBooks();
-      setFollowMessage(result.updated > 0 ? `发现 ${result.updated} 个新章节` : result.failed ? `${result.failed} 本检查失败` : '追更书籍已是最新');
+      const result = await checkFollowedBooks({ cacheNewChapters: true });
+      setFollowMessage(formatFollowResult(result));
     } finally {
       setFollowChecking(false);
     }
   };
+
+  React.useEffect(() => {
+    if (
+      !libraryHydrated ||
+      followedCount === 0 ||
+      !needsDailyFollowCheck ||
+      automaticCheckStartedRef.current
+    ) {
+      return;
+    }
+
+    automaticCheckStartedRef.current = true;
+    setFollowChecking(true);
+    checkFollowedBooksRef.current({ cacheNewChapters: true })
+      .then(result => {
+        // 自动检查保持安静：只有发现新章时才给出文字反馈，失败可由用户手动重试。
+        if (screenMountedRef.current && result.updated > 0) {
+          setFollowMessage(formatFollowResult(result));
+        }
+      })
+      .finally(() => {
+        if (screenMountedRef.current) setFollowChecking(false);
+      });
+  }, [followedCount, libraryHydrated, needsDailyFollowCheck]);
 
   return (
     <View

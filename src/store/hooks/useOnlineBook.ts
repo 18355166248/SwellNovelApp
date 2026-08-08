@@ -8,7 +8,10 @@ import { Book, Chapter } from '../types/book';
 import { addOnlineBook } from '../../utils/addOnlineBook';
 import { getSourceById } from '../../services/source/registry';
 import type { ParsedChapterContent } from '../../services/source/types';
-import { saveBookChapters } from '../../utils/libraryStorage';
+import {
+  loadBookChapters,
+  saveBookChapters,
+} from '../../utils/libraryStorage';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
   fetchRenderedContent,
@@ -567,7 +570,11 @@ export const useEnsureChapterContent = () => {
 export const useLoadNextChapterPage = () => {
   const store = useStore();
 
-  return async (bookId: string, index: number): Promise<Chapter | null> => {
+  return async (
+    bookId: string,
+    index: number,
+    options: EnsureChapterOptions = {},
+  ): Promise<Chapter | null> => {
     const startedAt = Date.now();
     const chapters = store.get(chaptersAtom)[bookId];
     const chapter = chapters?.[index];
@@ -585,7 +592,9 @@ export const useLoadNextChapterPage = () => {
 
     const parsed = unpackChapterContent(
       await withTimeout(
-        source.parseChapterContent(chapter.nextPageUrl, { priority: 'high' }),
+        source.parseChapterContent(chapter.nextPageUrl, {
+          priority: options.background ? 'low' : 'high',
+        }),
         ENSURE_CHAPTER_TIMEOUT_MS,
         `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
       ),
@@ -777,7 +786,16 @@ export const useCheckBookUpdate = () => {
       author: book.author,
       catalogUrl: book.source.bookUrl,
     });
-    const existing = store.get(chaptersAtom)[bookId] ?? [];
+    let existing = store.get(chaptersAtom)[bookId];
+    if (!existing) {
+      // 章节正文按书懒加载。追更可能发生在用户尚未打开书籍时，必须先恢复旧目录，
+      // 否则会把远端整本目录误判成新增章节，并覆盖本地已缓存正文。
+      const loaded = (await loadBookChapters(bookId)) ?? [];
+      store.set(chaptersAtom, prev =>
+        prev[bookId] ? prev : { ...prev, [bookId]: loaded },
+      );
+      existing = store.get(chaptersAtom)[bookId] ?? loaded;
+    }
     const shouldReplaceCatalog =
       source.id === 'bookshuku' && isBadBookshukuCatalog(existing);
     if (!shouldReplaceCatalog && metas.length <= existing.length) {
@@ -866,19 +884,66 @@ export const useToggleBookFollow = () => {
 export const useCheckFollowedBooks = () => {
   const store = useStore();
   const checkBookUpdate = useCheckBookUpdate();
-  return async () => {
+  const ensureChapterContent = useEnsureChapterContent();
+  const loadNextChapterPage = useLoadNextChapterPage();
+
+  return async (options: { cacheNewChapters?: boolean } = {}) => {
     const followed = store
       .get(booksAtom)
       .filter(book => book.source && book.following);
     let updated = 0;
     let failed = 0;
+    let cached = 0;
+    let cacheFailed = 0;
     for (const book of followed) {
       try {
-        updated += await checkBookUpdate(book.id);
+        const added = await checkBookUpdate(book.id);
+        updated += added;
+        if (added > 0 && options.cacheNewChapters) {
+          const chapters = store.get(chaptersAtom)[book.id] ?? [];
+          const firstNewIndex = Math.max(0, chapters.length - added);
+
+          // 新章缓存严格串行，避免自动追更在后台并发请求触发书源限流。
+          for (let index = firstNewIndex; index < chapters.length; index += 1) {
+            try {
+              let chapter = await ensureChapterContent(book.id, index, {
+                background: true,
+              });
+              while (chapter?.nextPageUrl) {
+                chapter = await loadNextChapterPage(book.id, index, {
+                  background: true,
+                });
+              }
+              if (chapter?.content) cached += 1;
+            } catch {
+              // 单章缓存失败不影响其它新章；正文仍可在真正阅读时再次按需抓取。
+              cacheFailed += 1;
+            }
+          }
+
+          const latest = store.get(chaptersAtom)[book.id];
+          if (latest) {
+            await saveBookChapters(book.id, latest).catch(() => {});
+          }
+        }
       } catch {
         failed += 1;
+        // 自动检查按“尝试日”限频；失败后当天不反复请求，用户仍可手动重试。
+        store.set(booksAtom, prev =>
+          prev.map(item =>
+            item.id === book.id
+              ? { ...item, lastUpdateCheckAt: Date.now() }
+              : item,
+          ),
+        );
       }
     }
-    return { checked: followed.length, updated, failed };
+    return {
+      checked: followed.length,
+      updated,
+      failed,
+      cached,
+      cacheFailed,
+    };
   };
 };

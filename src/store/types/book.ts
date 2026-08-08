@@ -24,7 +24,7 @@ export interface Book {
   totalChapters?: number;
   // 存在则为网络书源书籍：本地 TXT 无此字段。章节正文按需从 source 抓取并缓存。
   source?: BookSourceRef;
-  // 在线书可选择追更；新章节数只在手动检查后更新，不触发隐式联网。
+  // 在线书可选择追更；应用每天首次进入书架时自动检查一次，也保留手动检查入口。
   following?: boolean;
   lastUpdateCheckAt?: number;
   unreadUpdates?: number;
