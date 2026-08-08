@@ -20,11 +20,21 @@ export const useAddReadingTime = () => {
     if (seconds <= 0) return;
     const key = dateKey();
     setStats(prev => ({
+      ...prev,
       secondsByDate: {
         ...prev.secondsByDate,
         [key]: (prev.secondsByDate[key] ?? 0) + seconds,
       },
     }));
+  };
+};
+
+/** 设置每日阅读目标；离散档位由界面控制，这里只做有效范围兜底。 */
+export const useSetDailyReadingGoal = () => {
+  const setStats = useSetAtom(readingStatsAtom);
+  return (minutes: number) => {
+    const normalized = Math.max(5, Math.min(180, Math.round(minutes)));
+    setStats(prev => ({ ...prev, dailyGoalMinutes: normalized }));
   };
 };
 

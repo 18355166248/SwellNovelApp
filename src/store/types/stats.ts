@@ -7,9 +7,14 @@
  */
 export interface ReadingStats {
   secondsByDate: Record<string, number>;
+  dailyGoalMinutes?: number;
 }
 
-export const emptyReadingStats: ReadingStats = { secondsByDate: {} };
+export const DEFAULT_DAILY_READING_GOAL_MINUTES = 30;
+export const emptyReadingStats: ReadingStats = {
+  secondsByDate: {},
+  dailyGoalMinutes: DEFAULT_DAILY_READING_GOAL_MINUTES,
+};
 
 /** 本地时区的 YYYY-MM-DD。 */
 export function dateKey(d: Date = new Date()): string {
@@ -24,18 +29,34 @@ export interface ReadingStatsSummary {
   totalMinutes: number; // 累计阅读分钟
   activeDays: number; // 有阅读记录的天数
   streak: number; // 截至今天（或昨天）的连续阅读天数
+  dailyGoalMinutes: number;
+  todayGoalProgress: number;
+  weekTotalMinutes: number;
+  week: Array<{
+    date: string;
+    label: string;
+    minutes: number;
+    isToday: boolean;
+  }>;
 }
 
 /** 从原始 secondsByDate 派生汇总指标。 */
-export function summarizeReadingStats(stats: ReadingStats): ReadingStatsSummary {
+export function summarizeReadingStats(
+  stats: ReadingStats,
+  now: Date = new Date(),
+): ReadingStatsSummary {
   const byDate = stats.secondsByDate;
   const keys = Object.keys(byDate).filter(k => byDate[k] > 0);
   const totalSeconds = keys.reduce((sum, k) => sum + byDate[k], 0);
-  const today = dateKey();
+  const today = dateKey(now);
+  const dailyGoalMinutes =
+    stats.dailyGoalMinutes && stats.dailyGoalMinutes > 0
+      ? stats.dailyGoalMinutes
+      : DEFAULT_DAILY_READING_GOAL_MINUTES;
 
   // 连续天数：从今天往前逐日回溯；今天还没读时允许从昨天起算，不打断已有连续。
   const has = (d: Date) => (byDate[dateKey(d)] ?? 0) > 0;
-  const cursor = new Date();
+  const cursor = new Date(now);
   if (!has(cursor)) cursor.setDate(cursor.getDate() - 1);
   let streak = 0;
   while (has(cursor)) {
@@ -43,10 +64,28 @@ export function summarizeReadingStats(stats: ReadingStats): ReadingStatsSummary 
     cursor.setDate(cursor.getDate() - 1);
   }
 
+  const todayMinutes = Math.round((byDate[today] ?? 0) / 60);
+  const week = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(now);
+    day.setHours(12, 0, 0, 0);
+    day.setDate(day.getDate() - (6 - index));
+    const key = dateKey(day);
+    return {
+      date: key,
+      label: ['日', '一', '二', '三', '四', '五', '六'][day.getDay()],
+      minutes: Math.round((byDate[key] ?? 0) / 60),
+      isToday: key === today,
+    };
+  });
+
   return {
-    todayMinutes: Math.round((byDate[today] ?? 0) / 60),
+    todayMinutes,
     totalMinutes: Math.round(totalSeconds / 60),
     activeDays: keys.length,
     streak,
+    dailyGoalMinutes,
+    todayGoalProgress: Math.min(1, todayMinutes / dailyGoalMinutes),
+    weekTotalMinutes: week.reduce((sum, day) => sum + day.minutes, 0),
+    week,
   };
 }

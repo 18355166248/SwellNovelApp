@@ -141,6 +141,9 @@ export const useUpdateReadingProgress = () => {
               progress,
               currentChapterId: chapterId || book.currentChapterId,
               lastReadAt: Date.now(),
+              // 首次完成后固定时间；重读导致进度变化时仍保留原完成记录。
+              finishedAt:
+                progress >= 100 ? book.finishedAt ?? Date.now() : book.finishedAt,
             }
           : book,
       ),

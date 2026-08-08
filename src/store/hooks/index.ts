@@ -62,7 +62,11 @@ export {
 } from './useOnlineBook';
 
 // 阅读统计
-export { useAddReadingTime, useReadingStats } from './useStats';
+export {
+  useAddReadingTime,
+  useReadingStats,
+  useSetDailyReadingGoal,
+} from './useStats';
 
 // 设置相关
 export {

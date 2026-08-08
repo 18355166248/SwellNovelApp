@@ -19,6 +19,7 @@ export interface Book {
   addedAt: number;
   updatedAt: number;
   lastReadAt?: number;
+  finishedAt?: number; // 首次读到 100% 的时间，用于年度阅读记录
   progress: number; // 阅读进度 0-100
   currentChapterId?: string;
   totalChapters?: number;

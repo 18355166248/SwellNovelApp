@@ -7,6 +7,7 @@ import {
   useReaderSettings,
   useSetFullscreenPref,
   useReadingStats,
+  useSetDailyReadingGoal,
 } from '../store';
 import { SERIF_FONT } from '../theme/fonts';
 import { NOVEL_GOLD } from '../theme/readerThemes';
@@ -57,6 +58,18 @@ export default function MeScreen({
   const finished = books.filter(b => b.progress >= 100).length;
   const imported = books.filter(b => b.fileFormat === 'txt').length;
   const stats = useReadingStats();
+  const setDailyReadingGoal = useSetDailyReadingGoal();
+  const currentYear = new Date().getFullYear();
+  const finishedThisYear = books.filter(book => {
+    if (book.progress < 100) return false;
+    const completedAt = book.finishedAt ?? book.lastReadAt ?? book.updatedAt;
+    return new Date(completedAt).getFullYear() === currentYear;
+  }).length;
+  const weekChartMax = Math.max(
+    stats.dailyGoalMinutes,
+    ...stats.week.map(day => day.minutes),
+    1,
+  );
   const {
     hydrated: libraryHydrated,
     createBackup,
@@ -293,6 +306,65 @@ export default function MeScreen({
           <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.text }]}>{books.length}</Text><Text variant="caption" color="textSecondary">书架</Text></View>
           <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.text }]}>{finished}</Text><Text variant="caption" color="textSecondary">已读完</Text></View>
           <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.accent }]}>{stats.streak}</Text><Text variant="caption" color="textSecondary">连续天数</Text></View>
+        </View>
+        <View style={[styles.readingCard, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
+          <View style={styles.readingCardHeader}>
+            <View>
+              <Text style={[styles.readingCardTitle, { color: theme.colors.text }]}>阅读足迹</Text>
+              <Text style={[styles.readingCardMeta, { color: theme.colors.textSecondary }]}>本周 {stats.weekTotalMinutes} 分钟 · 今年读完 {finishedThisYear} 本</Text>
+            </View>
+            <Text style={[styles.readingStreak, { color: theme.colors.accent }]}>{stats.streak} 天连续</Text>
+          </View>
+          <View style={styles.goalHeader}>
+            <Text style={[styles.goalLabel, { color: theme.colors.text }]}>今日 {stats.todayMinutes} / {stats.dailyGoalMinutes} 分钟</Text>
+            <Text style={[styles.goalPercent, { color: theme.colors.textSecondary }]}>{Math.round(stats.todayGoalProgress * 100)}%</Text>
+          </View>
+          <View style={[styles.goalTrack, { backgroundColor: theme.colors.border }]}>
+            <View style={[styles.goalFill, { width: `${Math.round(stats.todayGoalProgress * 100)}%`, backgroundColor: theme.colors.accentDark }]} />
+          </View>
+          <View style={styles.goalPresets}>
+            <Text style={[styles.goalPresetLabel, { color: theme.colors.textSecondary }]}>每日目标</Text>
+            {[15, 30, 60].map(minutes => {
+              const active = stats.dailyGoalMinutes === minutes;
+              return (
+                <Pressable
+                  key={minutes}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  onPress={() => setDailyReadingGoal(minutes)}
+                  style={[
+                    styles.goalPreset,
+                    {
+                      borderColor: active ? theme.colors.accentDark : theme.colors.border,
+                      backgroundColor: active ? theme.colors.accentDark : 'transparent',
+                    },
+                  ]}
+                >
+                  <Text style={{ color: active ? '#fff' : theme.colors.textSecondary, fontSize: 11.5 }}>{minutes} 分钟</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.weekChart}>
+            {stats.week.map(day => (
+              <View key={day.date} style={styles.weekDay}>
+                <View style={styles.weekBarArea}>
+                  <View
+                    accessibilityLabel={`星期${day.label}阅读 ${day.minutes} 分钟`}
+                    style={[
+                      styles.weekBar,
+                      {
+                        height: Math.max(3, Math.round((day.minutes / weekChartMax) * 54)),
+                        backgroundColor: day.isToday ? theme.colors.accentDark : theme.colors.accent,
+                        opacity: day.minutes > 0 ? 1 : 0.22,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={[styles.weekLabel, { color: day.isToday ? theme.colors.text : theme.colors.textSecondary }]}>{day.label}</Text>
+              </View>
+            ))}
+          </View>
         </View>
         <Pressable style={[styles.settingsEntry, { backgroundColor: theme.colors.surface }, theme.shadows.sm]} onPress={() => navigation.navigate('Settings')}>
           <View style={styles.settingIcon}><Icon name="settings" size={20} color={theme.colors.text} /></View>
@@ -812,6 +884,60 @@ const styles = StyleSheet.create({
     fontWeight: Platform.select({ ios: '700', android: 'bold' }),
     marginBottom: 2,
   },
+  readingCard: {
+    borderRadius: 10,
+    marginHorizontal: 20,
+    marginTop: 14,
+    paddingHorizontal: 16,
+    paddingTop: 15,
+    paddingBottom: 14,
+  },
+  readingCardHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  readingCardTitle: {
+    fontFamily: SERIF_FONT,
+    fontSize: 16,
+    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
+  },
+  readingCardMeta: { fontSize: 11.5, marginTop: 4 },
+  readingStreak: { fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+  goalHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+  },
+  goalLabel: { fontSize: 12.5, fontWeight: '500' },
+  goalPercent: { fontSize: 11.5 },
+  goalTrack: { borderRadius: 3, height: 5, marginTop: 7, overflow: 'hidden' },
+  goalFill: { borderRadius: 3, height: 5 },
+  goalPresets: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 7,
+    marginTop: 12,
+  },
+  goalPresetLabel: { fontSize: 11.5, marginRight: 1 },
+  goalPreset: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 26,
+    paddingHorizontal: 9,
+  },
+  weekChart: {
+    flexDirection: 'row',
+    height: 78,
+    marginTop: 12,
+  },
+  weekDay: { alignItems: 'center', flex: 1 },
+  weekBarArea: { flex: 1, justifyContent: 'flex-end' },
+  weekBar: { borderRadius: 3, minWidth: 9, width: 12 },
+  weekLabel: { fontSize: 10.5, marginTop: 5 },
   section: {
     marginHorizontal: 20,
     marginTop: 18,
