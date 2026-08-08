@@ -19,10 +19,32 @@ const meta: LibraryMeta = {
     },
   ],
   readingHistory: {
-    'book-1': { bookId: 'book-1', chapterId: 'chapter-1', position: 12, updatedAt: 2 },
+    'book-1': {
+      bookId: 'book-1',
+      chapterId: 'chapter-1',
+      position: 12,
+      updatedAt: 2,
+    },
   },
-  bookmarks: {},
-  readerSettings: { theme: 'paper', fontSizeIndex: 4, lineHeightIndex: 1, pageMode: 'page' },
+  bookmarks: {
+    'book-1': [
+      {
+        id: 'excerpt-1',
+        bookId: 'book-1',
+        chapterId: 'chapter-1',
+        position: 6,
+        excerpt: '值得记住的正文',
+        note: '稍后再读',
+        createdAt: 3,
+      },
+    ],
+  },
+  readerSettings: {
+    theme: 'paper',
+    fontSizeIndex: 4,
+    lineHeightIndex: 1,
+    pageMode: 'page',
+  },
   searchHistory: ['测试小说'],
   readingStats: { secondsByDate: { '2026-07-10': 120 } },
 };
@@ -33,7 +55,13 @@ describe('library backup archive', () => {
       meta,
       {
         'book-1': [
-          { id: 'chapter-1', bookId: 'book-1', title: '第一章', content: '正文', order: 0 },
+          {
+            id: 'chapter-1',
+            bookId: 'book-1',
+            title: '第一章',
+            content: '正文',
+            order: 0,
+          },
         ],
       },
       100,
@@ -43,7 +71,13 @@ describe('library backup archive', () => {
       meta,
       chapters: {
         'book-1': [
-          { id: 'chapter-1', bookId: 'book-1', title: '第一章', content: '正文', order: 0 },
+          {
+            id: 'chapter-1',
+            bookId: 'book-1',
+            title: '第一章',
+            content: '正文',
+            order: 0,
+          },
         ],
       },
       createdAt: 100,
@@ -64,13 +98,20 @@ describe('library backup archive', () => {
       'library.json': library,
     });
 
-    expect(() => readLibraryBackup(archive)).toThrow('备份校验失败：library.json');
+    expect(() => readLibraryBackup(archive)).toThrow(
+      '备份校验失败：library.json',
+    );
   });
 
   it('拒绝未知备份格式', () => {
     const archive = zipSync({
       'manifest.json': strToU8(
-        JSON.stringify({ format: 'other', version: 1, createdAt: 1, entries: {} }),
+        JSON.stringify({
+          format: 'other',
+          version: 1,
+          createdAt: 1,
+          entries: {},
+        }),
       ),
       'library.json': strToU8(JSON.stringify(meta)),
     });

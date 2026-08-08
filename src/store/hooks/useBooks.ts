@@ -15,7 +15,7 @@ import {
   readingHistoryAtom,
   bookmarksAtom,
 } from '../atoms';
-import { Book, Chapter } from '../types/book';
+import { Book, Bookmark, Chapter } from '../types/book';
 import {
   deleteBookChapters,
   loadBookChapters,
@@ -229,7 +229,8 @@ export const useToggleBookmark = () => {
   return (bookId: string, chapterId: string, position = 0) => {
     setBookmarks(prev => {
       const list = prev[bookId] || [];
-      const existing = list.find(b => b.chapterId === chapterId);
+      // 摘抄与普通书签共用持久化结构，但不能让“切换书签”误删同章摘抄。
+      const existing = list.find(b => b.chapterId === chapterId && !b.excerpt);
       if (existing) {
         return {
           ...prev,
@@ -250,6 +251,60 @@ export const useToggleBookmark = () => {
         ],
       };
     });
+  };
+};
+
+/** 保存正文摘抄；同一位置再次保存时更新内容与笔记，避免产生重复条目。 */
+export const useSaveExcerpt = () => {
+  const setBookmarks = useSetAtom(bookmarksAtom);
+  return (
+    bookId: string,
+    chapterId: string,
+    position: number,
+    excerpt: string,
+    note?: string,
+  ) => {
+    const normalizedExcerpt = excerpt.trim();
+    if (!normalizedExcerpt) return;
+    setBookmarks(prev => {
+      const list = prev[bookId] || [];
+      const existingIndex = list.findIndex(
+        item =>
+          item.chapterId === chapterId &&
+          item.position === position &&
+          !!item.excerpt,
+      );
+      const saved: Bookmark = {
+        id:
+          existingIndex >= 0
+            ? list[existingIndex].id
+            : `${bookId}-${chapterId}-excerpt-${Date.now()}`,
+        bookId,
+        chapterId,
+        position,
+        excerpt: normalizedExcerpt,
+        note: note?.trim() || undefined,
+        createdAt:
+          existingIndex >= 0 ? list[existingIndex].createdAt : Date.now(),
+      };
+      if (existingIndex < 0) {
+        return { ...prev, [bookId]: [...list, saved] };
+      }
+      const next = list.slice();
+      next[existingIndex] = saved;
+      return { ...prev, [bookId]: next };
+    });
+  };
+};
+
+/** 按 id 删除书签或摘抄，供列表长按删除使用。 */
+export const useRemoveBookmark = () => {
+  const setBookmarks = useSetAtom(bookmarksAtom);
+  return (bookId: string, bookmarkId: string) => {
+    setBookmarks(prev => ({
+      ...prev,
+      [bookId]: (prev[bookId] || []).filter(item => item.id !== bookmarkId),
+    }));
   };
 };
 

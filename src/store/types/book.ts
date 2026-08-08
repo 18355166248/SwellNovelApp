@@ -48,6 +48,7 @@ export interface Bookmark {
   bookId: string;
   chapterId: string;
   position: number; // 在章节中的位置
+  excerpt?: string; // 有摘抄正文时表示一条摘抄；普通书签不带此字段
   note?: string;
   createdAt: number;
 }

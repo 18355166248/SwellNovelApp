@@ -18,6 +18,8 @@ export {
   useBookSearch,
   useBookmarks,
   useToggleBookmark,
+  useSaveExcerpt,
+  useRemoveBookmark,
 } from './useBooks';
 
 // 阅读器相关

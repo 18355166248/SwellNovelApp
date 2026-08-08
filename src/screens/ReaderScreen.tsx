@@ -17,6 +17,7 @@ import {
   ImageBackground,
   useWindowDimensions,
   InteractionManager,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,6 +49,8 @@ import {
   useReaderState,
   useBookmarks,
   useToggleBookmark,
+  useSaveExcerpt,
+  useRemoveBookmark,
   BOOKSHUKU_CONTENT_VERSION,
   useEnsureChapterContent,
   useLoadNextChapterPage,
@@ -121,6 +124,13 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
 type DrawerChapterItem = { c: Chapter; idx: number };
 
+interface ExcerptDraft {
+  chapterId: string;
+  position: number;
+  excerpt: string;
+  note: string;
+}
+
 function isBlockedBookshukuText(content?: string): boolean {
   if (!content) return false;
   // 拦截页/广告卡片特征由 contentGuards 统一判定；这里再叠加“正文过短”这条
@@ -142,6 +152,45 @@ function hasUsableChapterContent(
 
 function paragraphsFromContent(content: string): string[] {
   return content.split(/\n+/).filter(paragraph => paragraph.trim().length > 0);
+}
+
+function resolveExcerptDraft(
+  content: string,
+  visibleText: string,
+  fallbackPosition: number,
+): Pick<ExcerptDraft, 'position' | 'excerpt'> | null {
+  // 分页器会为了测量在段落中写入视觉换行，原始正文没有这些换行；去掉后
+  // 再定位，才能让分页模式下的摘抄准确落回原文，而不是依赖会累积漂移的页内偏移。
+  const anchor = visibleText
+    .replace(/\n/g, '')
+    .replace(/^　　/, '')
+    .trim()
+    .slice(0, 48);
+  if (!anchor || !content) return null;
+  const nearbyStart = Math.max(0, fallbackPosition - 100);
+  let anchorPosition = content.indexOf(anchor, nearbyStart);
+  if (anchorPosition < 0) anchorPosition = content.indexOf(anchor);
+  if (anchorPosition < 0) anchorPosition = Math.max(0, fallbackPosition);
+
+  const lineStart = content.lastIndexOf('\n', anchorPosition - 1) + 1;
+  const nextBreak = content.indexOf('\n', anchorPosition);
+  const lineEnd = nextBreak < 0 ? content.length : nextBreak;
+  const raw = content.slice(lineStart, lineEnd);
+  const leading = raw.length - raw.trimStart().length;
+  let position = lineStart + leading;
+  let excerpt = raw.trim();
+
+  // 极少数无换行长文本只保留锚点附近内容，防止笔记面板被超长段落撑满。
+  if (excerpt.length > 600) {
+    const relativeAnchor = Math.max(0, anchorPosition - position);
+    const sliceStart = Math.max(0, relativeAnchor - 180);
+    position += sliceStart;
+    excerpt = `${sliceStart > 0 ? '…' : ''}${excerpt.slice(
+      sliceStart,
+      sliceStart + 600,
+    )}${sliceStart + 600 < raw.trim().length ? '…' : ''}`;
+  }
+  return { position, excerpt };
 }
 
 function displayChapterTitle(chapter: Chapter, index: number): string {
@@ -307,7 +356,9 @@ function readerPagesCacheKey({
   bodyHeight: number;
   firstBodyHeight: number;
 }): string {
-  return `${lineCacheKey}|${measured ? 'measured' : 'estimated'}|${lineHeight}|${paraGap}|${bodyHeight}|${firstBodyHeight}`;
+  return `${lineCacheKey}|${
+    measured ? 'measured' : 'estimated'
+  }|${lineHeight}|${paraGap}|${bodyHeight}|${firstBodyHeight}`;
 }
 
 function cacheReaderPages(key: string, pages: ReaderPageData[]) {
@@ -452,8 +503,21 @@ export default function ReaderScreen() {
 
   const bookmarks = useBookmarks(bookId);
   const toggleBookmark = useToggleBookmark();
+  const saveExcerpt = useSaveExcerpt();
+  const removeBookmark = useRemoveBookmark();
+  const plainBookmarks = React.useMemo(
+    () => bookmarks.filter(item => !item.excerpt),
+    [bookmarks],
+  );
+  const excerpts = React.useMemo(
+    () => bookmarks.filter(item => !!item.excerpt),
+    [bookmarks],
+  );
 
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [excerptDraft, setExcerptDraft] = React.useState<ExcerptDraft | null>(
+    null,
+  );
   const [backgroundOpen, setBackgroundOpen] = React.useState(false);
   const [backgroundPreviewTheme, setBackgroundPreviewTheme] =
     React.useState<ReaderThemeKey>(settings.theme);
@@ -462,9 +526,8 @@ export default function ReaderScreen() {
   const [backgroundCategory, setBackgroundCategory] = React.useState<
     'solid' | 'scenic'
   >(() => READER_THEMES[settings.theme].category);
-  const [readerOrientation, setReaderOrientation] = React.useState<
-    Orientation.AppOrientation
-  >('portrait');
+  const [readerOrientation, setReaderOrientation] =
+    React.useState<Orientation.AppOrientation>('portrait');
   const [drawerOpen, setDrawerOpen] = React.useState(!!openDrawer);
 
   React.useEffect(() => {
@@ -568,7 +631,7 @@ export default function ReaderScreen() {
 
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
   const [drawerTab, setDrawerTab] = React.useState<
-    'toc' | 'search' | 'marks'
+    'toc' | 'search' | 'notes' | 'marks'
   >('toc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
   const [textSearchInput, setTextSearchInput] = React.useState('');
@@ -703,8 +766,7 @@ export default function ReaderScreen() {
     () => searchableChapters.filter(item => item.content.length > 0).length,
     [searchableChapters],
   );
-  const textSearchPending =
-    textSearchInput.trim() !== textSearchQuery;
+  const textSearchPending = textSearchInput.trim() !== textSearchQuery;
   const drawerList = React.useMemo(() => {
     let list = chapters.map((c, idx) => ({ c, idx }));
     if (drawerOrder === 'desc') list = list.slice().reverse();
@@ -822,12 +884,30 @@ export default function ReaderScreen() {
   ]);
 
   const chapter = chapters[chapterIndex];
+  const chapterExcerpts = React.useMemo(
+    () => excerpts.filter(item => item.chapterId === chapter?.id),
+    [chapter?.id, excerpts],
+  );
+  const isExcerptRange = React.useCallback(
+    (start: number, end: number, visibleText?: string) =>
+      chapterExcerpts.some(item => {
+        const excerptEnd = item.position + (item.excerpt?.length || 1);
+        if (item.position < end && excerptEnd > start) return true;
+        const anchor = visibleText
+          ?.replace(/\n/g, '')
+          .replace(/^　　/, '')
+          .trim()
+          .slice(0, 32);
+        return !!anchor && !!item.excerpt?.includes(anchor);
+      }),
+    [chapterExcerpts],
+  );
   const [clockText, setClockText] = React.useState(() =>
     formatReaderClock(new Date()),
   );
   const isNight = isReaderNightTheme(settings.theme);
   const hasBookmark = chapter
-    ? bookmarks.some(b => b.chapterId === chapter.id)
+    ? plainBookmarks.some(b => b.chapterId === chapter.id)
     : false;
   const progressPct =
     total > 0 ? Math.round(((chapterIndex + 1) / total) * 100) : 0;
@@ -841,6 +921,28 @@ export default function ReaderScreen() {
         return sum + Array.from(paragraph).length;
       }, 0),
     [paragraphs],
+  );
+  const openExcerptDraft = React.useCallback(
+    (visibleText: string, fallbackPosition: number) => {
+      if (!chapter) return;
+      const resolved = resolveExcerptDraft(
+        content || chapter.content,
+        visibleText,
+        fallbackPosition,
+      );
+      if (!resolved) return;
+      setSettingsOpen(false);
+      setBackgroundOpen(false);
+      setDrawerOpen(false);
+      setToolbarVisible(false);
+      setExcerptDraft({
+        chapterId: chapter.id,
+        position: resolved.position,
+        excerpt: resolved.excerpt,
+        note: '',
+      });
+    },
+    [chapter, content, setToolbarVisible],
   );
   const topChapterLabel = formatReaderChapterLabel(chapter, chapterIndex);
 
@@ -1579,6 +1681,10 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     if (Platform.OS !== 'android') return;
     const onBack = () => {
+      if (excerptDraft) {
+        setExcerptDraft(null);
+        return true;
+      }
       if (backgroundOpen) {
         closeBackgroundStudio();
         return true;
@@ -1602,6 +1708,7 @@ export default function ReaderScreen() {
   }, [
     backgroundOpen,
     closeBackgroundStudio,
+    excerptDraft,
     settingsOpen,
     drawerOpen,
     isToolbarVisible,
@@ -1699,7 +1806,10 @@ export default function ReaderScreen() {
               item.blocks.map((block, i) => (
                 <Text
                   key={block.startOffset}
-                  selectable
+                  onLongPress={event => {
+                    event.stopPropagation();
+                    openExcerptDraft(block.text, block.startOffset);
+                  }}
                   style={{
                     fontFamily: bodyFont,
                     fontSize: display.fontSize,
@@ -1707,6 +1817,13 @@ export default function ReaderScreen() {
                     color: display.theme.text,
                     textAlign: 'justify',
                     marginTop: i === 0 ? 0 : display.paraGap,
+                    backgroundColor: isExcerptRange(
+                      block.startOffset,
+                      block.startOffset + block.text.length,
+                      block.text,
+                    )
+                      ? 'rgba(202,154,70,.18)'
+                      : 'transparent',
                   }}
                 >
                   {
@@ -1719,9 +1836,7 @@ export default function ReaderScreen() {
               ))
             )}
             {isLastPage && (
-              <Text
-                style={[styles.pageEndText, { color: display.theme.sub }]}
-              >
+              <Text style={[styles.pageEndText, { color: display.theme.sub }]}>
                 {chapter?.nextPageUrl ? '本页完' : '本章完'}
               </Text>
             )}
@@ -1745,7 +1860,9 @@ export default function ReaderScreen() {
       display.titleSize,
       chapterTitleLineHeight,
       goToPage,
+      isExcerptRange,
       pages.length,
+      openExcerptDraft,
       readerColumn.paddingH,
       readerTopPadding,
       toggleToolbar,
@@ -1838,12 +1955,21 @@ export default function ReaderScreen() {
     ],
   );
 
-  const paragraphNodes = React.useMemo(
-    () =>
-      paragraphs.map((p, i) => (
+  const paragraphNodes = React.useMemo(() => {
+    const chapterContent = content || chapter?.content || '';
+    let searchFrom = 0;
+    return paragraphs.map((p, i) => {
+      const found = chapterContent.indexOf(p, searchFrom);
+      const position = found >= 0 ? found : searchFrom;
+      searchFrom = position + p.length;
+      const highlighted = isExcerptRange(position, position + p.length, p);
+      return (
         <Text
           key={i}
-          selectable
+          onLongPress={event => {
+            event.stopPropagation();
+            openExcerptDraft(p, position);
+          }}
           style={{
             fontFamily: bodyFont,
             fontSize: display.fontSize,
@@ -1851,20 +1977,27 @@ export default function ReaderScreen() {
             marginBottom: display.paraGap,
             color: display.theme.text,
             textAlign: 'justify',
+            backgroundColor: highlighted
+              ? 'rgba(202,154,70,.18)'
+              : 'transparent',
           }}
         >
           {'　　' + p}
         </Text>
-      )),
-    [
-      bodyFont,
-      display.fontSize,
-      display.lineHeight,
-      display.paraGap,
-      display.theme.text,
-      paragraphs,
-    ],
-  );
+      );
+    });
+  }, [
+    bodyFont,
+    chapter?.content,
+    content,
+    display.fontSize,
+    display.lineHeight,
+    display.paraGap,
+    display.theme.text,
+    isExcerptRange,
+    openExcerptDraft,
+    paragraphs,
+  ]);
 
   const handleBack = () => {
     // 阅读页返回必须保持原导航栈语义：从详情进入回详情，从书架进入回书架；无历史栈时再兜底到详情页。
@@ -2311,6 +2444,134 @@ export default function ReaderScreen() {
           />
         </View>
       </Animated.View>
+
+      {excerptDraft ? (
+        <>
+          <View style={[styles.overlay, styles.excerptOverlay]}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setExcerptDraft(null)}
+            />
+          </View>
+          <KeyboardAvoidingView
+            pointerEvents="box-none"
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.excerptKeyboardLayer}
+          >
+            <View
+              style={[
+                styles.excerptSheet,
+                { backgroundColor: display.chrome.sheetBg },
+              ]}
+            >
+              <View style={styles.excerptHeader}>
+                <View>
+                  <Text
+                    style={[
+                      styles.excerptTitle,
+                      { color: display.chrome.sheetInk },
+                    ]}
+                  >
+                    保存摘抄
+                  </Text>
+                  <Text
+                    style={{
+                      color: display.chrome.sheetSub,
+                      fontSize: 11,
+                      marginTop: 2,
+                    }}
+                  >
+                    {chapter?.title || `第 ${chapterIndex + 1} 章`}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityLabel="关闭摘抄面板"
+                  onPress={() => setExcerptDraft(null)}
+                  style={styles.excerptClose}
+                >
+                  <Icon
+                    name="close"
+                    size={20}
+                    color={display.chrome.sheetSub}
+                  />
+                </Pressable>
+              </View>
+              <View
+                style={[
+                  styles.excerptPreview,
+                  { backgroundColor: display.chrome.field },
+                ]}
+              >
+                <Text
+                  numberOfLines={5}
+                  style={{
+                    color: display.chrome.sheetInk,
+                    fontSize: 13,
+                    lineHeight: 20,
+                  }}
+                >
+                  {excerptDraft.excerpt}
+                </Text>
+              </View>
+              <TextInput
+                value={excerptDraft.note}
+                onChangeText={note =>
+                  setExcerptDraft(current =>
+                    current ? { ...current, note } : current,
+                  )
+                }
+                multiline
+                maxLength={500}
+                placeholder="写一句想法（可选）"
+                placeholderTextColor={display.chrome.sheetSub}
+                style={[
+                  styles.excerptNoteInput,
+                  {
+                    color: display.chrome.sheetInk,
+                    borderColor: display.chrome.hair,
+                  },
+                ]}
+              />
+              <View style={styles.excerptActions}>
+                <Pressable
+                  onPress={() => setExcerptDraft(null)}
+                  style={[
+                    styles.excerptActionButton,
+                    { borderColor: display.chrome.hair },
+                  ]}
+                >
+                  <Text
+                    style={{ color: display.chrome.sheetSub, fontSize: 13 }}
+                  >
+                    取消
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    saveExcerpt(
+                      bookId,
+                      excerptDraft.chapterId,
+                      excerptDraft.position,
+                      excerptDraft.excerpt,
+                      excerptDraft.note,
+                    );
+                    setExcerptDraft(null);
+                  }}
+                  style={[
+                    styles.excerptActionButton,
+                    {
+                      backgroundColor: NOVEL_ACCENT,
+                      borderColor: NOVEL_ACCENT,
+                    },
+                  ]}
+                >
+                  <Text style={styles.excerptSaveText}>保存</Text>
+                </Pressable>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </>
+      ) : null}
 
       {sheetTransition.mounted && (
         <>
@@ -2770,9 +3031,7 @@ export default function ReaderScreen() {
                   >
                     <Text
                       style={{
-                        color: active
-                          ? NOVEL_ACCENT
-                          : display.chrome.sheetSub,
+                        color: active ? NOVEL_ACCENT : display.chrome.sheetSub,
                         fontSize: 15,
                         fontWeight: active ? '600' : '400',
                       }}
@@ -2864,9 +3123,7 @@ export default function ReaderScreen() {
 
             {READER_THEMES[backgroundPreviewTheme].category === 'scenic' && (
               <View style={styles.backgroundIntensitySection}>
-                <Text
-                  style={{ color: display.chrome.sheetInk, fontSize: 12 }}
-                >
+                <Text style={{ color: display.chrome.sheetInk, fontSize: 12 }}>
                   背景浓度
                 </Text>
                 <View style={styles.backgroundIntensityRow}>
@@ -2879,9 +3136,9 @@ export default function ReaderScreen() {
                         key={preset.label}
                         accessibilityRole="button"
                         accessibilityState={{ selected }}
-                        accessibilityLabel={`背景浓度 ${preset.label} ${Math.round(
-                          preset.value * 100,
-                        )}%`}
+                        accessibilityLabel={`背景浓度 ${
+                          preset.label
+                        } ${Math.round(preset.value * 100)}%`}
                         // 离散点击只触发一次图片更新，避免拖动时连续重绘原生分页导致闪动。
                         onPress={() => updateBackgroundOpacity(preset.value)}
                         style={[
@@ -2898,9 +3155,7 @@ export default function ReaderScreen() {
                       >
                         <Text
                           style={{
-                            color: selected
-                              ? '#fff'
-                              : display.chrome.sheetInk,
+                            color: selected ? '#fff' : display.chrome.sheetInk,
                             fontSize: 11.5,
                           }}
                         >
@@ -2912,7 +3167,6 @@ export default function ReaderScreen() {
                 </View>
               </View>
             )}
-
           </Animated.View>
         </>
       )}
@@ -2965,10 +3219,12 @@ export default function ReaderScreen() {
                   ? `共 ${total} 章`
                   : drawerTab === 'search'
                   ? `可搜索 ${searchableChapterCount} / ${total} 章正文`
-                  : `共 ${bookmarks.length} 条书签`}
+                  : drawerTab === 'notes'
+                  ? `共 ${excerpts.length} 条摘抄`
+                  : `共 ${plainBookmarks.length} 条书签`}
               </Text>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                {(['toc', 'search', 'marks'] as const).map(tab => {
+                {(['toc', 'search', 'notes', 'marks'] as const).map(tab => {
                   const active = drawerTab === tab;
                   return (
                     <Pressable
@@ -2994,6 +3250,8 @@ export default function ReaderScreen() {
                           ? '目录'
                           : tab === 'search'
                           ? '全文'
+                          : tab === 'notes'
+                          ? '摘抄'
                           : '书签'}
                       </Text>
                     </Pressable>
@@ -3069,7 +3327,7 @@ export default function ReaderScreen() {
                   paddingBottom: 20,
                 }}
               >
-                {bookmarks.length === 0 ? (
+                {plainBookmarks.length === 0 ? (
                   <View style={{ paddingVertical: 48, alignItems: 'center' }}>
                     <Icon
                       name="bookmark-border"
@@ -3087,7 +3345,7 @@ export default function ReaderScreen() {
                     </Text>
                   </View>
                 ) : (
-                  bookmarks
+                  plainBookmarks
                     .map(bm => ({
                       bm,
                       idx: chapters.findIndex(c => c.id === bm.chapterId),
@@ -3136,13 +3394,127 @@ export default function ReaderScreen() {
                     ))
                 )}
               </ScrollView>
+            ) : drawerTab === 'notes' ? (
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{
+                  paddingHorizontal: 8,
+                  paddingBottom: 20,
+                  flexGrow: 1,
+                }}
+              >
+                {excerpts.length === 0 ? (
+                  <View style={styles.textSearchEmpty}>
+                    <Icon
+                      name="format-quote"
+                      size={30}
+                      color={display.chrome.sheetSub}
+                    />
+                    <Text
+                      style={{
+                        color: display.chrome.sheetSub,
+                        fontSize: 12.5,
+                        lineHeight: 19,
+                        textAlign: 'center',
+                        marginTop: 9,
+                      }}
+                    >
+                      长按正文段落，即可保存摘抄和笔记
+                    </Text>
+                  </View>
+                ) : (
+                  excerpts
+                    .map(item => ({
+                      item,
+                      idx: chapters.findIndex(
+                        chapterItem => chapterItem.id === item.chapterId,
+                      ),
+                    }))
+                    .filter(entry => entry.idx >= 0)
+                    .sort(
+                      (a, b) =>
+                        a.idx - b.idx || a.item.position - b.item.position,
+                    )
+                    .map(({ item, idx }) => (
+                      <Pressable
+                        key={item.id}
+                        onPress={() =>
+                          jumpToBookmark(item.chapterId, item.position)
+                        }
+                        onLongPress={() =>
+                          Alert.alert('删除摘抄', '确定删除这条摘抄和笔记？', [
+                            { text: '取消', style: 'cancel' },
+                            {
+                              text: '删除',
+                              style: 'destructive',
+                              onPress: () => removeBookmark(bookId, item.id),
+                            },
+                          ])
+                        }
+                        delayLongPress={350}
+                        style={[
+                          styles.excerptListItem,
+                          { borderColor: display.chrome.hair },
+                        ]}
+                      >
+                        <View style={styles.excerptListHeader}>
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              color: NOVEL_ACCENT,
+                              fontSize: 11,
+                              flex: 1,
+                            }}
+                          >
+                            {displayChapterTitle(chapters[idx], idx)}
+                          </Text>
+                          <Text
+                            style={{
+                              color: display.chrome.sheetSub,
+                              fontSize: 10,
+                            }}
+                          >
+                            长按删除
+                          </Text>
+                        </View>
+                        <Text
+                          numberOfLines={3}
+                          style={{
+                            color: display.chrome.sheetInk,
+                            fontSize: 12.5,
+                            lineHeight: 19,
+                          }}
+                        >
+                          {item.excerpt}
+                        </Text>
+                        {item.note ? (
+                          <View
+                            style={[
+                              styles.excerptListNote,
+                              { backgroundColor: display.chrome.field },
+                            ]}
+                          >
+                            <Text
+                              numberOfLines={2}
+                              style={{
+                                color: display.chrome.sheetSub,
+                                fontSize: 11.5,
+                                lineHeight: 17,
+                              }}
+                            >
+                              {item.note}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </Pressable>
+                    ))
+                )}
+              </ScrollView>
             ) : drawerTab === 'search' ? (
               <FlatList
                 style={{ flex: 1 }}
                 data={textSearchPending ? [] : textSearchResults}
-                keyExtractor={item =>
-                  `${item.chapterId}-${item.position}`
-                }
+                keyExtractor={item => `${item.chapterId}-${item.position}`}
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={{
                   paddingHorizontal: 6,
@@ -3239,7 +3611,8 @@ export default function ReaderScreen() {
                         { color: display.chrome.sheetSub },
                       ]}
                     >
-                      已搜索缓存的 {searchableChapterCount} / {total} 章，缓存全本后可搜索完整正文
+                      已搜索缓存的 {searchableChapterCount} / {total}{' '}
+                      章，缓存全本后可搜索完整正文
                     </Text>
                   ) : null
                 }
@@ -3276,8 +3649,7 @@ export default function ReaderScreen() {
                 renderItem={({ item: { c, idx } }) => {
                   const isCur = idx === chapterIndex;
                   const isCached =
-                    isOnline &&
-                    hasUsableChapterContent(c, book?.source?.name);
+                    isOnline && hasUsableChapterContent(c, book?.source?.name);
                   return (
                     <Pressable
                       disabled={drawerPositioning}
@@ -3507,6 +3879,74 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: 'rgba(0,0,0,.35)',
     zIndex: 3,
+  },
+  excerptOverlay: {
+    zIndex: 7,
+  },
+  excerptKeyboardLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 8,
+  },
+  excerptSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 24,
+  },
+  excerptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  excerptTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  excerptClose: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  excerptPreview: {
+    borderRadius: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    marginBottom: 12,
+  },
+  excerptNoteInput: {
+    minHeight: 76,
+    maxHeight: 120,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlignVertical: 'top',
+    marginBottom: 14,
+  },
+  excerptActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  excerptActionButton: {
+    flex: 1,
+    height: 42,
+    borderWidth: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  excerptSaveText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
   // 背景工作台本身就是实时预览，遮罩只做层级提示，不能像普通弹窗一样压暗正文。
   backgroundOverlay: {
@@ -3793,6 +4233,23 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     lineHeight: 16,
     textAlign: 'center',
+  },
+  excerptListItem: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 10,
+    paddingVertical: 13,
+  },
+  excerptListHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 7,
+  },
+  excerptListNote: {
+    borderRadius: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    marginTop: 8,
   },
   drawerFooterBtn: {
     marginHorizontal: 6,
