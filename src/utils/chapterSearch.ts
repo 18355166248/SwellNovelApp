@@ -112,3 +112,62 @@ export function resolveChapterSearchIndex(
   );
   return titleIndex >= 0 ? titleIndex : fallbackIndex;
 }
+
+export interface ChapterTextSearchResult {
+  chapterId: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  position: number;
+  excerpt: string;
+}
+
+/**
+ * 搜索当前已载入正文，返回可直接用于阅读器定位的原文偏移。
+ * 每章最多保留 3 条、全书最多 100 条，避免高频词产生超大结果列表拖慢抽屉。
+ */
+export function searchChapterText(
+  chapters: Pick<Chapter, 'id' | 'title' | 'content'>[],
+  rawQuery: string,
+  maxResults = 100,
+): ChapterTextSearchResult[] {
+  const query = rawQuery.trim();
+  if (!query) return [];
+  const normalizedQuery = query.toLowerCase();
+  const results: ChapterTextSearchResult[] = [];
+
+  for (let chapterIndex = 0; chapterIndex < chapters.length; chapterIndex += 1) {
+    const chapter = chapters[chapterIndex];
+    if (!chapter.content) continue;
+    const normalizedContent = chapter.content.toLowerCase();
+    let from = 0;
+    let matchesInChapter = 0;
+
+    while (results.length < maxResults && matchesInChapter < 3) {
+      const position = normalizedContent.indexOf(normalizedQuery, from);
+      if (position < 0) break;
+      const excerptStart = Math.max(0, position - 26);
+      const excerptEnd = Math.min(
+        chapter.content.length,
+        position + query.length + 42,
+      );
+      const excerpt = chapter.content
+        .slice(excerptStart, excerptEnd)
+        .replace(/\s+/g, ' ')
+        .trim();
+      results.push({
+        chapterId: chapter.id,
+        chapterIndex,
+        chapterTitle: chapter.title,
+        position,
+        excerpt: `${excerptStart > 0 ? '…' : ''}${excerpt}${
+          excerptEnd < chapter.content.length ? '…' : ''
+        }`,
+      });
+      matchesInChapter += 1;
+      from = position + Math.max(1, normalizedQuery.length);
+    }
+    if (results.length >= maxResults) break;
+  }
+
+  return results;
+}

@@ -109,7 +109,10 @@ import {
   getBoundaryTurn,
   isStaleScrollSync,
 } from '../utils/readerScrollGuard';
-import { resolveChapterSearchIndex } from '../utils/chapterSearch';
+import {
+  resolveChapterSearchIndex,
+  searchChapterText,
+} from '../utils/chapterSearch';
 import { getForwardPrefetchIndices } from '../utils/chapterPrefetch';
 import { useReaderGuards } from './reader/useReaderGuards';
 import { useWebDavAutoBackup } from '../services/webdav/useWebDavAutoBackup';
@@ -564,8 +567,12 @@ export default function ReaderScreen() {
   );
 
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
-  const [drawerTab, setDrawerTab] = React.useState<'toc' | 'marks'>('toc');
+  const [drawerTab, setDrawerTab] = React.useState<
+    'toc' | 'search' | 'marks'
+  >('toc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
+  const [textSearchInput, setTextSearchInput] = React.useState('');
+  const [textSearchQuery, setTextSearchQuery] = React.useState('');
   const [drawerVisibleIndices, setDrawerVisibleIndices] = React.useState<
     number[]
   >([]);
@@ -671,6 +678,33 @@ export default function ReaderScreen() {
   );
 
   const total = chapters.length;
+  React.useEffect(() => {
+    const timer = setTimeout(
+      () => setTextSearchQuery(textSearchInput.trim()),
+      220,
+    );
+    return () => clearTimeout(timer);
+  }, [textSearchInput]);
+
+  const searchableChapters = React.useMemo(
+    () =>
+      chapters.map(item =>
+        hasUsableChapterContent(item, book?.source?.name)
+          ? item
+          : { ...item, content: '' },
+      ),
+    [book?.source?.name, chapters],
+  );
+  const textSearchResults = React.useMemo(
+    () => searchChapterText(searchableChapters, textSearchQuery),
+    [searchableChapters, textSearchQuery],
+  );
+  const searchableChapterCount = React.useMemo(
+    () => searchableChapters.filter(item => item.content.length > 0).length,
+    [searchableChapters],
+  );
+  const textSearchPending =
+    textSearchInput.trim() !== textSearchQuery;
   const drawerList = React.useMemo(() => {
     let list = chapters.map((c, idx) => ({ c, idx }));
     if (drawerOrder === 'desc') list = list.slice().reverse();
@@ -2929,10 +2963,12 @@ export default function ReaderScreen() {
               >
                 {drawerTab === 'toc'
                   ? `共 ${total} 章`
+                  : drawerTab === 'search'
+                  ? `可搜索 ${searchableChapterCount} / ${total} 章正文`
                   : `共 ${bookmarks.length} 条书签`}
               </Text>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                {(['toc', 'marks'] as const).map(tab => {
+                {(['toc', 'search', 'marks'] as const).map(tab => {
                   const active = drawerTab === tab;
                   return (
                     <Pressable
@@ -2954,13 +2990,17 @@ export default function ReaderScreen() {
                           fontWeight: active ? '600' : '400',
                         }}
                       >
-                        {tab === 'toc' ? '目录' : '书签'}
+                        {tab === 'toc'
+                          ? '目录'
+                          : tab === 'search'
+                          ? '全文'
+                          : '书签'}
                       </Text>
                     </Pressable>
                   );
                 })}
               </View>
-              {drawerTab === 'toc' && (
+              {(drawerTab === 'toc' || drawerTab === 'search') && (
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                   <View
                     style={[
@@ -2974,10 +3014,19 @@ export default function ReaderScreen() {
                       color={display.chrome.sheetSub}
                     />
                     <TextInput
-                      value={drawerQuery}
-                      onChangeText={setDrawerQuery}
-                      placeholder="搜索章节"
+                      value={
+                        drawerTab === 'toc' ? drawerQuery : textSearchInput
+                      }
+                      onChangeText={
+                        drawerTab === 'toc'
+                          ? setDrawerQuery
+                          : setTextSearchInput
+                      }
+                      placeholder={
+                        drawerTab === 'toc' ? '搜索章节' : '搜索正文关键词'
+                      }
                       placeholderTextColor={display.chrome.sheetSub}
+                      returnKeyType="search"
                       style={{
                         flex: 1,
                         color: display.chrome.sheetInk,
@@ -2987,26 +3036,28 @@ export default function ReaderScreen() {
                       }}
                     />
                   </View>
-                  <Pressable
-                    onPress={() =>
-                      setDrawerOrder(o => (o === 'asc' ? 'desc' : 'asc'))
-                    }
-                    style={[
-                      styles.orderBtn,
-                      { borderColor: display.chrome.hair },
-                    ]}
-                  >
-                    <Icon
-                      name="swap-vert"
-                      size={14}
-                      color={display.chrome.sheetInk}
-                    />
-                    <Text
-                      style={{ color: display.chrome.sheetInk, fontSize: 12 }}
+                  {drawerTab === 'toc' ? (
+                    <Pressable
+                      onPress={() =>
+                        setDrawerOrder(o => (o === 'asc' ? 'desc' : 'asc'))
+                      }
+                      style={[
+                        styles.orderBtn,
+                        { borderColor: display.chrome.hair },
+                      ]}
                     >
-                      {drawerOrder === 'asc' ? '正序' : '倒序'}
-                    </Text>
-                  </Pressable>
+                      <Icon
+                        name="swap-vert"
+                        size={14}
+                        color={display.chrome.sheetInk}
+                      />
+                      <Text
+                        style={{ color: display.chrome.sheetInk, fontSize: 12 }}
+                      >
+                        {drawerOrder === 'asc' ? '正序' : '倒序'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               )}
             </View>
@@ -3085,6 +3136,114 @@ export default function ReaderScreen() {
                     ))
                 )}
               </ScrollView>
+            ) : drawerTab === 'search' ? (
+              <FlatList
+                style={{ flex: 1 }}
+                data={textSearchPending ? [] : textSearchResults}
+                keyExtractor={item =>
+                  `${item.chapterId}-${item.position}`
+                }
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{
+                  paddingHorizontal: 6,
+                  paddingBottom: 20,
+                  flexGrow: 1,
+                }}
+                renderItem={({ item }) => (
+                  <Pressable
+                    onPress={() =>
+                      jumpToBookmark(item.chapterId, item.position)
+                    }
+                    style={styles.textSearchResult}
+                  >
+                    <Icon
+                      name="find-in-page"
+                      size={16}
+                      color={NOVEL_ACCENT}
+                      style={styles.textSearchResultIcon}
+                    />
+                    <View style={styles.textSearchResultBody}>
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          color: display.chrome.sheetInk,
+                          fontSize: 13.5,
+                          fontWeight: '600',
+                        }}
+                      >
+                        {displayChapterTitle(
+                          chapters[item.chapterIndex],
+                          item.chapterIndex,
+                        )}
+                      </Text>
+                      <Text
+                        numberOfLines={2}
+                        style={{
+                          color: display.chrome.sheetSub,
+                          fontSize: 11.5,
+                          lineHeight: 17,
+                          marginTop: 4,
+                        }}
+                      >
+                        {item.excerpt}
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
+                ListEmptyComponent={
+                  <View style={styles.textSearchEmpty}>
+                    <Icon
+                      name={textSearchPending ? 'hourglass-empty' : 'search'}
+                      size={30}
+                      color={display.chrome.sheetSub}
+                    />
+                    <Text
+                      style={{
+                        color: display.chrome.sheetSub,
+                        fontSize: 12.5,
+                        lineHeight: 19,
+                        textAlign: 'center',
+                        marginTop: 9,
+                      }}
+                    >
+                      {textSearchPending
+                        ? '正在搜索…'
+                        : !textSearchQuery
+                        ? '输入人物、地点或句子，查找正文内容'
+                        : '当前可搜索正文中没有找到相关内容'}
+                    </Text>
+                    {isOnline && searchableChapterCount < total ? (
+                      <Text
+                        style={{
+                          color: display.chrome.sheetSub,
+                          opacity: 0.72,
+                          fontSize: 11,
+                          lineHeight: 17,
+                          textAlign: 'center',
+                          marginTop: 7,
+                        }}
+                      >
+                        未缓存章节暂不搜索，可在书籍详情中缓存全本
+                      </Text>
+                    ) : null}
+                  </View>
+                }
+                ListFooterComponent={
+                  !textSearchPending &&
+                  textSearchResults.length > 0 &&
+                  isOnline &&
+                  searchableChapterCount < total ? (
+                    <Text
+                      style={[
+                        styles.textSearchCoverage,
+                        { color: display.chrome.sheetSub },
+                      ]}
+                    >
+                      已搜索缓存的 {searchableChapterCount} / {total} 章，缓存全本后可搜索完整正文
+                    </Text>
+                  ) : null
+                }
+              />
             ) : (
               <FlatList
                 ref={drawerTocRef}
@@ -3604,6 +3763,36 @@ const styles = StyleSheet.create({
     color: NOVEL_ACCENT,
     fontSize: 9.5,
     lineHeight: 12,
+  },
+  textSearchResult: {
+    minHeight: 76,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 8,
+  },
+  textSearchResultIcon: {
+    width: 28,
+    marginTop: 1,
+  },
+  textSearchResultBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  textSearchEmpty: {
+    flex: 1,
+    minHeight: 230,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 30,
+  },
+  textSearchCoverage: {
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    fontSize: 10.5,
+    lineHeight: 16,
+    textAlign: 'center',
   },
   drawerFooterBtn: {
     marginHorizontal: 6,
