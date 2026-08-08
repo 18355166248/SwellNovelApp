@@ -10,6 +10,7 @@
     "android": "react-native run-android",
     "ios": "react-native run-ios --port 8082",
     "ios:device": "bash ./scripts/run-ios-device.sh",
+    "ios:swell5": "zsh ./安装到Swell5.command --no-pause",
     "lint": "eslint .",
     "test": "jest",
     "build:android:apk": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-android.ps1 apk",
