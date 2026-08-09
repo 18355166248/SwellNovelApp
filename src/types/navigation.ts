@@ -14,4 +14,5 @@ export type RootStackParamList = {
   InAppBrowser: { initialUrl?: string } | undefined;
   Settings: undefined;
   WebDavBackup: undefined;
+  CacheManagement: undefined;
 };

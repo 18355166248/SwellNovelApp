@@ -25,6 +25,7 @@ import MeScreen, { SettingsScreen, WebDavBackupScreen } from '../screens/MeScree
 import ReaderScreen from '../screens/ReaderScreen';
 import BookDetailScreen from '../screens/BookDetailScreen';
 import InAppBrowserScreen from '../screens/InAppBrowserScreen';
+import CacheManagementScreen from '../screens/CacheManagementScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -44,6 +45,7 @@ const linking: LinkingOptions<RootStackParamList> = {
       },
       Settings: 'settings',
       WebDavBackup: 'settings/webdav',
+      CacheManagement: 'settings/cache',
       BookDetail: 'book/:bookId',
       Reader: 'read/:bookId',
       InAppBrowser: 'browser',
@@ -175,6 +177,10 @@ export default function AppNavigator() {
           <Stack.Screen name="InAppBrowser" component={InAppBrowserScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="WebDavBackup" component={WebDavBackupScreen} />
+          <Stack.Screen
+            name="CacheManagement"
+            component={CacheManagementScreen}
+          />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

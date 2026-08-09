@@ -588,6 +588,29 @@ export default function MeScreen({
           theme.shadows.sm,
         ]}
       >
+        <Pressable
+          style={styles.cloudMenu}
+          onPress={() => navigation.navigate('CacheManagement')}
+        >
+          <View style={styles.settingIcon}>
+            <Icon name="storage" size={20} color={theme.colors.text} />
+          </View>
+          <View style={styles.settingInfo}>
+            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>缓存管理</Text>
+            <Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>查看占用、清理已读章节与单本缓存</Text>
+          </View>
+          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
+        </Pressable>
+      </View>
+
+      <View
+        style={[
+          styles.section,
+          webDavPage && styles.hidden,
+          { backgroundColor: theme.colors.surface },
+          theme.shadows.sm,
+        ]}
+      >
         <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
           外观设置
         </Text>
