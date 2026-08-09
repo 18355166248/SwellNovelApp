@@ -7,6 +7,7 @@ import {
   readerSettingsAtom,
   readingHistoryAtom,
   readingStatsAtom,
+  profileAppearanceAtom,
   searchHistoryAtom,
   selectedBookIdAtom,
 } from '../../store/atoms';
@@ -22,6 +23,7 @@ import {
   RestoredLibraryBackup,
 } from './libraryBackup';
 import { Chapter } from '../../store/types/book';
+import { normalizeProfileAppearance } from '../../store/types/profile';
 
 export function useLibraryBackup() {
   const hydrated = useAtomValue(libraryHydratedAtom);
@@ -32,6 +34,7 @@ export function useLibraryBackup() {
   const readerSettings = useAtomValue(readerSettingsAtom);
   const searchHistory = useAtomValue(searchHistoryAtom);
   const readingStats = useAtomValue(readingStatsAtom);
+  const profileAppearance = useAtomValue(profileAppearanceAtom);
   const setBooks = useSetAtom(booksAtom);
   const setChapters = useSetAtom(chaptersAtom);
   const setHistory = useSetAtom(readingHistoryAtom);
@@ -39,13 +42,15 @@ export function useLibraryBackup() {
   const setReaderSettings = useSetAtom(readerSettingsAtom);
   const setSearchHistory = useSetAtom(searchHistoryAtom);
   const setReadingStats = useSetAtom(readingStatsAtom);
+  const setProfileAppearance = useSetAtom(profileAppearanceAtom);
   const setSelectedBookId = useSetAtom(selectedBookIdAtom);
 
   const createBackupArchive = async () => {
     const chapters: Record<string, Chapter[]> = {};
     await Promise.all(
       books.map(async book => {
-        const content = chaptersInMemory[book.id] ?? (await loadBookChapters(book.id));
+        const content =
+          chaptersInMemory[book.id] ?? (await loadBookChapters(book.id));
         if (content) chapters[book.id] = content;
       }),
     );
@@ -60,6 +65,7 @@ export function useLibraryBackup() {
         readerSettings,
         searchHistory,
         readingStats,
+        profileAppearance,
       },
       chapters,
       createdAt,
@@ -92,9 +98,13 @@ export function useLibraryBackup() {
     setChapters({});
     setHistory(backup.meta.readingHistory ?? {});
     setBookmarks(backup.meta.bookmarks ?? {});
-    if (backup.meta.readerSettings) setReaderSettings(backup.meta.readerSettings);
+    if (backup.meta.readerSettings)
+      setReaderSettings(backup.meta.readerSettings);
     setSearchHistory(backup.meta.searchHistory ?? []);
     setReadingStats(backup.meta.readingStats ?? { secondsByDate: {} });
+    setProfileAppearance(
+      normalizeProfileAppearance(backup.meta.profileAppearance),
+    );
     setSelectedBookId(null);
   };
 

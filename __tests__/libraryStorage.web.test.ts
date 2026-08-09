@@ -56,6 +56,7 @@ describe('libraryStorage.web 拆分存储', () => {
       ],
       readingHistory: {},
       bookmarks: {},
+      profileAppearance: { avatarId: 'reader', frameId: 'ink-jade' },
     });
     await saveBookChapters('b1', [chapter('b1', 0)]);
 
@@ -64,6 +65,10 @@ describe('libraryStorage.web 拆分存储', () => {
     expect(snapshot!.books).toHaveLength(1);
     // 启动快照不携带正文，改为懒加载。
     expect(snapshot!.chapters).toEqual({});
+    expect(snapshot!.profileAppearance).toEqual({
+      avatarId: 'reader',
+      frameId: 'ink-jade',
+    });
 
     const chapters = await loadBookChapters('b1');
     expect(chapters).toHaveLength(1);

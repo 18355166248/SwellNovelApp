@@ -2,6 +2,7 @@ import React from 'react';
 import { View, StyleSheet, ScrollView, Switch, Platform, Pressable } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Button, Input, Text, Icon } from '../components';
+import { ProfileIdentityCard } from '../components/ProfileIdentityCard';
 import {
   useAllBooks,
   useReaderSettings,
@@ -296,17 +297,17 @@ export default function MeScreen({
 
   if (!settings) {
     return (
-      <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}><Text style={[styles.title, { color: theme.colors.text }]}>我的</Text></View>
-        <View style={[styles.profile, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }, theme.shadows.sm]}>
-          <View style={[styles.avatar, { backgroundColor: theme.colors.accentDark }]}><Icon name="person-outline" size={26} color="#F3EAD6" /></View>
-          <View style={styles.profileInfo}><Text style={[styles.profileName, { color: theme.colors.text }]}>书友</Text><Text style={[styles.profileMeta, { color: theme.colors.textSecondary }]}>本地阅读 · 数据仅保存在当前设备</Text></View>
-        </View>
-        <View style={styles.stats}>
-          <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.text }]}>{books.length}</Text><Text variant="caption" color="textSecondary">书架</Text></View>
-          <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.text }]}>{finished}</Text><Text variant="caption" color="textSecondary">已读完</Text></View>
-          <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}><Text style={[styles.statValue, { color: theme.colors.accent }]}>{stats.streak}</Text><Text variant="caption" color="textSecondary">连续天数</Text></View>
-        </View>
+      <ScrollView
+        style={[styles.container, { backgroundColor: theme.colors.background }]}
+        contentContainerStyle={[styles.content, styles.meContent]}
+        showsVerticalScrollIndicator={false}
+      >
+        <ProfileIdentityCard
+          bookshelfCount={books.length}
+          finishedCount={finished}
+          immersive
+          streak={stats.streak}
+        />
         <View style={[styles.readingCard, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
           <View style={styles.readingCardHeader}>
             <View>
@@ -827,6 +828,8 @@ const styles = StyleSheet.create({
   hidden: { display: 'none' },
   container: { flex: 1 },
   content: { paddingTop: 8, paddingBottom: 88 },
+  // “我的”页由身份卡直接承担页面头图，移除标题后不再保留额外顶部留白。
+  meContent: { paddingTop: 0 },
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',

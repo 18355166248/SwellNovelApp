@@ -5,7 +5,10 @@ import {
   DefaultTheme,
   LinkingOptions,
 } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import {
+  createNativeStackNavigator,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
   SafeAreaProvider,
@@ -29,6 +32,9 @@ import CacheManagementScreen from '../screens/CacheManagementScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
+const PROFILE_HEADER_COLOR = '#143733';
+
+type MainTabsProps = NativeStackScreenProps<RootStackParamList, 'MainTabs'>;
 
 const linking: LinkingOptions<RootStackParamList> = {
   enabled: Platform.OS === 'web',
@@ -53,18 +59,42 @@ const linking: LinkingOptions<RootStackParamList> = {
   },
 };
 
-function MainTabs() {
+function MainTabs({ navigation }: MainTabsProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const [activeTab, setActiveTab] = React.useState<keyof MainTabParamList>(
+    'Bookshelf',
+  );
   const tabBottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 0);
   const tabContentHeight = 60;
+  const isProfileTab = activeTab === 'Me';
+
+  React.useEffect(() => {
+    // 状态栏由 native-stack 的 UIViewController 统一管理；进入“我的”时切成浅色文字，
+    // 离开后按全局明暗主题恢复，避免调用 RCTStatusBarManager 与原生配置冲突。
+    navigation.setOptions({
+      statusBarStyle:
+        isProfileTab ||
+        theme.colors.background === darkTheme.colors.background
+          ? 'light'
+          : 'dark',
+    });
+  }, [isProfileTab, navigation, theme.colors.background]);
 
   return (
     <SafeAreaView
-      edges={['top']}
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      edges={isProfileTab ? [] : ['top']}
+      style={{
+        flex: 1,
+        backgroundColor: isProfileTab
+          ? PROFILE_HEADER_COLOR
+          : theme.colors.background,
+      }}
     >
       <Tab.Navigator
+        screenListeners={({ route }) => ({
+          focus: () => setActiveTab(route.name),
+        })}
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: theme.colors.accentDark,

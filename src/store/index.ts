@@ -1,6 +1,6 @@
 /**
  * Store 统一导出入口
- * 
+ *
  * 使用方式：
  * import { useBooks, useReaderSettings } from '@/store';
  */
@@ -15,3 +15,4 @@ export * from './hooks';
 export * from './types/book';
 export * from './types/reader';
 export * from './types/settings';
+export * from './types/profile';

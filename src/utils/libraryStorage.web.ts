@@ -11,6 +11,10 @@
 import { Book, Bookmark, Chapter, ReadingHistory } from '../store/types/book';
 import { ReaderSettings } from '../store/types/reader';
 import { ReadingStats, emptyReadingStats } from '../store/types/stats';
+import {
+  normalizeProfileAppearance,
+  ProfileAppearance,
+} from '../store/types/profile';
 
 export interface LibrarySnapshot {
   version: 1;
@@ -22,6 +26,7 @@ export interface LibrarySnapshot {
   readerSettings?: ReaderSettings;
   searchHistory?: string[];
   readingStats?: ReadingStats;
+  profileAppearance?: ProfileAppearance;
 }
 
 /** 轻量元数据：书籍、阅读进度、书签、阅读设置、阅读统计。 */
@@ -34,6 +39,7 @@ export interface LibraryMeta {
   readerSettings?: ReaderSettings;
   searchHistory?: string[];
   readingStats?: ReadingStats;
+  profileAppearance?: ProfileAppearance;
 }
 
 const LEGACY_STATE_KEY = 'swell-novel-library-state-v1';
@@ -131,6 +137,7 @@ const metaToSnapshot = (meta: Partial<LibraryMeta>): LibrarySnapshot => ({
   ),
   searchHistory: meta.searchHistory ?? [],
   readingStats: meta.readingStats ?? emptyReadingStats,
+  profileAppearance: normalizeProfileAppearance(meta.profileAppearance),
 });
 
 // 把整库章节 Map 拆存为按书条目（用于迁移旧的单文件正文）。
@@ -186,6 +193,8 @@ export const loadLibrarySnapshot =
         legacy.readerSettingsVersion,
       ),
       searchHistory: legacy.searchHistory ?? [],
+      readingStats: legacy.readingStats,
+      profileAppearance: normalizeProfileAppearance(legacy.profileAppearance),
     };
     await saveLibraryMeta(meta);
     window.localStorage.removeItem(LEGACY_STATE_KEY);

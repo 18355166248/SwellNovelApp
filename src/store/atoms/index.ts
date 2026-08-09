@@ -30,10 +30,10 @@ export {
 } from './readerAtoms';
 
 // 设置相关
-export {
-  appSettingsAtom,
-  isDarkModeAtom,
-} from './settingsAtoms';
+export { appSettingsAtom, isDarkModeAtom } from './settingsAtoms';
 
 // 阅读统计
 export { readingStatsAtom } from './statsAtoms';
+
+// 本地身份装扮
+export { profileAppearanceAtom } from './profileAtoms';

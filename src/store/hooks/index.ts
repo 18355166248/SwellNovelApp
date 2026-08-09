@@ -68,6 +68,12 @@ export {
   useSetDailyReadingGoal,
 } from './useStats';
 
+export {
+  useProfileAppearance,
+  useSetProfileAvatar,
+  useSetProfileFrame,
+} from './useProfile';
+
 // 设置相关
 export {
   useAppSettings,

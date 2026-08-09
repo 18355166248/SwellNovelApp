@@ -47,6 +47,7 @@ const meta: LibraryMeta = {
   },
   searchHistory: ['测试小说'],
   readingStats: { secondsByDate: { '2026-07-10': 120 } },
+  profileAppearance: { avatarId: 'moon', frameId: 'bookplate' },
 };
 
 describe('library backup archive', () => {
