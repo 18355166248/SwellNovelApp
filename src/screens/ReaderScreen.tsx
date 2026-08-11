@@ -234,6 +234,8 @@ const QUICK_THEME_ORDER: ReaderThemeKey[] = [
   'cosmos',
   'bamboo',
 ];
+// 左右各 30% 用于翻页，中间 40% 呼出阅读工具栏；适当放宽中心区，降低单手点击误翻页率。
+const PAGE_TURN_EDGE_RATIO = 0.3;
 const BACKGROUND_INTENSITY_PRESETS = [
   { label: '淡', value: 0.3 },
   { label: '适中', value: 0.5 },
@@ -1715,6 +1717,41 @@ export default function ReaderScreen() {
     setToolbarVisible,
   ]);
 
+  const handlePagedReaderPress = React.useCallback(
+    (event: any) => {
+      // 带长按摘抄的 Text 会成为独立响应节点，轻触正文时必须主动复用页级点击路由；
+      // 同时停止冒泡，避免 Text 与外层 Pressable 各切换一次，最终看起来像工具栏没有响应。
+      event?.stopPropagation?.();
+      const nativeEvent = event?.nativeEvent ?? {};
+      const pageX = nativeEvent.pageX;
+      const windowGutter = Math.max(0, (winDims.width - viewportWidth) / 2);
+      const x =
+        typeof pageX === 'number'
+          ? pageX - windowGutter
+          : typeof nativeEvent.locationX === 'number'
+          ? nativeEvent.locationX
+          : viewportWidth / 2;
+
+      if (x < viewportWidth * PAGE_TURN_EDGE_RATIO) {
+        goToPage(-1);
+      } else if (x > viewportWidth * (1 - PAGE_TURN_EDGE_RATIO)) {
+        goToPage(1);
+      } else {
+        toggleToolbar();
+      }
+    },
+    [goToPage, toggleToolbar, viewportWidth, winDims.width],
+  );
+
+  const handleScrollReaderTextPress = React.useCallback(
+    (event: any) => {
+      // 滚动模式没有左右点击翻页；正文轻触仅负责稳定显示/隐藏阅读工具栏。
+      event?.stopPropagation?.();
+      toggleToolbar();
+    },
+    [toggleToolbar],
+  );
+
   const renderPage = React.useCallback(
     ({ item, index }: { item: ReaderPageData; index: number }) => {
       const isLastPage = index === pages.length - 1;
@@ -1741,30 +1778,7 @@ export default function ReaderScreen() {
           ]}
         >
           <Pressable
-            onPress={(e: any) => {
-              // react-native-web 上 onPress 来自 DOM click，其 nativeEvent 是 MouseEvent，
-              // 没有 locationX，只有 pageX/offsetX；pageX 是相对浏览器视口的坐标，
-              // 大屏下 #root 居中（margin: 0 auto），必须减去面板左偏移才能得到面板内坐标。
-              const ne = e?.nativeEvent ?? {};
-              let x: number;
-              if (ne.locationX != null) {
-                x = ne.locationX;
-              } else if (ne.pageX != null && e?.currentTarget) {
-                const rect = (
-                  e.currentTarget as HTMLElement
-                ).getBoundingClientRect();
-                x = ne.pageX - rect.left;
-              } else {
-                x = viewportWidth / 2;
-              }
-              if (x < viewportWidth / 3) {
-                goToPage(-1);
-              } else if (x > (viewportWidth * 2) / 3) {
-                goToPage(1);
-              } else {
-                toggleToolbar();
-              }
-            }}
+            onPress={handlePagedReaderPress}
             // ImageBackground 负责页内原画，Pressable 只承载正文和翻页点击，避免原生分页裁掉绝对定位图片。
             style={styles.pagePressTarget}
           >
@@ -1806,6 +1820,10 @@ export default function ReaderScreen() {
               item.blocks.map((block, i) => (
                 <Text
                   key={block.startOffset}
+                  // 正文长按用于摘抄，但普通轻触仍应只交给页级点击区处理；
+                  // 关闭 iOS 的文字按压高亮，避免轻触正文时误以为已触发划线/摘抄。
+                  suppressHighlighting
+                  onPress={handlePagedReaderPress}
                   onLongPress={event => {
                     event.stopPropagation();
                     openExcerptDraft(block.text, block.startOffset);
@@ -1859,13 +1877,12 @@ export default function ReaderScreen() {
       display.theme.text,
       display.titleSize,
       chapterTitleLineHeight,
-      goToPage,
+      handlePagedReaderPress,
       isExcerptRange,
       pages.length,
       openExcerptDraft,
       readerColumn.paddingH,
       readerTopPadding,
-      toggleToolbar,
       viewportWidth,
     ],
   );
@@ -1966,6 +1983,9 @@ export default function ReaderScreen() {
       return (
         <Text
           key={i}
+          // 滚动模式同样只在真正长按后打开摘抄，轻触不显示文字按压效果。
+          suppressHighlighting
+          onPress={handleScrollReaderTextPress}
           onLongPress={event => {
             event.stopPropagation();
             openExcerptDraft(p, position);
@@ -1994,6 +2014,7 @@ export default function ReaderScreen() {
     display.lineHeight,
     display.paraGap,
     display.theme.text,
+    handleScrollReaderTextPress,
     isExcerptRange,
     openExcerptDraft,
     paragraphs,
@@ -3174,7 +3195,13 @@ export default function ReaderScreen() {
       {drawerTransition.mounted && (
         <>
           <Animated.View
-            style={[styles.overlay, { opacity: drawerTransition.value }]}
+            // 目录是阅读内容的侧向导航，不应复用普通弹窗的黑色遮罩；
+            // 透明层仍负责点击正文区域关闭目录，但不会让用户误以为系统亮度被降低。
+            style={[
+              styles.overlay,
+              styles.drawerOverlay,
+              { opacity: drawerTransition.value },
+            ]}
           >
             <Pressable
               style={StyleSheet.absoluteFill}
@@ -3512,6 +3539,9 @@ export default function ReaderScreen() {
               </ScrollView>
             ) : drawerTab === 'search' ? (
               <FlatList
+                // 全文结果与目录虽然位于同一条件分支位置，但监听配置不同；必须使用独立 key，
+                // 否则 RN 会复用 FlatList 并因 onViewableItemsChanged 可空性变化直接触发原生崩溃。
+                key="drawer-text-search-results"
                 style={{ flex: 1 }}
                 data={textSearchPending ? [] : textSearchResults}
                 keyExtractor={item => `${item.chapterId}-${item.position}`}
@@ -3619,6 +3649,7 @@ export default function ReaderScreen() {
               />
             ) : (
               <FlatList
+                key="drawer-table-of-contents"
                 ref={drawerTocRef}
                 style={{ flex: 1 }}
                 data={drawerList}
@@ -3882,6 +3913,11 @@ const styles = StyleSheet.create({
   },
   excerptOverlay: {
     zIndex: 7,
+  },
+  drawerOverlay: {
+    // 关闭手势只覆盖目录右侧正文，不能拦截目录内部的标签、搜索和章节点击。
+    left: DRAWER_WIDTH,
+    backgroundColor: 'transparent',
   },
   excerptKeyboardLayer: {
     position: 'absolute',
@@ -4159,6 +4195,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     width: DRAWER_WIDTH,
+    // 明确压在关闭遮罩之上，避免不同原生平台的兄弟节点触摸层级差异。
+    zIndex: 4,
   },
   drawerSearch: {
     flex: 1,
