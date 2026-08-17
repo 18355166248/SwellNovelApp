@@ -9,6 +9,8 @@ import {
   Pressable,
   Platform,
   TextInput,
+  ImageBackground,
+  type ImageSourcePropType,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon, LinearGradient } from '../components';
@@ -60,6 +62,41 @@ function applyFilter(books: Book[], filter: (typeof FILTERS)[number]) {
 
 function coverTitleFontSize(title: string, base: number) {
   return title.length >= 3 ? base - 2 : base;
+}
+
+const BOOK_COVER_ARTWORKS: Array<{
+  source: ImageSourcePropType;
+  ink: string;
+}> = [
+  { source: require('../assets/book-covers/cover-lychee.jpg'), ink: '#f2e4cf' },
+  { source: require('../assets/book-covers/cover-botanical.jpg'), ink: '#292822' },
+  { source: require('../assets/book-covers/cover-night-boat.jpg'), ink: '#f1e2c7' },
+  { source: require('../assets/book-covers/cover-bookshop.jpg'), ink: '#292822' },
+  { source: require('../assets/book-covers/cover-sunset-courtyard.jpg'), ink: '#f2dfc8' },
+  { source: require('../assets/book-covers/cover-blue-alley.jpg'), ink: '#eee1cb' },
+];
+
+function coverArtworkForId(id: string) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) % Number.MAX_SAFE_INTEGER;
+  }
+  return BOOK_COVER_ARTWORKS[hash % BOOK_COVER_ARTWORKS.length];
+}
+
+function isShortChineseText(value: string) {
+  const characters = Array.from(value.trim());
+  return (
+    characters.length > 0 &&
+    characters.length <= 8 &&
+    characters.filter(character => /[\u3400-\u9fff]/.test(character)).length /
+      characters.length >=
+      0.7
+  );
+}
+
+function verticalCoverText(value: string) {
+  return isShortChineseText(value) ? Array.from(value.trim()).join('\n') : value;
 }
 
 function isToday(timestamp?: number) {
@@ -427,12 +464,18 @@ export default function BookshelfScreen() {
         ) : gridView ? (
           <View style={styles.grid}>
             {shown.map(b => {
-              const palette = paletteForId(b.id);
+              const artwork = coverArtworkForId(b.id);
+              const verticalTitle = isShortChineseText(b.title);
+              const longVerticalTitle =
+                verticalTitle && Array.from(b.title.trim()).length >= 6;
+              const coverTitleSize = longVerticalTitle
+                ? 15
+                : coverTitleFontSize(b.title, 19);
               const badge =
                 (b.unreadUpdates || 0) > 0
-                  ? { label: `更新 ${b.unreadUpdates}`, color: theme.colors.danger }
+                  ? { label: `更新 ${b.unreadUpdates}`, color: theme.colors.accent }
                   : b.progress >= 100
-                  ? { label: '完结', color: theme.colors.badgeMuted }
+                  ? { label: '完结', color: theme.colors.gold }
                   : b.fileFormat === 'txt'
                   ? { label: '导入', color: theme.colors.accent }
                   : null;
@@ -444,87 +487,116 @@ export default function BookshelfScreen() {
                   onLongPress={() => enterSelection(b.id)}
                   delayLongPress={350}
                 >
-                  <LinearGradient
-                    colors={[palette.from, palette.to]}
-                    {...COVER_GRADIENT_DIRECTION}
+                  <ImageBackground
+                    source={artwork.source}
+                    resizeMode="cover"
                     style={[styles.cover, theme.shadows.sm]}
+                    imageStyle={styles.coverImage}
                   >
-                    <View style={styles.coverTitleLayer}>
+                    <LinearGradient
+                      colors={['rgba(9,12,12,.02)', 'rgba(9,12,12,.28)']}
+                      style={styles.coverShade}
+                    />
+                    <View
+                      style={[
+                        styles.coverTitleLayer,
+                        longVerticalTitle && styles.coverTitleLayerLong,
+                      ]}
+                    >
                       <Text
                         style={[
                           styles.coverText,
+                          !verticalTitle && styles.coverTextHorizontal,
                           {
-                            color: palette.ink,
-                            fontSize: coverTitleFontSize(b.title, 14),
-                            lineHeight: coverTitleFontSize(b.title, 14) + 3,
+                            color: artwork.ink,
+                            fontSize: coverTitleSize,
+                            lineHeight: coverTitleSize + 3,
                           },
                         ]}
-                        numberOfLines={2}
+                        numberOfLines={verticalTitle ? 8 : 3}
                         maxFontSizeMultiplier={1}
                       >
-                        {b.title}
+                        {verticalCoverText(b.title)}
                       </Text>
-                    </View>
-                  </LinearGradient>
-                  {badge && (
-                    <View
-                      style={[styles.badge, { backgroundColor: badge.color }]}
-                    >
                       <Text
-                        style={styles.badgeText}
-                        numberOfLines={1}
+                        style={[
+                          styles.coverAuthor,
+                          longVerticalTitle && styles.coverAuthorBeside,
+                          { color: artwork.ink },
+                        ]}
+                        numberOfLines={5}
                         maxFontSizeMultiplier={1}
                       >
-                        {badge.label}
+                        {verticalCoverText(
+                          b.author === '本地导入' ? b.author : `${b.author}著`,
+                        )}
                       </Text>
                     </View>
-                  )}
+                    <View style={styles.coverProgress}>
+                      <Text style={styles.coverProgressText} maxFontSizeMultiplier={1}>
+                        读至 {Math.round(b.progress)}%
+                      </Text>
+                      <View style={styles.coverProgressTrack}>
+                        <View
+                          style={[
+                            styles.coverProgressFill,
+                            {
+                              backgroundColor: theme.colors.accent,
+                              width: `${Math.max(0, Math.min(100, b.progress))}%`,
+                            },
+                          ]}
+                        />
+                      </View>
+                    </View>
+                    {badge && (
+                      <View
+                        style={[styles.badge, { backgroundColor: badge.color }]}
+                      >
+                        <Text
+                          style={styles.badgeText}
+                          numberOfLines={1}
+                          maxFontSizeMultiplier={1}
+                        >
+                          {badge.label}
+                        </Text>
+                      </View>
+                    )}
+                  </ImageBackground>
                   {selectionMode ? (
                     <View style={[styles.selectionBadge, { backgroundColor: selectedBookIds.includes(b.id) ? theme.colors.accentDark : theme.colors.surface, borderColor: theme.colors.border }]}>
                       <Icon name={selectedBookIds.includes(b.id) ? 'check' : 'add'} size={15} color={selectedBookIds.includes(b.id) ? '#fff' : theme.colors.textSecondary} />
                     </View>
                   ) : null}
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.gridTitle, { color: theme.colors.text }]}
-                  >
-                    {b.title}
-                  </Text>
-                  <View
-                    style={[
-                      styles.thinTrack,
-                      { backgroundColor: theme.colors.border },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.thinFill,
-                        {
-                          width: `${b.progress}%`,
-                          backgroundColor: theme.colors.accent,
-                        },
-                      ]}
-                    />
-                  </View>
                 </Pressable>
               );
             })}
             {!selectionMode ? <Pressable
-              style={[
-                styles.gridItem,
-                styles.addTile,
-                { borderColor: theme.colors.border },
-              ]}
+              style={styles.gridItem}
               onPress={openBookFinder}
             >
-              <Icon name="add" size={26} color={theme.colors.textSecondary} />
-              <Text
-                variant="caption"
-                color="textSecondary"
-                style={{ marginTop: 6 }}
+              <View
+                style={[
+                  styles.cover,
+                  styles.addTile,
+                  { borderColor: theme.colors.border },
+                ]}
               >
-                去搜书
-              </Text>
+                <View style={styles.addTileContent}>
+                  <Icon
+                    name="add"
+                    size={26}
+                    color={theme.colors.textSecondary}
+                    style={styles.addTileIcon}
+                  />
+                  <Text
+                    variant="caption"
+                    color="textSecondary"
+                    style={styles.addTileText}
+                  >
+                    去搜书
+                  </Text>
+                </View>
+              </View>
             </Pressable> : null}
           </View>
         ) : (
@@ -670,7 +742,7 @@ export default function BookshelfScreen() {
   );
 }
 
-const COVER_HEIGHT_RATIO = 4.2 / 3;
+const COVER_HEIGHT_RATIO = 2.06;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -749,51 +821,117 @@ const styles = StyleSheet.create({
   cover: {
     width: '100%',
     aspectRatio: 1 / COVER_HEIGHT_RATIO,
-    borderRadius: 6,
+    borderRadius: 7,
     overflow: 'hidden',
   },
-  coverTitleLayer: {
+  coverImage: { borderRadius: 7 },
+  coverShade: {
     ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
+  },
+  coverTitleLayer: {
+    alignItems: 'flex-start',
+    bottom: 45,
+    left: 13,
+    position: 'absolute',
+    right: 10,
+    top: 24,
+  },
+  coverTitleLayerLong: {
+    flexDirection: 'row',
   },
   badge: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 34,
-    height: 18,
-    borderTopRightRadius: 6,
-    borderBottomLeftRadius: 5,
     alignItems: 'center',
+    borderBottomLeftRadius: 7,
+    borderTopRightRadius: 7,
+    height: 22,
     justifyContent: 'center',
+    minWidth: 39,
+    paddingHorizontal: 7,
+    position: 'absolute',
+    right: 0,
+    top: 0,
     zIndex: 2,
     elevation: 2,
   },
   badgeText: {
     color: '#fff',
-    fontSize: 8.5,
-    lineHeight: 11,
+    fontSize: 10,
+    lineHeight: 13,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
   coverText: {
     fontFamily: SERIF_FONT,
-    fontSize: 14,
-    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
-    lineHeight: 17,
+    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
+    letterSpacing: 0.2,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,.12)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 1,
+  },
+  coverTextHorizontal: {
+    alignSelf: 'stretch',
+    marginTop: 34,
+  },
+  coverAuthor: {
+    fontFamily: SERIF_FONT,
+    fontSize: 9,
+    lineHeight: 11,
+    marginTop: 6,
+    opacity: 0.82,
     textAlign: 'center',
   },
-  gridTitle: { fontSize: 12, marginTop: 7, fontWeight: '500' },
-  thinTrack: { height: 3, borderRadius: 2, marginTop: 5, overflow: 'hidden' },
-  thinFill: { height: '100%', borderRadius: 2 },
+  coverAuthorBeside: {
+    alignSelf: 'flex-end',
+    marginLeft: 7,
+    marginTop: 0,
+  },
+  coverProgress: {
+    bottom: 10,
+    left: 10,
+    position: 'absolute',
+    right: 10,
+  },
+  coverProgressText: {
+    color: '#f6f1e9',
+    fontSize: 10.5,
+    fontWeight: '500',
+    lineHeight: 14,
+    textShadowColor: 'rgba(0,0,0,.42)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  coverProgressTrack: {
+    backgroundColor: 'rgba(255,255,255,.2)',
+    borderRadius: 2,
+    height: 3,
+    marginTop: 5,
+    overflow: 'hidden',
+  },
+  coverProgressFill: {
+    borderRadius: 2,
+    height: '100%',
+  },
   addTile: {
-    aspectRatio: 1 / COVER_HEIGHT_RATIO,
+    aspectRatio: 3 / 4,
     borderWidth: 1.5,
     borderStyle: 'dashed',
-    borderRadius: 6,
+  },
+  addTileContent: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  addTileIcon: {
+    height: 26,
+    lineHeight: 26,
+    textAlign: 'center',
+    width: 26,
+  },
+  addTileText: {
+    lineHeight: 15,
+    marginTop: 6,
+    textAlign: 'center',
+    width: '100%',
   },
   list: { paddingHorizontal: 20, paddingTop: 10 },
   listItem: {
