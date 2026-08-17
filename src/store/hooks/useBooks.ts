@@ -15,7 +15,8 @@ import {
   readingHistoryAtom,
   bookmarksAtom,
 } from '../atoms';
-import { Book, Bookmark, Chapter } from '../types/book';
+import { togglePlainBookmark, upsertExcerpt } from '../../utils/bookmarks';
+import { Book, Chapter } from '../types/book';
 import {
   deleteBookChapters,
   loadBookChapters,
@@ -232,26 +233,9 @@ export const useToggleBookmark = () => {
   return (bookId: string, chapterId: string, position = 0) => {
     setBookmarks(prev => {
       const list = prev[bookId] || [];
-      // 摘抄与普通书签共用持久化结构，但不能让“切换书签”误删同章摘抄。
-      const existing = list.find(b => b.chapterId === chapterId && !b.excerpt);
-      if (existing) {
-        return {
-          ...prev,
-          [bookId]: list.filter(b => b.chapterId !== chapterId),
-        };
-      }
       return {
         ...prev,
-        [bookId]: [
-          ...list,
-          {
-            id: `${bookId}-${chapterId}-${Date.now()}`,
-            bookId,
-            chapterId,
-            position,
-            createdAt: Date.now(),
-          },
-        ],
+        [bookId]: togglePlainBookmark(list, bookId, chapterId, position),
       };
     });
   };
@@ -271,31 +255,17 @@ export const useSaveExcerpt = () => {
     if (!normalizedExcerpt) return;
     setBookmarks(prev => {
       const list = prev[bookId] || [];
-      const existingIndex = list.findIndex(
-        item =>
-          item.chapterId === chapterId &&
-          item.position === position &&
-          !!item.excerpt,
-      );
-      const saved: Bookmark = {
-        id:
-          existingIndex >= 0
-            ? list[existingIndex].id
-            : `${bookId}-${chapterId}-excerpt-${Date.now()}`,
-        bookId,
-        chapterId,
-        position,
-        excerpt: normalizedExcerpt,
-        note: note?.trim() || undefined,
-        createdAt:
-          existingIndex >= 0 ? list[existingIndex].createdAt : Date.now(),
+      return {
+        ...prev,
+        [bookId]: upsertExcerpt(
+          list,
+          bookId,
+          chapterId,
+          position,
+          normalizedExcerpt,
+          note,
+        ),
       };
-      if (existingIndex < 0) {
-        return { ...prev, [bookId]: [...list, saved] };
-      }
-      const next = list.slice();
-      next[existingIndex] = saved;
-      return { ...prev, [bookId]: next };
     });
   };
 };

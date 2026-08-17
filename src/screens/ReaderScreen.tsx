@@ -119,6 +119,11 @@ import {
 import { getForwardPrefetchIndices } from '../utils/chapterPrefetch';
 import { useReaderGuards } from './reader/useReaderGuards';
 import { useWebDavAutoBackup } from '../services/webdav/useWebDavAutoBackup';
+import {
+  paragraphsFromContent,
+  resolveExcerptDraft,
+  resolveExcerptRange,
+} from '../utils/readerExcerpt';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
@@ -148,49 +153,6 @@ function hasUsableChapterContent(
     (chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
       !isBlockedBookshukuText(chapter.content))
   );
-}
-
-function paragraphsFromContent(content: string): string[] {
-  return content.split(/\n+/).filter(paragraph => paragraph.trim().length > 0);
-}
-
-function resolveExcerptDraft(
-  content: string,
-  visibleText: string,
-  fallbackPosition: number,
-): Pick<ExcerptDraft, 'position' | 'excerpt'> | null {
-  // 分页器会为了测量在段落中写入视觉换行，原始正文没有这些换行；去掉后
-  // 再定位，才能让分页模式下的摘抄准确落回原文，而不是依赖会累积漂移的页内偏移。
-  const anchor = visibleText
-    .replace(/\n/g, '')
-    .replace(/^　　/, '')
-    .trim()
-    .slice(0, 48);
-  if (!anchor || !content) return null;
-  const nearbyStart = Math.max(0, fallbackPosition - 100);
-  let anchorPosition = content.indexOf(anchor, nearbyStart);
-  if (anchorPosition < 0) anchorPosition = content.indexOf(anchor);
-  if (anchorPosition < 0) anchorPosition = Math.max(0, fallbackPosition);
-
-  const lineStart = content.lastIndexOf('\n', anchorPosition - 1) + 1;
-  const nextBreak = content.indexOf('\n', anchorPosition);
-  const lineEnd = nextBreak < 0 ? content.length : nextBreak;
-  const raw = content.slice(lineStart, lineEnd);
-  const leading = raw.length - raw.trimStart().length;
-  let position = lineStart + leading;
-  let excerpt = raw.trim();
-
-  // 极少数无换行长文本只保留锚点附近内容，防止笔记面板被超长段落撑满。
-  if (excerpt.length > 600) {
-    const relativeAnchor = Math.max(0, anchorPosition - position);
-    const sliceStart = Math.max(0, relativeAnchor - 180);
-    position += sliceStart;
-    excerpt = `${sliceStart > 0 ? '…' : ''}${excerpt.slice(
-      sliceStart,
-      sliceStart + 600,
-    )}${sliceStart + 600 < raw.trim().length ? '…' : ''}`;
-  }
-  return { position, excerpt };
 }
 
 function displayChapterTitle(chapter: Chapter, index: number): string {
@@ -890,19 +852,24 @@ export default function ReaderScreen() {
     () => excerpts.filter(item => item.chapterId === chapter?.id),
     [chapter?.id, excerpts],
   );
+  const chapterSourceContent = content || chapter?.content || '';
+  const chapterExcerptRanges = React.useMemo(
+    () =>
+      chapterExcerpts
+        .filter(item => !!item.excerpt)
+        .map(item =>
+          resolveExcerptRange(
+            chapterSourceContent,
+            item.excerpt!,
+            item.position,
+          ),
+        ),
+    [chapterExcerpts, chapterSourceContent],
+  );
   const isExcerptRange = React.useCallback(
-    (start: number, end: number, visibleText?: string) =>
-      chapterExcerpts.some(item => {
-        const excerptEnd = item.position + (item.excerpt?.length || 1);
-        if (item.position < end && excerptEnd > start) return true;
-        const anchor = visibleText
-          ?.replace(/\n/g, '')
-          .replace(/^　　/, '')
-          .trim()
-          .slice(0, 32);
-        return !!anchor && !!item.excerpt?.includes(anchor);
-      }),
-    [chapterExcerpts],
+    (start: number, end: number) =>
+      chapterExcerptRanges.some(range => range.start < end && range.end > start),
+    [chapterExcerptRanges],
   );
   const [clockText, setClockText] = React.useState(() =>
     formatReaderClock(new Date()),
@@ -914,8 +881,8 @@ export default function ReaderScreen() {
   const progressPct =
     total > 0 ? Math.round(((chapterIndex + 1) / total) * 100) : 0;
   const paragraphs = React.useMemo(
-    () => paragraphsFromContent(content || chapter?.content || ''),
-    [chapter?.content, content],
+    () => paragraphsFromContent(chapterSourceContent),
+    [chapterSourceContent],
   );
   const chapterTextLength = React.useMemo(
     () =>
@@ -1837,8 +1804,8 @@ export default function ReaderScreen() {
                     marginTop: i === 0 ? 0 : display.paraGap,
                     backgroundColor: isExcerptRange(
                       block.startOffset,
-                      block.startOffset + block.text.length,
-                      block.text,
+                      block.startOffset +
+                        Array.from(block.text.replace(/\n/g, '')).length,
                     )
                       ? 'rgba(202,154,70,.18)'
                       : 'transparent',
@@ -1973,13 +1940,15 @@ export default function ReaderScreen() {
   );
 
   const paragraphNodes = React.useMemo(() => {
-    const chapterContent = content || chapter?.content || '';
-    let searchFrom = 0;
+    let logicalPosition = 0;
     return paragraphs.map((p, i) => {
-      const found = chapterContent.indexOf(p, searchFrom);
-      const position = found >= 0 ? found : searchFrom;
-      searchFrom = position + p.length;
-      const highlighted = isExcerptRange(position, position + p.length, p);
+      const position = logicalPosition;
+      const paragraphLength = Array.from(p).length;
+      logicalPosition += paragraphLength;
+      const highlighted = isExcerptRange(
+        position,
+        position + paragraphLength,
+      );
       return (
         <Text
           key={i}
@@ -2008,8 +1977,6 @@ export default function ReaderScreen() {
     });
   }, [
     bodyFont,
-    chapter?.content,
-    content,
     display.fontSize,
     display.lineHeight,
     display.paraGap,
