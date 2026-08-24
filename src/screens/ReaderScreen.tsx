@@ -106,10 +106,12 @@ import {
   scrollOffsetToReadingPosition,
 } from '../utils/readerProgress';
 import {
+  canHandleBoundaryTurnGesture,
   ChapterNavigationIntent,
   getChapterLanding,
   getChapterLandingPage,
   getBoundaryTurn,
+  isChapterSwitchInFlight,
   isStaleScrollSync,
 } from '../utils/readerScrollGuard';
 import {
@@ -224,7 +226,12 @@ const PAGE_BOTTOM_PADDING = 48;
 /** 阅读列最大宽度（含左右内边距）：宽屏下超出则居中留白，避免一行几十字难读。 */
 const READER_MAX_CONTENT = 680;
 /** 章节边界越界回弹翻章的位移阈值 */
-const CHAPTER_TURN_THRESHOLD = 40;
+// 单章列表只在边界回弹时识别跨章，阈值过大会让用户需要反复用力拖动。
+const CHAPTER_TURN_THRESHOLD = 18;
+// 快速甩动可能在越界位移达到阈值前就结束，用松手速度及时确认跨章意图。
+const CHAPTER_TURN_VELOCITY_THRESHOLD = 0.18;
+// 先给 React 一次提交和原生一帧绘制机会，确保分页计算开始前 Loading 已可见。
+const CHAPTER_SWITCH_COMMIT_DELAY = 32;
 const DRAWER_CHAPTER_ROW_HEIGHT = 46;
 
 // react-native-web 透传 CSS scroll-snap，横向列表在 web 获得整页吸附。
@@ -268,10 +275,51 @@ const measuredLinesCache = new Map<string, ReaderLine[]>();
 // onTextLayout 的实测结果覆盖，兼顾切章速度和最终排版精度。
 const estimatedLinesCache = new Map<string, ReaderLine[]>();
 const MEASURED_CACHE_LIMIT = 16;
+type ParsedChapterContent = {
+  content: string;
+  paragraphs: string[];
+  textLength: number;
+};
+// 来回切章时分页虽已缓存，但重新 split 正文并逐字符统计 Unicode 长度仍会阻塞
+// 超长章节。按章节保留最近解析结果，让返回相邻章节只做 O(1) 命中检查。
+const parsedChapterCache = new Map<string, ParsedChapterContent>();
+const PARSED_CHAPTER_CACHE_LIMIT = 12;
 // 完整分页结果也要缓存。只缓存断行仍会在章节边界同步遍历所有行重新组页，
 // 大字号章节会占住 JS 线程，直接表现为手势结束时掉帧。
 const readerPagesCache = new Map<string, ReaderPageData[]>();
 const READER_PAGES_CACHE_LIMIT = 24;
+
+function getParsedChapterContent(
+  chapterId: string,
+  content: string,
+): ParsedChapterContent {
+  const cached = parsedChapterCache.get(chapterId);
+  if (cached?.content === content) {
+    parsedChapterCache.delete(chapterId);
+    parsedChapterCache.set(chapterId, cached);
+    return cached;
+  }
+
+  const paragraphs = paragraphsFromContent(content);
+  const parsed = {
+    content,
+    paragraphs,
+    textLength: paragraphs.reduce(
+      (sum, paragraph) => sum + Array.from(paragraph).length,
+      0,
+    ),
+  };
+  if (
+    !parsedChapterCache.has(chapterId) &&
+    parsedChapterCache.size >= PARSED_CHAPTER_CACHE_LIMIT
+  ) {
+    const oldest = parsedChapterCache.keys().next().value;
+    if (oldest != null) parsedChapterCache.delete(oldest);
+  }
+  parsedChapterCache.set(chapterId, parsed);
+  return parsed;
+}
+
 function cacheReaderLines(
   cache: Map<string, ReaderLine[]>,
   key: string,
@@ -625,7 +673,6 @@ export default function ReaderScreen() {
   );
   const [contentReloadKey, setContentReloadKey] = React.useState(0);
   const [pageIndex, setPageIndex] = React.useState(0);
-  const [measureTick, setMeasureTick] = React.useState(0);
   const [scrollPosition, setScrollPosition] = React.useState(0);
   const [scrollMetrics, setScrollMetrics] = React.useState({
     contentHeight: 0,
@@ -640,6 +687,9 @@ export default function ReaderScreen() {
   const flatListRef = React.useRef<FlatList<ReaderPageData>>(null);
   const scrollViewRef = React.useRef<ScrollView>(null);
   const currentOffsetRef = React.useRef(0);
+  // state 用于渲染页码，ref 用于连续手势的同步判定；惯性被下一次拖动打断时，
+  // 不能等 React 提交后才知道用户实际已经在哪一页。
+  const currentPageIndexRef = React.useRef(0);
   const pendingLandRef = React.useRef<'last' | null>(null);
   // 换章/重排版后需要把横向容器定位到的目标页；setPageIndex 只更新页码，
   // 不会滚动容器，需在新内容布局完成后由 rAF 轮询补一次定位。
@@ -666,6 +716,15 @@ export default function ReaderScreen() {
   const transitionRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
+  // 同步 ref 比 loading state 更早生效，拦住 React 提交前连续到达的第二次切章请求。
+  const chapterSwitchTargetRef = React.useRef<number | null>(null);
+  // 一次原生拖动最多消费一次跨章；chapterId 用来拒绝旧列表卸载后迟到的滚动事件。
+  const chapterTurnGestureRef = React.useRef<{
+    chapterId?: string;
+    startPageIndex: number;
+    dragging: boolean;
+    consumed: boolean;
+  }>({ startPageIndex: 0, dragging: false, consumed: true });
   const scrollProgressTimerRef = React.useRef<
     ReturnType<typeof setTimeout> | undefined
   >(undefined);
@@ -683,7 +742,7 @@ export default function ReaderScreen() {
     lockChapterTurn,
     markUserWebScroll,
     markWebProgrammaticScroll,
-    unlockChapterTurnSoon,
+    unlockChapterTurn,
     webProgrammaticScrollRef,
     webScrollEpochRef,
     webScrollIdleRef,
@@ -868,7 +927,9 @@ export default function ReaderScreen() {
   );
   const isExcerptRange = React.useCallback(
     (start: number, end: number) =>
-      chapterExcerptRanges.some(range => range.start < end && range.end > start),
+      chapterExcerptRanges.some(
+        range => range.start < end && range.end > start,
+      ),
     [chapterExcerptRanges],
   );
   const [clockText, setClockText] = React.useState(() =>
@@ -880,17 +941,12 @@ export default function ReaderScreen() {
     : false;
   const progressPct =
     total > 0 ? Math.round(((chapterIndex + 1) / total) * 100) : 0;
-  const paragraphs = React.useMemo(
-    () => paragraphsFromContent(chapterSourceContent),
-    [chapterSourceContent],
+  const parsedChapter = React.useMemo(
+    () => getParsedChapterContent(chapter?.id || bookId, chapterSourceContent),
+    [bookId, chapter?.id, chapterSourceContent],
   );
-  const chapterTextLength = React.useMemo(
-    () =>
-      paragraphs.reduce((sum, paragraph) => {
-        return sum + Array.from(paragraph).length;
-      }, 0),
-    [paragraphs],
-  );
+  const paragraphs = parsedChapter.paragraphs;
+  const chapterTextLength = parsedChapter.textLength;
   const openExcerptDraft = React.useCallback(
     (visibleText: string, fallbackPosition: number) => {
       if (!chapter) return;
@@ -977,13 +1033,11 @@ export default function ReaderScreen() {
       lineHeight: display.lineHeight,
       fontFamily: bodyFont,
     });
-    // measureTick 是原生 onTextLayout 写入真实测量缓存后的失效版本，促使同一 cacheKey 重新取缓存。
     const hasMeasuredLines = measuredLinesCache.has(lineCacheKey);
-    const lines =
-      measureTick >= 0 && hasMeasuredLines
-        ? measuredLinesCache.get(lineCacheKey)!
-        : estimatedLinesCache.get(lineCacheKey) ||
-          breakLines(paragraphs, pageMetrics.maxWidth, measure);
+    const lines = hasMeasuredLines
+      ? measuredLinesCache.get(lineCacheKey)!
+      : estimatedLinesCache.get(lineCacheKey) ||
+        breakLines(paragraphs, pageMetrics.maxWidth, measure);
     const pagesCacheKey = readerPagesCacheKey({
       lineCacheKey,
       measured: hasMeasuredLines,
@@ -1016,7 +1070,6 @@ export default function ReaderScreen() {
     pageMetrics.maxWidth,
     pageMetrics.paraGap,
     paragraphs,
-    measureTick,
     bodyFont,
   ]);
 
@@ -1061,6 +1114,7 @@ export default function ReaderScreen() {
         }
         currentOffsetRef.current = position;
         setScrollPosition(position);
+        currentPageIndexRef.current = 0;
         setPageIndex(0);
         return;
       }
@@ -1080,6 +1134,7 @@ export default function ReaderScreen() {
         landing = 0;
         currentOffsetRef.current = 0;
       }
+      currentPageIndexRef.current = landing;
       setPageIndex(landing);
       // 换章会复用同一个横向滚动容器。即使目标是首页，也要在新内容布局完成后
       // 显式滚到 0，否则上一章末页的 scrollLeft 会被浏览器夹到新章最后一页。
@@ -1096,10 +1151,12 @@ export default function ReaderScreen() {
     if (settings.pageMode === 'scroll') {
       pendingScrollPositionRef.current = currentOffsetRef.current;
       setScrollPosition(currentOffsetRef.current);
+      currentPageIndexRef.current = 0;
       setPageIndex(0);
       return;
     }
     const remapped = findPageByOffset(pages, currentOffsetRef.current);
+    currentPageIndexRef.current = remapped;
     setPageIndex(remapped);
     // 页宽随分页变化，容器旧 scrollLeft 会指向错页，重排版后同样需要重定位。
     pendingScrollPageRef.current = remapped;
@@ -1253,11 +1310,9 @@ export default function ReaderScreen() {
     const task = InteractionManager.runAfterInteractions(() => {
       const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
       targets.forEach(target => {
-        const targetParagraphs = paragraphsFromContent(target.content);
-        const textLength = targetParagraphs.reduce(
-          (sum, paragraph) => sum + Array.from(paragraph).length,
-          0,
-        );
+        const targetParsed = getParsedChapterContent(target.id, target.content);
+        const targetParagraphs = targetParsed.paragraphs;
+        const textLength = targetParsed.textLength;
         const lineCacheKey = readerLineCacheKey({
           chapterId: target.id,
           textLength,
@@ -1322,8 +1377,11 @@ export default function ReaderScreen() {
   ]);
 
   React.useEffect(() => {
-    if (status === 'ready') unlockChapterTurnSoon();
-  }, [chapter?.id, status, unlockChapterTurnSoon]);
+    const target = chapterSwitchTargetRef.current;
+    if (!isChapterSwitchInFlight(target, chapterIndex, status)) {
+      chapterSwitchTargetRef.current = null;
+    }
+  }, [chapterIndex, status]);
 
   const closeReadingChrome = React.useCallback(() => {
     // 翻页动作应回到沉浸阅读态：无论当前开的是上下栏、设置面板还是目录抽屉，
@@ -1336,34 +1394,63 @@ export default function ReaderScreen() {
   const goToChapter = React.useCallback(
     (idx: number, intent: ChapterNavigationIntent = 'direct') => {
       if (idx < 0 || idx >= total) return;
+      // 切换期间旧手势、惯性回调和连续点击都可能再次进入这里；首个请求完成前
+      // 一律拒绝后续请求，避免目标章被覆盖或一次拖动连跳多章。
+      const activeTarget = chapterSwitchTargetRef.current;
+      if (isChapterSwitchInFlight(activeTarget, chapterIndex, status)) return;
+      // 新章节的首帧可能早于上方清锁 effect；事件阶段同步收口，确保用户一看到
+      // 正文就能立即反向翻回，不会吞掉这次手势。
+      chapterSwitchTargetRef.current = null;
       const targetReady = hasUsableChapterContent(
         chapters[idx],
         book?.source?.name,
       );
+      if (idx !== chapterIndex) chapterSwitchTargetRef.current = idx;
       pendingLandRef.current =
         getChapterLanding(intent, targetReady) === 'last' ? 'last' : null;
       lockChapterTurn();
       invalidateWebScrollSync();
-      // 缓存命中时保持正文列表挂载并直接换数据，避免 loading 全屏闪断；只有
-      // 真正需要网络时才进入加载态。
-      setStatus(targetReady ? 'ready' : isOnline ? 'loading' : 'error');
       closeReadingChrome();
       if (transitionRef.current) clearTimeout(transitionRef.current);
-      // 同一章节重试/重开时 chapter.id 不变；显式触发正文加载 effect，
-      // 避免只进入 loading 覆盖层但没有重新发起 ensure 请求。
-      if (!targetReady) setContentReloadKey(key => key + 1);
-      openChapter(bookId, idx);
-      // 目录点击要立即切章并启动正文抓取；抽屉退场动画不能阻塞网络请求，否则未缓存章节体感会多等一轮。
+
+      const commitChapter = () => {
+        transitionRef.current = undefined;
+        // 同一章节重试/重开时 chapter.id 不变；显式触发正文加载 effect。
+        if (!targetReady) setContentReloadKey(key => key + 1);
+        openChapter(bookId, idx);
+      };
+
+      if (idx !== chapterIndex) {
+        if (!targetReady && !isOnline) {
+          // 离线且无缓存没有可等待的任务，直接切到目标章错误态。
+          setStatus('error');
+          commitChapter();
+          return;
+        }
+        // 先独立提交等待态，再切章节触发同步分页；否则 React 批处理会让 Loading
+        // 与新正文同批出现，用户只能感知到手势失灵和一段主线程停顿。
+        setStatus('loading');
+        transitionRef.current = setTimeout(
+          commitChapter,
+          CHAPTER_SWITCH_COMMIT_DELAY,
+        );
+        return;
+      }
+
+      setStatus(targetReady ? 'ready' : isOnline ? 'loading' : 'error');
+      commitChapter();
     },
     [
       bookId,
       book?.source?.name,
       chapters,
+      chapterIndex,
       closeReadingChrome,
       invalidateWebScrollSync,
       isOnline,
       lockChapterTurn,
       openChapter,
+      status,
       total,
     ],
   );
@@ -1470,6 +1557,7 @@ export default function ReaderScreen() {
       }
       scrollToPage(target, true);
       currentOffsetRef.current = pages[target]?.startOffset ?? 0;
+      currentPageIndexRef.current = target;
       setPageIndex(target);
     },
     [
@@ -1500,6 +1588,7 @@ export default function ReaderScreen() {
         currentOffsetRef.current = position;
         if (Platform.OS === 'web') setSnapEnabled(target <= 0);
         pendingScrollPageRef.current = target > 0 ? target : null;
+        currentPageIndexRef.current = target;
         setPageIndex(target);
       } else if (settings.pageMode === 'scroll') {
         currentOffsetRef.current = position;
@@ -1868,6 +1957,8 @@ export default function ReaderScreen() {
       const raw = Math.round(event.nativeEvent.contentOffset.x / viewportWidth);
       const next = Math.max(0, Math.min(pages.length - 1, raw));
       currentOffsetRef.current = pages[next]?.startOffset ?? 0;
+      if (currentPageIndexRef.current === next) return;
+      currentPageIndexRef.current = next;
       setPageIndex(next);
     },
     [pages, viewportWidth],
@@ -1877,10 +1968,58 @@ export default function ReaderScreen() {
     (offsetX: number) => {
       const raw = Math.round(offsetX / viewportWidth);
       const next = Math.max(0, Math.min(pages.length - 1, raw));
+      if (currentPageIndexRef.current === next) return;
       currentOffsetRef.current = pages[next]?.startOffset ?? 0;
-      setPageIndex(prev => (prev === next ? prev : next));
+      currentPageIndexRef.current = next;
+      setPageIndex(next);
     },
     [pages, viewportWidth],
+  );
+
+  const tryTurnChapterFromGesture = React.useCallback(
+    (offsetX: number, releaseVelocityX = 0) => {
+      const gesture = chapterTurnGestureRef.current;
+      if (!canHandleBoundaryTurnGesture(gesture, chapter?.id)) return false;
+
+      const turn = getBoundaryTurn({
+        offsetX,
+        // 只允许“从边界页开始”的手势跨章；页码在滑动中实时更新后，也不能让
+        // 一次长距离拖动从倒数第二页直接穿过末页并继续切到下一章。
+        pageIndex: gesture.startPageIndex,
+        pagesLength: pages.length,
+        viewportWidth,
+        chapterIndex,
+        totalChapters: total,
+        locked: chapterTurnLockRef.current,
+        threshold: CHAPTER_TURN_THRESHOLD,
+        releaseVelocityX,
+        velocityThreshold: CHAPTER_TURN_VELOCITY_THRESHOLD,
+      });
+      if (!turn) return false;
+
+      // 先同步消费手势再触发任何状态更新，保证同一批 onScroll/onScrollEndDrag
+      // 即使连续到达，也只有第一个事件能进入切章路径。
+      gesture.consumed = true;
+      gesture.dragging = false;
+      lockChapterTurn();
+      if (turn === 'prev') {
+        goToChapter(chapterIndex - 1, 'prev');
+      } else if (!loadCurrentChapterNextPage()) {
+        goToChapter(chapterIndex + 1, 'next');
+      }
+      return true;
+    },
+    [
+      chapter?.id,
+      chapterIndex,
+      chapterTurnLockRef,
+      goToChapter,
+      loadCurrentChapterNextPage,
+      lockChapterTurn,
+      pages.length,
+      total,
+      viewportWidth,
+    ],
   );
 
   const handlePageScroll = React.useCallback(
@@ -1903,36 +2042,14 @@ export default function ReaderScreen() {
         return;
       }
 
-      const turn = getBoundaryTurn({
-        offsetX: x,
-        pageIndex,
-        pagesLength: pages.length,
-        viewportWidth,
-        chapterIndex,
-        totalChapters: total,
-        locked: chapterTurnLockRef.current,
-        threshold: CHAPTER_TURN_THRESHOLD,
-      });
-      if (turn === 'prev') {
-        lockChapterTurn();
-        goToChapter(chapterIndex - 1, 'prev');
-      } else if (turn === 'next') {
-        lockChapterTurn();
-        if (!loadCurrentChapterNextPage())
-          goToChapter(chapterIndex + 1, 'next');
-      }
+      // 原生端越过半页时才会命中新页，ref 去重后一次正常翻页只提交一次状态，
+      // 底部页码无需再等惯性结束，也不会在每个 onScroll 事件里重渲染。
+      syncPageByScrollOffset(x);
+      tryTurnChapterFromGesture(x);
     },
     [
-      chapterIndex,
-      chapterTurnLockRef,
-      goToChapter,
-      loadCurrentChapterNextPage,
-      lockChapterTurn,
-      pageIndex,
-      pages.length,
       syncPageByScrollOffset,
-      total,
-      viewportWidth,
+      tryTurnChapterFromGesture,
       webProgrammaticScrollRef,
       webScrollEpochRef,
       webScrollIdleRef,
@@ -1945,10 +2062,7 @@ export default function ReaderScreen() {
       const position = logicalPosition;
       const paragraphLength = Array.from(p).length;
       logicalPosition += paragraphLength;
-      const highlighted = isExcerptRange(
-        position,
-        position + paragraphLength,
-      );
+      const highlighted = isExcerptRange(position, position + paragraphLength);
       return (
         <Text
           key={i}
@@ -2047,16 +2161,53 @@ export default function ReaderScreen() {
                   : null,
               ]}
               showsHorizontalScrollIndicator={false}
-              initialNumToRender={2}
-              maxToRenderPerBatch={2}
-              windowSize={3}
-              // 页面内有绝对定位的边缘原画；iOS 开启裁剪会误删这类子视图，窗口仅保留 3 页，关闭后内存增量可控。
+              // 新章首批至少铺好 3 页，并在一帧内补齐前后页；否则连续快速翻页
+              // 会先抵达尚未挂载的 cell，短暂看到空白。
+              initialNumToRender={3}
+              maxToRenderPerBatch={4}
+              updateCellsBatchingPeriod={16}
+              windowSize={5}
+              // 页面内有绝对定位的边缘原画；iOS 开启裁剪会误删这类子视图，
+              // 5 页文本窗口内存增量可控，关闭裁剪可避免正文被误清空。
               removeClippedSubviews={false}
               getItemLayout={getPageLayout}
               initialScrollIndex={initialChapterPageIndex}
-              onScrollBeginDrag={() => {
+              onScrollBeginDrag={event => {
                 markUserWebScroll();
+                if (Platform.OS !== 'web') {
+                  // 连续翻页可能在上一段惯性尚未结束时开始；先按原生实际 offset
+                  // 补齐页码和逻辑位置，避免后续重定位仍拿到上一页（常见是章首页）。
+                  syncPageByScrollOffset(event.nativeEvent.contentOffset.x);
+                }
+                // 新的用户拖动才重新武装跨章能力。自动滚动、上一手势的惯性以及
+                // 换章后的迟到事件都不会自行解锁。
+                chapterTurnGestureRef.current = {
+                  chapterId: chapter?.id,
+                  startPageIndex: currentPageIndexRef.current,
+                  dragging: true,
+                  consumed: false,
+                };
+                unlockChapterTurn();
                 setToolbarVisible(false);
+              }}
+              onScrollEndDrag={event => {
+                if (Platform.OS !== 'web') {
+                  const nativeVelocity = event.nativeEvent.velocity?.x ?? 0;
+                  // Android 上报的是手指速度，方向与内容滚动相反；iOS 上报内容速度。
+                  const releaseVelocity =
+                    Platform.OS === 'android'
+                      ? -nativeVelocity
+                      : nativeVelocity;
+                  tryTurnChapterFromGesture(
+                    event.nativeEvent.contentOffset.x,
+                    releaseVelocity,
+                  );
+                }
+                const gesture = chapterTurnGestureRef.current;
+                if (gesture.chapterId === chapter?.id) {
+                  gesture.dragging = false;
+                  gesture.consumed = true;
+                }
               }}
               onMomentumScrollEnd={
                 Platform.OS === 'web' ? undefined : handlePageMomentumEnd
@@ -2090,7 +2241,9 @@ export default function ReaderScreen() {
                   const lineTexts = e.nativeEvent.lines.map(l => l.text);
                   const lines = linesFromTextLayout(paragraphs, lineTexts);
                   cacheReaderLines(measuredLinesCache, cacheKey, lines);
-                  setMeasureTick(t => t + 1);
+                  // 当前 FlatList 挂载期间不替换分页 data。连续滑动中途从估算分页
+                  // 切到实测分页会导致虚拟列表短暂空白，并按尚未落定的旧偏移跳回
+                  // 章首页；实测结果缓存到下次进入本章时直接使用即可。
                 }}
               >
                 {paragraphs.map(p => INDENT + p).join('\n')}
@@ -2193,7 +2346,7 @@ export default function ReaderScreen() {
         <View style={styles.centerFill}>
           <ActivityIndicator size="large" color={NOVEL_ACCENT} />
           <Text style={{ color: display.theme.sub, fontSize: 13 }}>
-            正在加载{chapters[chapterIndex]?.title || '章节'}…
+            正在准备章节…
           </Text>
         </View>
       )}

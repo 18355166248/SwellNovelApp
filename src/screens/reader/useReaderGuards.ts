@@ -11,9 +11,6 @@ export function useReaderGuards() {
   >(undefined);
   const webScrollEpochRef = React.useRef(0);
   const chapterTurnLockRef = React.useRef(false);
-  const chapterTurnUnlockTimerRef = React.useRef<
-    ReturnType<typeof setTimeout> | undefined
-  >(undefined);
 
   const clearWebScrollIdle = React.useCallback(() => {
     if (webScrollIdleRef.current) {
@@ -53,18 +50,10 @@ export function useReaderGuards() {
 
   const lockChapterTurn = React.useCallback(() => {
     chapterTurnLockRef.current = true;
-    if (chapterTurnUnlockTimerRef.current) {
-      clearTimeout(chapterTurnUnlockTimerRef.current);
-    }
   }, []);
 
-  const unlockChapterTurnSoon = React.useCallback((delay = 180) => {
-    if (chapterTurnUnlockTimerRef.current) {
-      clearTimeout(chapterTurnUnlockTimerRef.current);
-    }
-    chapterTurnUnlockTimerRef.current = setTimeout(() => {
-      chapterTurnLockRef.current = false;
-    }, delay);
+  const unlockChapterTurn = React.useCallback(() => {
+    chapterTurnLockRef.current = false;
   }, []);
 
   React.useEffect(
@@ -72,9 +61,6 @@ export function useReaderGuards() {
       clearWebScrollIdle();
       if (webProgrammaticScrollTimerRef.current) {
         clearTimeout(webProgrammaticScrollTimerRef.current);
-      }
-      if (chapterTurnUnlockTimerRef.current) {
-        clearTimeout(chapterTurnUnlockTimerRef.current);
       }
     },
     [clearWebScrollIdle],
@@ -87,7 +73,7 @@ export function useReaderGuards() {
     lockChapterTurn,
     markUserWebScroll,
     markWebProgrammaticScroll,
-    unlockChapterTurnSoon,
+    unlockChapterTurn,
     webProgrammaticScrollRef,
     webScrollEpochRef,
     webScrollIdleRef,
