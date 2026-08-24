@@ -2045,8 +2045,8 @@ export default function ReaderScreen() {
 
       const turn = getBoundaryTurn({
         offsetX,
-        // 只允许“从边界页开始”的手势跨章；页码在滑动中实时更新后，也不能让
-        // 一次长距离拖动从倒数第二页直接穿过末页并继续切到下一章。
+        // 只允许“从边界页开始”的手势跨章，避免一次长距离拖动从倒数第二页
+        // 直接穿过末页并继续切到下一章。
         pageIndex: gesture.startPageIndex,
         pagesLength: pages.length,
         viewportWidth,
@@ -2104,9 +2104,8 @@ export default function ReaderScreen() {
         return;
       }
 
-      // 原生端越过半页时才会命中新页，ref 去重后一次正常翻页只提交一次状态，
-      // 底部页码无需再等惯性结束，也不会在每个 onScroll 事件里重渲染。
-      syncPageByScrollOffset(x);
+      // 原生端页码只在 paging 吸附完成后由 onMomentumScrollEnd 提交。若在
+      // 半页临界点实时更新，手指回弹会让底部数字在相邻页之间抖动。
       tryTurnChapterFromGesture(x);
     },
     [
