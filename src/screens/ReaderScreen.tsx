@@ -673,6 +673,11 @@ export default function ReaderScreen() {
   );
   const [contentReloadKey, setContentReloadKey] = React.useState(0);
   const [pageIndex, setPageIndex] = React.useState(0);
+  // status=ready 只代表正文与分页数据已计算完成；原生 FlatList 的首屏 cell
+  // 可能仍未挂载。只有对应页面真正可见后才开放连续翻页。
+  const [readyPageSessionKey, setReadyPageSessionKey] = React.useState<
+    string | null
+  >(null);
   const [scrollPosition, setScrollPosition] = React.useState(0);
   const [scrollMetrics, setScrollMetrics] = React.useState({
     contentHeight: 0,
@@ -690,6 +695,40 @@ export default function ReaderScreen() {
   // state 用于渲染页码，ref 用于连续手势的同步判定；惯性被下一次拖动打断时，
   // 不能等 React 提交后才知道用户实际已经在哪一页。
   const currentPageIndexRef = React.useRef(0);
+  const pageRenderGateRef = React.useRef<{
+    sessionKey: string;
+    expectedItemKey: string;
+  } | null>(null);
+  const pageReadyFrameRef = React.useRef<number | undefined>(undefined);
+  const pageViewabilityConfigRef = React.useRef({
+    itemVisiblePercentThreshold: 1,
+  });
+  const onPageViewableItemsChangedRef = React.useRef(
+    ({
+      viewableItems,
+    }: {
+      viewableItems: Array<{ item?: ReaderPageData; isViewable?: boolean }>;
+    }) => {
+      const gate = pageRenderGateRef.current;
+      if (!gate) return;
+      const targetVisible = viewableItems.some(
+        token =>
+          token.isViewable !== false &&
+          token.item?.key === gate.expectedItemKey,
+      );
+      if (!targetVisible) return;
+      if (pageReadyFrameRef.current != null) {
+        cancelAnimationFrame(pageReadyFrameRef.current);
+      }
+      // Viewability 回调说明目标 cell 已进入布局；再等一帧，让原生文字完成绘制后
+      // 才移除 Loading 并开放滚动，避免手势跑在首屏渲染前面。
+      pageReadyFrameRef.current = requestAnimationFrame(() => {
+        if (pageRenderGateRef.current?.sessionKey !== gate.sessionKey) return;
+        pageReadyFrameRef.current = undefined;
+        setReadyPageSessionKey(gate.sessionKey);
+      });
+    },
+  );
   const pendingLandRef = React.useRef<'last' | null>(null);
   // 换章/重排版后需要把横向容器定位到的目标页；setPageIndex 只更新页码，
   // 不会滚动容器，需在新内容布局完成后由 rAF 轮询补一次定位。
@@ -756,6 +795,9 @@ export default function ReaderScreen() {
     () => () => {
       if (transitionRef.current) clearTimeout(transitionRef.current);
       if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
+      if (pageReadyFrameRef.current != null) {
+        cancelAnimationFrame(pageReadyFrameRef.current);
+      }
       if (scrollProgressTimerRef.current) {
         clearTimeout(scrollProgressTimerRef.current);
       }
@@ -1086,6 +1128,22 @@ export default function ReaderScreen() {
     }
     return 0;
   }, [chapter?.id, pages]);
+
+  const pageSessionKey = `${bookId}|${
+    chapter?.id || 'chapter'
+  }|${chapterTextLength}|${pages.length}`;
+  const expectedInitialPageKey = pages[initialChapterPageIndex]?.key;
+  pageRenderGateRef.current =
+    status === 'ready' &&
+    settings.pageMode === 'page' &&
+    expectedInitialPageKey &&
+    readyPageSessionKey !== pageSessionKey
+      ? { sessionKey: pageSessionKey, expectedItemKey: expectedInitialPageKey }
+      : null;
+  const pageInteractionReady =
+    settings.pageMode !== 'page' ||
+    pages.length === 0 ||
+    readyPageSessionKey === pageSessionKey;
 
   React.useEffect(() => {
     const chapterChanged = prevChapterIdRef.current !== chapter?.id;
@@ -1540,6 +1598,9 @@ export default function ReaderScreen() {
 
   const goToPage = React.useCallback(
     (delta: number) => {
+      // 新章节首屏尚未完成原生挂载时，不响应边缘点击、键盘或连续翻页；Loading
+      // 消失后再统一开放，避免把用户送到未渲染的虚拟 cell。
+      if (!pageInteractionReady) return;
       closeReadingChrome();
       const target = pageIndex + delta;
       if (target < 0) {
@@ -1565,6 +1626,7 @@ export default function ReaderScreen() {
       closeReadingChrome,
       goToChapter,
       loadCurrentChapterNextPage,
+      pageInteractionReady,
       pageIndex,
       pages,
       scrollToPage,
@@ -2152,6 +2214,7 @@ export default function ReaderScreen() {
               renderItem={renderPage}
               keyExtractor={item => item.key}
               horizontal
+              scrollEnabled={pageInteractionReady}
               pagingEnabled={Platform.OS !== 'web'}
               style={[
                 StyleSheet.absoluteFill,
@@ -2172,6 +2235,8 @@ export default function ReaderScreen() {
               removeClippedSubviews={false}
               getItemLayout={getPageLayout}
               initialScrollIndex={initialChapterPageIndex}
+              viewabilityConfig={pageViewabilityConfigRef.current}
+              onViewableItemsChanged={onPageViewableItemsChangedRef.current}
               onScrollBeginDrag={event => {
                 markUserWebScroll();
                 if (Platform.OS !== 'web') {
@@ -2350,6 +2415,24 @@ export default function ReaderScreen() {
           </Text>
         </View>
       )}
+
+      {status === 'ready' &&
+        settings.pageMode === 'page' &&
+        !pageInteractionReady && (
+          <View
+            testID="reader-page-preparing"
+            style={[
+              StyleSheet.absoluteFill,
+              styles.pagePreparingOverlay,
+              { backgroundColor: display.theme.bg },
+            ]}
+          >
+            <ActivityIndicator size="large" color={NOVEL_ACCENT} />
+            <Text style={{ color: display.theme.sub, fontSize: 13 }}>
+              正在准备页面…
+            </Text>
+          </View>
+        )}
 
       {status === 'error' && (
         <View style={[styles.centerFill, { paddingHorizontal: 40 }]}>
@@ -3917,6 +4000,12 @@ const styles = StyleSheet.create({
   chapterMeta: { fontSize: 12, marginBottom: 24 },
   centerFill: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+  },
+  pagePreparingOverlay: {
+    zIndex: 20,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 14,
