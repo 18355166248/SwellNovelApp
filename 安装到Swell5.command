@@ -83,8 +83,13 @@ DEVICE_LINE="$(printf '%s\n' "$DEVICE_LIST" | grep -F "$CORE_DEVICE_ID" || true)
 if [[ -z "$DEVICE_LINE" ]]; then
   fail_with_log "没有找到 Swell5。请打开手机的开发者模式，并用数据线连接或保持在同一网络。"
 fi
-if [[ "$DEVICE_LINE" != *"available"* ]]; then
-  fail_with_log "Swell5 已配对但当前不可用，请解锁手机后重试。"
+# devicectl 的状态 “unavailable” 本身含有 “available” 子串，必须先排除它再判断，
+# 否则设备离线时这一步会误判通过，直到 xcodebuild 才报“找不到 destination”。
+if [[ "$DEVICE_LINE" == *"unavailable"* ]]; then
+  fail_with_log "Swell5 已配对但当前不可用（unavailable）。请用数据线连接手机、解锁屏幕，或确认它与本机在同一网络后重试。"
+fi
+if [[ "$DEVICE_LINE" != *"available"* && "$DEVICE_LINE" != *"connected"* ]]; then
+  fail_with_log "Swell5 状态异常，请解锁手机并重新连接后重试。当前状态：${DEVICE_LINE}"
 fi
 
 echo "[2/3] 增量构建 Release（首次较慢，后续会复用缓存）…"
