@@ -9,9 +9,11 @@ import { addOnlineBook } from '../../utils/addOnlineBook';
 import { getSourceById } from '../../services/source/registry';
 import type { ParsedChapterContent } from '../../services/source/types';
 import {
-  loadBookChapters,
-  saveBookChapters,
-} from '../../utils/libraryStorage';
+  isInvalidOnlineChapterContent,
+  isOnlineChapterCacheUsable,
+  ONLINE_CONTENT_VERSION,
+} from '../../services/source/contentQuality';
+import { loadBookChapters, saveBookChapters } from '../../utils/libraryStorage';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
   fetchRenderedContent,
@@ -20,7 +22,8 @@ import {
 
 // 懒加载正文后按书防抖落盘：整册 JSON 重写较重，短时间多次翻章合并成一次写入。
 const CACHE_DEBOUNCE_MS = 1000;
-export const BOOKSHUKU_CONTENT_VERSION = 8;
+/** @deprecated 兼容旧引用；在线书源现在统一使用同一正文缓存版本。 */
+export const BOOKSHUKU_CONTENT_VERSION = ONLINE_CONTENT_VERSION;
 const KNOWN_BOOK_TITLES = ['捞尸人'];
 const BAD_CHAPTER_TITLES = new Set([
   '恭喜',
@@ -58,24 +61,18 @@ function unpackChapterContent(result: ParsedChapterContent): {
   title?: string;
   nextPageUrl?: string;
   complete?: boolean;
+  trustedShort?: boolean;
 } {
   return typeof result === 'string' ? { content: result } : result;
 }
 
-function isBlockedBookshukuText(content: string): boolean {
-  const normalized = content.replace(/\s+/g, '');
+function isCachedOnlineChapterUsable(
+  chapter: Chapter | undefined,
+  sourceName?: string,
+): boolean {
   return (
-    /请在浏览器中打开/.test(content) ||
-    /当前环境无法直接下载/.test(content) ||
-    /点击右上角.*按钮/.test(content) ||
-    /复制链接到浏览器/.test(content) ||
-    /Just a moment/i.test(content) ||
-    /Enable JavaScript and cookies/i.test(content) ||
-    /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载|约爱社区/.test(
-      normalized,
-    ) ||
-    /👁️/.test(content) ||
-    normalized.length < 200
+    isOnlineChapterCacheUsable(chapter, sourceName) &&
+    (sourceName !== 'bookshuku' || !isFallbackChapterTitle(chapter!.title))
   );
 }
 
@@ -216,15 +213,26 @@ export const useAddOnlineBook = () => {
       const currentChapters = store.get(chaptersAtom)[book.id] ?? [];
       const contentBySource = new Map(
         currentChapters
-          .filter(c => c.content && c.sourceUrl)
-          .map(c => [c.sourceUrl!, c.content]),
+          .filter(
+            c =>
+              c.sourceUrl &&
+              isCachedOnlineChapterUsable(c, existing.source?.name),
+          )
+          .map(c => [c.sourceUrl!, c]),
       );
       const mergedChapters = chapters.map(c => {
-        const cachedContent = c.sourceUrl
+        const cached = c.sourceUrl
           ? contentBySource.get(c.sourceUrl)
           : undefined;
-        return cachedContent
-          ? { ...c, content: cachedContent, wordCount: cachedContent.length }
+        return cached
+          ? {
+              ...c,
+              content: cached.content,
+              wordCount: cached.wordCount,
+              contentVersion: cached.contentVersion,
+              nextPageUrl: cached.nextPageUrl,
+              contentComplete: cached.contentComplete,
+            }
           : c;
       });
 
@@ -297,7 +305,9 @@ export const useAddRecognizedBook = () => {
         totalChapters: chapters.length,
         updatedAt: Date.now(),
       };
-      store.set(booksAtom, prev => prev.map(book => (book.id === bookId ? updated : book)));
+      store.set(booksAtom, prev =>
+        prev.map(book => (book.id === bookId ? updated : book)),
+      );
       store.set(chaptersAtom, prev => ({ ...prev, [bookId]: chapters }));
       saveBookChapters(bookId, chapters).catch(error => {
         console.warn('[useAddRecognizedBook] refresh catalog failed', error);
@@ -358,7 +368,7 @@ export const useEnsureChapterContent = () => {
     if (!chapter) return null;
 
     const book = store.get(booksAtom).find(b => b.id === bookId);
-    const isBookshuku = book?.source?.name === 'bookshuku';
+    const sourceName = book?.source?.name;
     console.info('[useOnlineBook] ensure start', {
       bookId,
       index,
@@ -369,13 +379,7 @@ export const useEnsureChapterContent = () => {
       contentComplete: chapter.contentComplete,
       nextPageUrl: chapter.nextPageUrl,
     });
-    if (
-      chapter.content &&
-      (!isBookshuku ||
-        (chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
-          !isBlockedBookshukuText(chapter.content) &&
-          !isFallbackChapterTitle(chapter.title)))
-    ) {
+    if (isCachedOnlineChapterUsable(chapter, sourceName)) {
       console.info('[useOnlineBook] ensure cache hit', {
         bookId,
         index,
@@ -406,7 +410,7 @@ export const useEnsureChapterContent = () => {
       let content: string;
       let parsedMeta: Pick<
         ReturnType<typeof unpackChapterContent>,
-        'nextPageUrl' | 'complete'
+        'nextPageUrl' | 'complete' | 'trustedShort'
       > = {};
       if (source) {
         const needsCatalogRefresh =
@@ -425,21 +429,27 @@ export const useEnsureChapterContent = () => {
             author: book.author,
             catalogUrl: bookSource.bookUrl,
           });
-          const contentBySource = new Map(
+          const cachedBySource = new Map(
             chapters
-              .filter(c => c.content && c.sourceUrl)
-              .map(c => [c.sourceUrl!, c.content]),
+              .filter(
+                c => c.sourceUrl && isCachedOnlineChapterUsable(c, source.id),
+              )
+              .map(c => [c.sourceUrl!, c]),
           );
           const refreshed = metas.map((m, i) => {
-            const cachedContent = contentBySource.get(m.url);
+            const cached = cachedBySource.get(m.url);
             return {
               id: `${bookId}-${i}`,
               bookId,
               title: m.title,
-              content: cachedContent ?? '',
+              content: cached?.content ?? '',
               order: i,
               sourceUrl: m.url,
-              wordCount: cachedContent ? cachedContent.length : undefined,
+              wordCount: cached?.content.length,
+              contentVersion: cached?.contentVersion,
+              contentTrustedShort: cached?.contentTrustedShort,
+              nextPageUrl: cached?.nextPageUrl,
+              contentComplete: cached?.contentComplete,
             };
           });
 
@@ -486,12 +496,17 @@ export const useEnsureChapterContent = () => {
           ),
         );
         content = parsed.content;
-        if (source.id === 'bookshuku' && isBlockedBookshukuText(content)) {
-          throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+        if (
+          isInvalidOnlineChapterContent(content, {
+            trustedShort: parsed.trustedShort,
+          })
+        ) {
+          throw new Error('书源返回正文不完整，未写入章节缓存');
         }
         parsedMeta = {
           nextPageUrl: parsed.nextPageUrl,
           complete: parsed.complete,
+          trustedShort: parsed.trustedShort,
         };
         chapter = {
           ...chapter,
@@ -508,8 +523,8 @@ export const useEnsureChapterContent = () => {
           `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
         );
         content = cleanRenderedText(raw, chapter.title);
-        if (isBookshuku && isBlockedBookshukuText(content)) {
-          throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+        if (isInvalidOnlineChapterContent(content)) {
+          throw new Error('网页返回正文不完整，未写入章节缓存');
         }
         chapter = {
           ...chapter,
@@ -521,9 +536,8 @@ export const useEnsureChapterContent = () => {
         ...chapter,
         content,
         wordCount: content.length,
-        contentVersion: isBookshuku
-          ? BOOKSHUKU_CONTENT_VERSION
-          : chapter.contentVersion,
+        contentVersion: ONLINE_CONTENT_VERSION,
+        contentTrustedShort: parsedMeta.trustedShort,
         nextPageUrl: parsedMeta.nextPageUrl,
         contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
       };
@@ -602,18 +616,23 @@ export const useLoadNextChapterPage = () => {
     const content = chapter.content
       ? `${chapter.content}\n${parsed.content}`
       : parsed.content;
-    if (source.id === 'bookshuku' && isBlockedBookshukuText(parsed.content)) {
-      throw new Error('书源返回浏览器打开提示页，未拿到章节分页正文');
+    if (
+      isInvalidOnlineChapterContent(parsed.content, {
+        trustedShort: parsed.trustedShort,
+      })
+    ) {
+      throw new Error('书源返回分页正文不完整，未写入章节缓存');
     }
     const filled: Chapter = {
       ...chapter,
       title: resolveChapterTitle(chapter, parsed.title, content),
       content,
       wordCount: content.length,
-      contentVersion:
-        source.id === 'bookshuku'
-          ? BOOKSHUKU_CONTENT_VERSION
-          : chapter.contentVersion,
+      contentVersion: ONLINE_CONTENT_VERSION,
+      contentTrustedShort:
+        content.replace(/\s+/g, '').length < 200
+          ? !!chapter.contentTrustedShort && !!parsed.trustedShort
+          : undefined,
       nextPageUrl: parsed.nextPageUrl,
       contentComplete: parsed.complete ?? !parsed.nextPageUrl,
     };
@@ -668,7 +687,9 @@ export const useCacheWholeBook = () => {
     if (!source || !initial) return { done: 0, total: 0 };
 
     const total = initial.length;
-    let done = initial.filter(c => c.content).length;
+    let done = initial.filter(c =>
+      isCachedOnlineChapterUsable(c, source.id),
+    ).length;
     onProgress?.({ done, total });
 
     // 每抓够若干章就落一次盘：整本 700+ 章耗时较长，中途关闭/断网也能保住已抓进度。
@@ -690,14 +711,7 @@ export const useCacheWholeBook = () => {
         return { done, total, cancelled: true };
       }
       const ch = store.get(chaptersAtom)[bookId]?.[i];
-      if (
-        !ch ||
-        !ch.sourceUrl ||
-        (ch.content &&
-          (source.id !== 'bookshuku' ||
-            (ch.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
-              !isBlockedBookshukuText(ch.content))))
-      ) {
+      if (!ch || !ch.sourceUrl || isCachedOnlineChapterUsable(ch, source.id)) {
         continue;
       }
       try {
@@ -705,29 +719,33 @@ export const useCacheWholeBook = () => {
           await source.parseChapterContent(ch.sourceUrl, { priority: 'low' }),
         );
         if (
-          source.id === 'bookshuku' &&
-          isBlockedBookshukuText(parsed.content)
+          isInvalidOnlineChapterContent(parsed.content, {
+            trustedShort: parsed.trustedShort,
+          })
         ) {
-          throw new Error('书源返回浏览器打开提示页，未拿到章节正文');
+          throw new Error('书源返回正文不完整，未写入章节缓存');
         }
         const firstParsedTitle = parsed.title;
         let fullContent = parsed.content;
         let nextPageUrl = parsed.nextPageUrl;
         let contentComplete = parsed.complete ?? !nextPageUrl;
+        let allPartsTrustedShort = !!parsed.trustedShort;
         while (nextPageUrl && !signal?.aborted) {
           // 整本缓存需要完整章节；这里沿用分页元数据顺序抓取，阅读器按需加载不受影响。
           parsed = unpackChapterContent(
             await source.parseChapterContent(nextPageUrl, { priority: 'low' }),
           );
           if (
-            source.id === 'bookshuku' &&
-            isBlockedBookshukuText(parsed.content)
+            isInvalidOnlineChapterContent(parsed.content, {
+              trustedShort: parsed.trustedShort,
+            })
           ) {
-            throw new Error('书源返回浏览器打开提示页，未拿到章节分页正文');
+            throw new Error('书源返回分页正文不完整，未写入章节缓存');
           }
           fullContent = `${fullContent}\n${parsed.content}`;
           nextPageUrl = parsed.nextPageUrl;
           contentComplete = parsed.complete ?? !nextPageUrl;
+          allPartsTrustedShort = allPartsTrustedShort && !!parsed.trustedShort;
         }
         if (signal?.aborted) {
           if (sinceFlush > 0) await flush();
@@ -738,10 +756,11 @@ export const useCacheWholeBook = () => {
           title: resolveChapterTitle(ch, firstParsedTitle, fullContent),
           content: fullContent,
           wordCount: fullContent.length,
-          contentVersion:
-            source.id === 'bookshuku'
-              ? BOOKSHUKU_CONTENT_VERSION
-              : ch.contentVersion,
+          contentVersion: ONLINE_CONTENT_VERSION,
+          contentTrustedShort:
+            fullContent.replace(/\s+/g, '').length < 200
+              ? allPartsTrustedShort
+              : undefined,
           nextPageUrl,
           contentComplete,
         };
@@ -809,7 +828,7 @@ export const useCheckBookUpdate = () => {
 
     const contentBySource = new Map(
       existing
-        .filter(c => c.content && c.sourceUrl)
+        .filter(c => c.sourceUrl && isCachedOnlineChapterUsable(c, source.id))
         .map(c => [c.sourceUrl!, c]),
     );
     const next: Chapter[] = shouldReplaceCatalog

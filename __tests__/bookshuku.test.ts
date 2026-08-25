@@ -132,6 +132,13 @@ const CH1_P1 = `
 const CH1_P2 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第2/3页）<br />第三段正文。${LONG}<br /></p></div>`;
 const CH1_P3 = `<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第一章 （第3/3页）<br />第四段正文。${LONG}<br /></p></div>`;
 const CH_PROXY = `<div class="read-top"><li class="title">捞尸人 第四百一十九章</li></div><div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;第四百一十九章 (第1/1页)<br />代理桥正文。${LONG}<br /></p></div>`;
+const SHORT_NOTICE = `
+<div class="read-top"><li class="title">捞尸人 抱歉，请假一天</li></div>
+<div class="articlecon font-large"><p>&nbsp;&nbsp;&nbsp;&nbsp;抱歉，请假一天 (第1/1页)<br /><br />&nbsp;&nbsp;&nbsp;&nbsp;状态不好，写不出感觉，休息一天。<br /></p></div>
+<div class="articlebtn">
+  <a href="/read/160297_625.html">上一章</a>
+  <a href="/read/160297_627.html">下一章</a>
+</div>`;
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -368,6 +375,51 @@ describe('bookshukuSource', () => {
       'http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/160297_456.html',
       'http://101.43.11.224:11008',
       expect.objectContaining({ priority: 'normal' }),
+    );
+  });
+
+  it('parseChapterContent 直接接收结构完整的请假短章，不进入慢 WebView 重试', async () => {
+    mockFetch.mockResolvedValueOnce(SHORT_NOTICE);
+
+    const result = await bookshukuSource.parseChapterContent(
+      'http://wap.bookshuku.org/read/160297_626.html',
+    );
+
+    expect(typeof result).toBe('object');
+    if (typeof result !== 'string') {
+      expect(result.title).toBe('抱歉，请假一天');
+      expect(result.content).toBe(
+        '抱歉，请假一天\n状态不好，写不出感觉，休息一天。',
+      );
+      expect(result.trustedShort).toBe(true);
+      expect(result.complete).toBe(true);
+    }
+    expect(mockFetchWebViewHttpText).not.toHaveBeenCalled();
+    expect(mockFetchRenderedHtml).not.toHaveBeenCalled();
+  });
+
+  it('parseChapterContent 兼容标签包裹的页码和下一页文字', async () => {
+    const first = `<div class="articlecon"><p>${LONG}</p></div>
+      <div>第<span>1</span>/<span>2</span>页</div>
+      <a href="/read/160297_88_2.html"><span>下一页</span>继续阅读</a>`;
+    const second = `<div class="articlecon"><p>${LONG}第二页结尾。</p></div>
+      <div>第<span>2</span>/<span>2</span>页</div>`;
+    mockFetch.mockImplementation(async url => {
+      if (url.endsWith('/read/160297_88.html')) return first;
+      if (url.endsWith('/read/160297_88_2.html')) return second;
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const result = await bookshukuSource.parseChapterContent(
+      'http://wap.bookshuku.org/read/160297_88.html',
+    );
+    const content = typeof result === 'string' ? result : result.content;
+
+    expect(content).toContain('第二页结尾。');
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://wap.bookshuku.org/read/160297_88_2.html',
+      30000,
+      { preferLocalProxy: true, requireLocalProxy: true, localProxyRetries: 2 },
     );
   });
 });

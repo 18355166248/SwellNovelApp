@@ -11,8 +11,15 @@
  */
 
 import { fetchHtml } from '../http/fetchHtml';
-import { BookSource, ParsedBookInfo, ParsedChapter } from './types';
+import { fetchRenderedHtml } from '../browserFetch/bridge';
+import {
+  BookSource,
+  ParsedBookInfo,
+  ParsedChapter,
+  ParsedChapterContent,
+} from './types';
 import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
+import { isInvalidOnlineChapterContent } from './contentQuality';
 
 const HOST = 'www.mingzw.net';
 // www 节点在部分国内云服务器上会被解析到不可达地址；繁体站保留同一书库与目录结构，
@@ -24,9 +31,9 @@ const PROXY_TIMEOUT_MS = 30000;
 const HEADING_RE = /^第[零一二三四五六七八九十百千两万0-9]+[章节回卷]/;
 
 function extractBookId(url: string): string | undefined {
-  return matchOne(
-    /\/(?:mibook|mzwbook|miread|mzwread|mclist|mzwchapter)\/(\d+)/,
-    url,
+  return (
+    matchOne(/\/(?:mibook|mzwbook|mclist|mzwchapter)\/(\d+)/, url) ||
+    matchOne(/\/(?:miread|mzwread)\/(?:[^/]*_)?(\d+)_\d+/, url)
   );
 }
 
@@ -34,11 +41,33 @@ function extractBookId(url: string): string | undefined {
  * 明智屋的 www 证书主机名偶发不匹配，iOS 原生 TLS 直连会被 ATS 拦下。
  * 固定走我们白名单 curl 代理，既规避该兼容问题，也保证目录与正文来自同一链路。
  */
-function fetchMingzwHtml(url: string): Promise<string> {
-  return fetchHtml(url, PROXY_TIMEOUT_MS, {
-    preferLocalProxy: true,
-    requireLocalProxy: true,
-  });
+async function fetchMingzwHtml(url: string): Promise<string> {
+  try {
+    return await fetchHtml(url, PROXY_TIMEOUT_MS, {
+      preferLocalProxy: true,
+      requireLocalProxy: true,
+    });
+  } catch (proxyError) {
+    // 公网 curl 代理故障时，真机仍可用隐藏 WebView 完成站点挑战并取最终 DOM。
+    // 不把代理作为唯一可用链路，否则一次服务端 502 会让整个书源全部不可读。
+    try {
+      return await fetchRenderedHtml(url, {
+        timeout: 35000,
+        waitMs: 6000,
+        priority: 'high',
+      });
+    } catch (webViewError) {
+      throw new Error(
+        `明智屋页面加载失败：${
+          webViewError instanceof Error
+            ? webViewError.message
+            : proxyError instanceof Error
+            ? proxyError.message
+            : String(webViewError)
+        }`,
+      );
+    }
+  }
 }
 
 async function fetchBookInfoHtml(id: string): Promise<{
@@ -61,17 +90,42 @@ async function fetchBookInfoHtml(id: string): Promise<{
     : new Error('明智屋书籍页暂不可达');
 }
 
-/** 抽取正文页纯文本：取 id="content" 容器，<p> 转行，剔除开头的 SEO/标题/箭头噪声行。 */
+/**
+ * 从指定 div 开始按标签深度寻找真正的闭合位置。正文里会插入广告 div，非贪婪
+ * 正则会在第一个广告闭合处截断，表现为每章永远只有一页。
+ */
+function extractNestedDiv(html: string, openingPattern: RegExp): string {
+  const opening = openingPattern.exec(html);
+  if (!opening || opening.index == null) return '';
+  const contentStart = opening.index + opening[0].length;
+  const tagRe = /<\/?div\b[^>]*>/gi;
+  tagRe.lastIndex = contentStart;
+  let depth = 1;
+  let tag: RegExpExecArray | null;
+  while ((tag = tagRe.exec(html)) !== null) {
+    depth += /^<\//.test(tag[0]) ? -1 : 1;
+    if (depth === 0) return html.slice(contentStart, tag.index);
+  }
+  return '';
+}
+
+/** 抽取正文页纯文本：取正文容器，保留段落换行，剔除开头 SEO/标题噪声。 */
 function cleanArticle(html: string): string {
   const block =
-    matchOne(/<div[^>]*id="content"[^>]*>([\s\S]*?)<\/div>/, html) ||
-    matchOne(/<div[^>]*class="content"[^>]*>([\s\S]*?)<\/div>/, html);
+    extractNestedDiv(html, /<div[^>]*\bid=["']content["'][^>]*>/i) ||
+    extractNestedDiv(
+      html,
+      /<div[^>]*\bclass=["'][^"']*\bcontent\b[^"']*["'][^>]*>/i,
+    );
   if (!block) return '';
   const text = decodeEntities(
     block
       .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
       .replace(/<ins[\s\S]*?<\/ins>/gi, '')
-      .replace(/<\/?p[^>]*>/gi, '\n'),
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/?p[^>]*>/gi, '\n')
+      .replace(/<\/div\s*>/gi, '\n'),
   );
   const lines = stripTags(text)
     .split('\n')
@@ -84,12 +138,25 @@ function cleanArticle(html: string): string {
   while (
     start < lines.length &&
     start < 4 &&
-    (/频道|_.*文学|文学$/.test(lines[start]) ||
-      HEADING_RE.test(lines[start]))
+    (/频道|_.*文学|文学$/.test(lines[start]) || HEADING_RE.test(lines[start]))
   ) {
     start++;
   }
   return lines.slice(start).join('\n');
+}
+
+function alternateMingzwUrls(url: string): string[] {
+  const urls = [url];
+  try {
+    const parsed = new URL(url);
+    for (const origin of ORIGINS) {
+      const candidate = `${origin}${parsed.pathname}${parsed.search}`;
+      if (!urls.includes(candidate)) urls.push(candidate);
+    }
+  } catch {
+    // 非标准 URL 交给原请求报错，不能在这里拼出不可控地址。
+  }
+  return urls;
 }
 
 export const mingzwSource: BookSource = {
@@ -119,20 +186,30 @@ export const mingzwSource: BookSource = {
       matchOne(/<title>\s*(.*?)最新章节/i, html),
       matchOne(/《([^《》]+)》最新章节/i, html),
     ]
-      .map(candidate => candidate && decodeEntities(stripTags(candidate)).trim())
+      .map(
+        candidate => candidate && decodeEntities(stripTags(candidate)).trim(),
+      )
       .find(Boolean);
     if (!title) throw new Error('未能解析到书名，可能不是书籍详情页');
 
     const author =
-      matchOne(/作者\s*[：:]\s*(?:<[^>]+>\s*)*<a[^>]*>([^<]+)<\/a>/, html)?.trim() ||
-      '佚名';
+      matchOne(
+        /作者\s*[：:]\s*(?:<[^>]+>\s*)*<a[^>]*>([^<]+)<\/a>/,
+        html,
+      )?.trim() || '佚名';
     const rawCover = matchOne(
       /<div class="cover">[\s\S]*?<img[^>]+src="([^"]+)"/,
       html,
     );
     const cover = rawCover ? toAbsolute(origin, rawCover) : undefined;
-    const description = matchOne(/<div[^>]*class="desc"[^>]*>([\s\S]*?)<\/div>/, html);
-    const status = matchOne(/状态[：:]\s*(?:<[^>]+>\s*)?([^<\n]{1,8})/, html)?.trim();
+    const description = matchOne(
+      /<div[^>]*class="desc"[^>]*>([\s\S]*?)<\/div>/,
+      html,
+    );
+    const status = matchOne(
+      /状态[：:]\s*(?:<[^>]+>\s*)?([^<\n]{1,8})/,
+      html,
+    )?.trim();
 
     return {
       sourceBookId: id,
@@ -158,7 +235,7 @@ export const mingzwSource: BookSource = {
     const segUrls = Array.from(
       new Set(
         Array.from(
-      detail.matchAll(/\/mclist\/(\d+)_(\d+)_(\d+)\.html/g),
+          detail.matchAll(/\/mclist\/(\d+)_(\d+)_(\d+)\.html/g),
           m => ({ url: m[0], start: parseInt(m[2], 10) }),
         )
           .sort((a, b) => a.start - b.start)
@@ -166,13 +243,15 @@ export const mingzwSource: BookSource = {
       ),
     );
     // 兜底：若详情页没有分段链接（章节很少），直接用 /mclist/{id}.html。
-    const pages = segUrls.length > 0 ? segUrls : [`/mclist/${info.sourceBookId}.html`];
+    const pages =
+      segUrls.length > 0 ? segUrls : [`/mclist/${info.sourceBookId}.html`];
 
     const chapters: ParsedChapter[] = [];
     const seen = new Set<string>();
     for (const seg of pages) {
       const html = await fetchMingzwHtml(toAbsolute(origin, seg));
-      const re = /<a[^>]+href="([^"]*\/(?:miread|mzwread)\/\d+_\d+\.html)"[^>]*>([\s\S]*?)<\/a>/g;
+      const re =
+        /<a[^>]+href=["']([^"']*\/(?:miread|mzwread)\/(?:[^"'/]*_)?\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
       let m: RegExpExecArray | null;
       while ((m = re.exec(html)) !== null) {
         const url = toAbsolute(origin, m[1]);
@@ -188,8 +267,21 @@ export const mingzwSource: BookSource = {
     return chapters;
   },
 
-  async parseChapterContent(url: string): Promise<string> {
-    const html = await fetchMingzwHtml(url);
-    return cleanArticle(html);
+  async parseChapterContent(url: string): Promise<ParsedChapterContent> {
+    let lastError: unknown;
+    for (const candidate of alternateMingzwUrls(url)) {
+      try {
+        const content = cleanArticle(await fetchMingzwHtml(candidate));
+        if (isInvalidOnlineChapterContent(content)) {
+          throw new Error(`正文不完整（${content.length} 字）`);
+        }
+        return { content, complete: true };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('明智屋章节正文暂不可用');
   },
 };

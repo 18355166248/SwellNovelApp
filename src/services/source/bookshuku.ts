@@ -267,11 +267,46 @@ function hasNextPage(html: string): boolean {
   return /本章未完|下一页继续阅读|点击下一页/.test(decodeEntities(html));
 }
 
-function isInvalidArticleText(text: string): boolean {
+function getPageInfo(html: string): { current: number; total: number } | null {
+  // 页码数字经常被 span/font 标签包住，先转纯文本再识别，避免只抓到首子页。
+  const plain = decodeEntities(stripTags(html));
+  const matched = /第\s*(\d+)\s*\/\s*(\d+)\s*页/.exec(plain);
+  if (!matched) return null;
+  const current = parseInt(matched[1], 10);
+  const total = parseInt(matched[2], 10);
+  return Number.isFinite(current) && Number.isFinite(total)
+    ? { current, total }
+    : null;
+}
+
+function isTrustedShortArticle(html: string, text: string): boolean {
+  const pageInfo = getPageInfo(html);
+  const compact = text.replace(/\s+/g, '');
+  // 短章不能只凭标题关键词放行：“今晚不要等”这类作者通知标题不固定。
+  // 必须同时具备真实正文容器、明确页码、章节标题和前后章导航，才能排除广告卡片。
+  return (
+    compact.length >= 2 &&
+    compact.length < 200 &&
+    !!pageInfo &&
+    pageInfo.current >= 1 &&
+    pageInfo.total >= pageInfo.current &&
+    /<div\b[^>]*class=["'][^"']*\barticlecon\b/i.test(html) &&
+    !!extractChapterTitle(html) &&
+    /<div\b[^>]*class=["'][^"']*\barticlebtn\b/i.test(html) &&
+    /上一章/.test(html) &&
+    /下一章/.test(html) &&
+    !isBlockedText(text)
+  );
+}
+
+function isInvalidArticleText(text: string, html?: string): boolean {
   const compact = text.replace(/\s+/g, '');
   // WebView 偶尔会命中页面广告卡片而非正文；这类内容短且带成人广告词，
   // 不能写入缓存，否则阅读器会把广告当作章节正文。
-  return compact.length < 200 || isBlockedText(text);
+  return (
+    isBlockedText(text) ||
+    (compact.length < 200 && !(html && isTrustedShortArticle(html, text)))
+  );
 }
 
 function getReadPageUrl(url: string, pageNo: number): string | undefined {
@@ -286,19 +321,26 @@ function getReadPageNo(url: string): number {
 }
 
 function getNextReadPageUrl(url: string, html: string): string | undefined {
-  const pageInfo = /第(\d+)\/(\d+)页/.exec(html);
+  const pageInfo = getPageInfo(html);
   if (pageInfo) {
-    const current = parseInt(pageInfo[1], 10);
-    const total = parseInt(pageInfo[2], 10);
+    const { current, total } = pageInfo;
     if (Number.isFinite(current) && Number.isFinite(total) && current < total) {
       return getReadPageUrl(url, current + 1);
     }
     return undefined;
   }
-  const linkedNext = matchOne(
-    /<a[^>]+href="([^"]+)"[^>]*>\s*(?:下一页|下一页继续阅读|点击下一页)[\s\S]*?<\/a>/i,
-    html,
-  );
+  // “下一页”文字可能包在 span/font 中，逐个检查链接的纯文本比固定 HTML 正则稳。
+  let linkedNext: string | undefined;
+  const anchorRe = /<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let anchor: RegExpExecArray | null;
+  while ((anchor = anchorRe.exec(html)) !== null) {
+    if (
+      /^(下一页|下一页继续阅读|点击下一页)/.test(stripTags(anchor[2]).trim())
+    ) {
+      linkedNext = anchor[1];
+      break;
+    }
+  }
   if (linkedNext) return toAbsolute(ORIGIN, linkedNext);
   if (!hasNextPage(html)) return undefined;
   return getReadPageUrl(url, getReadPageNo(url) + 1);
@@ -307,7 +349,12 @@ function getNextReadPageUrl(url: string, html: string): string | undefined {
 async function fetchArticleText(
   url: string,
   options: ParseChapterOptions = {},
-): Promise<{ html: string; text: string; usedRenderedText: boolean }> {
+): Promise<{
+  html: string;
+  text: string;
+  usedRenderedText: boolean;
+  trustedShort: boolean;
+}> {
   const startedAt = Date.now();
   let html: string;
   let usedRenderedHtml = false;
@@ -364,14 +411,19 @@ async function fetchArticleText(
     }
   }
   let directText = cleanArticle(html);
-  if (directText && !isInvalidArticleText(directText)) {
+  if (directText && !isInvalidArticleText(directText, html)) {
     devInfo('[bookshuku] article text ok', {
       url,
       mode: usedRenderedHtml ? 'webview-html' : 'html',
       ms: Date.now() - startedAt,
       length: directText.length,
     });
-    return { html, text: directText, usedRenderedText: usedRenderedHtml };
+    return {
+      html,
+      text: directText,
+      usedRenderedText: usedRenderedHtml,
+      trustedShort: isTrustedShortArticle(html, directText),
+    };
   }
   if (!usedRenderedHtml) {
     try {
@@ -407,14 +459,19 @@ async function fetchArticleText(
       }
       usedRenderedHtml = true;
       directText = cleanArticle(html);
-      if (directText && !isInvalidArticleText(directText)) {
+      if (directText && !isInvalidArticleText(directText, html)) {
         devInfo('[bookshuku] article text ok', {
           url,
           mode: 'webview-html',
           ms: Date.now() - startedAt,
           length: directText.length,
         });
-        return { html, text: directText, usedRenderedText: true };
+        return {
+          html,
+          text: directText,
+          usedRenderedText: true,
+          trustedShort: isTrustedShortArticle(html, directText),
+        };
       }
     } catch (error) {
       devInfo('[bookshuku] article WebView html retry failed', {
@@ -459,7 +516,12 @@ async function fetchArticleText(
     ms: Date.now() - startedAt,
     length: renderedText.length,
   });
-  return { html, text: renderedText, usedRenderedText: true };
+  return {
+    html,
+    text: renderedText,
+    usedRenderedText: true,
+    trustedShort: false,
+  };
 }
 
 function normalizeCatalogChapterTitle(raw: string, bookTitle?: string): string {
@@ -851,11 +913,9 @@ export const bookshukuSource: BookSource = {
     const startedAt = Date.now();
     devInfo('[bookshuku] chapter start', { url });
     const firstPage = await fetchArticleText(url, options);
-    const pageInfo = /第(\d+)\/(\d+)页/.exec(firstPage.html);
-    const currentPage = pageInfo
-      ? parseInt(pageInfo[1], 10)
-      : getReadPageNo(url);
-    const totalPages = pageInfo ? parseInt(pageInfo[2], 10) : undefined;
+    const pageInfo = getPageInfo(firstPage.html);
+    const currentPage = pageInfo?.current ?? getReadPageNo(url);
+    const totalPages = pageInfo?.total;
     const nextPageUrl = getNextReadPageUrl(
       url,
       `${firstPage.html}\n${firstPage.text}`,
@@ -870,12 +930,14 @@ export const bookshukuSource: BookSource = {
     });
 
     const parts = [firstPage.text];
+    const trustedParts = [firstPage.trustedShort];
     let cursor = nextPageUrl;
     let guard = 0;
     while (cursor && guard < 20) {
       guard += 1;
       const nextPage = await fetchArticleText(cursor, options);
       parts.push(nextPage.text);
+      trustedParts.push(nextPage.trustedShort);
       cursor = getNextReadPageUrl(cursor, `${nextPage.html}\n${nextPage.text}`);
     }
     const content = normalizeChapter(parts);
@@ -894,6 +956,8 @@ export const bookshukuSource: BookSource = {
         extractChapterTitle(firstPage.html) || inferTitleFromContent(content),
       nextPageUrl: cursor,
       complete: !cursor,
+      trustedShort:
+        content.replace(/\s+/g, '').length < 200 && trustedParts.every(Boolean),
     };
   },
 };

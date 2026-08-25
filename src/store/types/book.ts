@@ -42,6 +42,7 @@ export interface Chapter {
   sourceUrl?: string; // 在线书：该章正文页的绝对 URL
   nextPageUrl?: string; // 分页章节：下一正文子页 URL；为空表示当前章节已读完整。
   contentComplete?: boolean; // false 表示已缓存当前子页，但本章还有后续分页待按需加载。
+  contentTrustedShort?: boolean; // 书源结构校验通过的请假条/通知等短章，可绕过普通正文最小字数限制。
 }
 
 export interface Bookmark {

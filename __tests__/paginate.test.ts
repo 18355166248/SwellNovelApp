@@ -1,6 +1,7 @@
 import { charWidthEm } from '../src/utils/charWidthTable';
 import {
   breakLines,
+  breakLinesCooperatively,
   buildPages,
   findPageByOffset,
   linesFromTextLayout,
@@ -76,6 +77,42 @@ describe('breakLines', () => {
 
   it('空段落数组返回空行数组', () => {
     expect(breakLines([], 100, fixed10)).toEqual([]);
+  });
+});
+
+describe('breakLinesCooperatively', () => {
+  const fixed10: MeasureChar = () => 10;
+
+  it('分片断行与一次性断行结果及跨片偏移完全一致', async () => {
+    const paragraphs = ['一二三四五', '六七八九', '十百千万'];
+    const yielded = jest.fn(async () => {});
+    const lines = await breakLinesCooperatively({
+      paragraphs,
+      maxWidth: 50,
+      measure: fixed10,
+      shouldCancel: () => false,
+      chunkSize: 1,
+      yieldControl: yielded,
+    });
+
+    expect(lines).toEqual(breakLines(paragraphs, 50, fixed10));
+    expect(yielded).toHaveBeenCalledTimes(paragraphs.length);
+  });
+
+  it('让出事件循环后发现用户交互会停止后续章节计算', async () => {
+    let cancelled = false;
+    const lines = await breakLinesCooperatively({
+      paragraphs: ['第一段', '第二段', '第三段'],
+      maxWidth: 100,
+      measure: fixed10,
+      shouldCancel: () => cancelled,
+      chunkSize: 1,
+      yieldControl: async () => {
+        cancelled = true;
+      },
+    });
+
+    expect(lines).toBeNull();
   });
 });
 

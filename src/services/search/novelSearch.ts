@@ -38,6 +38,16 @@ const VERIFIED_TITLE_ENTRIES = [
     sourceId: 'mingzw',
     sourceBookId: '17482',
   },
+  {
+    title: '道诡异仙',
+    sourceId: 'mingzw',
+    sourceBookId: '39572',
+  },
+  {
+    title: '道诡异仙',
+    sourceId: 'bookshuku',
+    sourceBookId: '117811',
+  },
 ] as const;
 
 interface RawHit {
@@ -146,10 +156,7 @@ const ENGINES: SearchEngine[] = [
 ];
 
 /** 把引擎原始命中过滤成“命中已注册书源的书籍详情页”，按书源+书号去重。 */
-function filterToSources(
-  hits: RawHit[],
-  keyword: string,
-): NovelSearchResult[] {
+function filterToSources(hits: RawHit[], keyword: string): NovelSearchResult[] {
   const results: NovelSearchResult[] = [];
   const seen = new Set<string>();
   const normalizedKeyword = keyword.toLocaleLowerCase();

@@ -40,6 +40,7 @@ function clearChapterContent(chapter: Chapter): Chapter {
     contentVersion: undefined,
     nextPageUrl: undefined,
     contentComplete: undefined,
+    contentTrustedShort: undefined,
   };
 }
 
@@ -65,7 +66,10 @@ export function clearReadChapterCache(
   if (currentIndex < 0 && progress > 0) {
     currentIndex = Math.max(
       0,
-      Math.min(chapters.length - 1, Math.ceil((progress / 100) * chapters.length) - 1),
+      Math.min(
+        chapters.length - 1,
+        Math.ceil((progress / 100) * chapters.length) - 1,
+      ),
     );
   }
   if (currentIndex < 0) return chapters;

@@ -64,6 +64,46 @@ export function breakLines(
   return lines;
 }
 
+/**
+ * 后台预断行的协作式版本。按段落小批次执行并主动让出事件循环，使阅读手势能
+ * 及时推进取消标记；结果与一次性 breakLines 保持完全相同的逻辑偏移。
+ */
+export async function breakLinesCooperatively({
+  paragraphs,
+  maxWidth,
+  measure,
+  shouldCancel,
+  chunkSize = 12,
+  yieldControl = () => new Promise<void>(resolve => setTimeout(resolve, 0)),
+}: {
+  paragraphs: string[];
+  maxWidth: number;
+  measure: MeasureChar;
+  shouldCancel: () => boolean;
+  chunkSize?: number;
+  yieldControl?: () => Promise<void>;
+}): Promise<ReaderLine[] | null> {
+  const lines: ReaderLine[] = [];
+  let logicalOffset = 0;
+  const safeChunkSize = Math.max(1, Math.floor(chunkSize));
+
+  for (let start = 0; start < paragraphs.length; start += safeChunkSize) {
+    if (shouldCancel()) return null;
+    const chunk = paragraphs.slice(start, start + safeChunkSize);
+    const chunkLines = breakLines(chunk, maxWidth, measure);
+    chunkLines.forEach(line =>
+      lines.push({ ...line, charOffset: line.charOffset + logicalOffset }),
+    );
+    logicalOffset += chunk.reduce(
+      (sum, paragraph) => sum + Array.from(paragraph).length,
+      0,
+    );
+    await yieldControl();
+  }
+
+  return shouldCancel() ? null : lines;
+}
+
 /** 页内的一个段落块（同段的连续行），块之间渲染时插入段间距。 */
 export interface ReaderPageBlock {
   /** 段落在本页的文本，行以 \n 连接 */

@@ -51,7 +51,6 @@ import {
   useToggleBookmark,
   useSaveExcerpt,
   useRemoveBookmark,
-  BOOKSHUKU_CONTENT_VERSION,
   useEnsureChapterContent,
   useLoadNextChapterPage,
   useAddReadingTime,
@@ -71,10 +70,11 @@ import {
   READER_BACKGROUND_DECORATION,
 } from '../theme/readerBackgroundAssets';
 import type { Chapter } from '../store/types/book';
+import { isBadChapterTitle } from '../services/source/contentGuards';
 import {
-  isBadChapterTitle,
-  isBlockedText,
-} from '../services/source/contentGuards';
+  isOnlineChapterCacheUsable,
+  ONLINE_CONTENT_VERSION,
+} from '../services/source/contentQuality';
 import { SERIF_FONT } from '../theme/fonts';
 import { useReaderFontFamily } from '../services/fonts/useReaderFontFamily';
 import { FONTS, getFontDef } from '../theme/fontCatalog';
@@ -87,10 +87,9 @@ import {
 } from '../services/fonts/fontManager';
 import {
   breakLines,
+  breakLinesCooperatively,
   buildPages,
   findPageByOffset,
-  INDENT,
-  linesFromTextLayout,
   ReaderLine,
   ReaderPageData,
 } from '../utils/paginate';
@@ -101,6 +100,7 @@ import {
   formatReaderClock,
 } from '../utils/readerChrome';
 import { createLatestRequestTracker } from '../utils/latestRequest';
+import { devInfo } from '../utils/devLog';
 import {
   readingPositionToScrollOffset,
   scrollOffsetToReadingPosition,
@@ -138,23 +138,11 @@ interface ExcerptDraft {
   note: string;
 }
 
-function isBlockedBookshukuText(content?: string): boolean {
-  if (!content) return false;
-  // 拦截页/广告卡片特征由 contentGuards 统一判定；这里再叠加“正文过短”这条
-  // 阅读器专属规则:缓存里不足 200 字的正文按不可用处理,触发重新抓取。
-  return isBlockedText(content) || content.replace(/\s+/g, '').length < 200;
-}
-
 function hasUsableChapterContent(
   chapter: Chapter | undefined,
   sourceName?: string,
 ): boolean {
-  if (!chapter?.content) return false;
-  return (
-    sourceName !== 'bookshuku' ||
-    (chapter.contentVersion === BOOKSHUKU_CONTENT_VERSION &&
-      !isBlockedBookshukuText(chapter.content))
-  );
+  return isOnlineChapterCacheUsable(chapter, sourceName);
 }
 
 function displayChapterTitle(chapter: Chapter, index: number): string {
@@ -175,7 +163,7 @@ function needsDrawerTitleResolve(chapter: Chapter): boolean {
     .replace(/^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/, '')
     .trim();
   return (
-    chapter.contentVersion !== BOOKSHUKU_CONTENT_VERSION ||
+    chapter.contentVersion !== ONLINE_CONTENT_VERSION ||
     /^第\s*\d+\s*章$/.test(title) ||
     /^分节阅读\s*\d+$/.test(title) ||
     isBadChapterTitle(title) ||
@@ -269,12 +257,10 @@ function findReaderPageScrollNode(): HTMLElement | null {
   );
 }
 
-// onTextLayout 真实排版结果缓存：同章同排版参数只测一次。
-const measuredLinesCache = new Map<string, ReaderLine[]>();
-// 后续章节在交互空闲时先用跨端字符宽度表断行；真正展示后原生端仍会用
-// onTextLayout 的实测结果覆盖，兼顾切章速度和最终排版精度。
+// 当前章与相邻章节统一使用跨端字符宽度表断行。不要再挂载包含整章正文的隐藏
+// Text 做 onTextLayout：它会在首屏出现后继续占用原生布局与 JS 线程数秒。
 const estimatedLinesCache = new Map<string, ReaderLine[]>();
-const MEASURED_CACHE_LIMIT = 16;
+const READER_LINES_CACHE_LIMIT = 16;
 type ParsedChapterContent = {
   content: string;
   paragraphs: string[];
@@ -289,6 +275,9 @@ const PARSED_CHAPTER_CACHE_LIMIT = 12;
 const readerPagesCache = new Map<string, ReaderPageData[]>();
 const READER_PAGES_CACHE_LIMIT = 24;
 
+const yieldToReaderInteraction = () =>
+  new Promise<void>(resolve => setTimeout(resolve, 0));
+
 function getParsedChapterContent(
   chapterId: string,
   content: string,
@@ -300,6 +289,7 @@ function getParsedChapterContent(
     return cached;
   }
 
+  const startedAt = Date.now();
   const paragraphs = paragraphsFromContent(content);
   const parsed = {
     content,
@@ -317,6 +307,12 @@ function getParsedChapterContent(
     if (oldest != null) parsedChapterCache.delete(oldest);
   }
   parsedChapterCache.set(chapterId, parsed);
+  devInfo('[ReaderPerf] chapter parse', {
+    chapterId,
+    textLength: parsed.textLength,
+    paragraphs: paragraphs.length,
+    ms: Date.now() - startedAt,
+  });
   return parsed;
 }
 
@@ -325,7 +321,7 @@ function cacheReaderLines(
   key: string,
   lines: ReaderLine[],
 ) {
-  if (cache.size >= MEASURED_CACHE_LIMIT) {
+  if (cache.size >= READER_LINES_CACHE_LIMIT) {
     const oldest = cache.keys().next().value;
     if (oldest != null) cache.delete(oldest);
   }
@@ -355,22 +351,18 @@ function readerLineCacheKey({
 
 function readerPagesCacheKey({
   lineCacheKey,
-  measured,
   lineHeight,
   paraGap,
   bodyHeight,
   firstBodyHeight,
 }: {
   lineCacheKey: string;
-  measured: boolean;
   lineHeight: number;
   paraGap: number;
   bodyHeight: number;
   firstBodyHeight: number;
 }): string {
-  return `${lineCacheKey}|${
-    measured ? 'measured' : 'estimated'
-  }|${lineHeight}|${paraGap}|${bodyHeight}|${firstBodyHeight}`;
+  return `${lineCacheKey}|${lineHeight}|${paraGap}|${bodyHeight}|${firstBodyHeight}`;
 }
 
 function cacheReaderPages(key: string, pages: ReaderPageData[]) {
@@ -540,6 +532,7 @@ export default function ReaderScreen() {
   >(() => READER_THEMES[settings.theme].category);
   const [readerOrientation, setReaderOrientation] =
     React.useState<Orientation.AppOrientation>('portrait');
+  const [readerMenuOpen, setReaderMenuOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(!!openDrawer);
 
   React.useEffect(() => {
@@ -550,10 +543,15 @@ export default function ReaderScreen() {
 
   const toggleReaderOrientation = React.useCallback(() => {
     const next = readerOrientation === 'portrait' ? 'landscape' : 'portrait';
+    setReaderMenuOpen(false);
     setReaderOrientation(next);
     Orientation.lockTo(next);
     setToolbarVisible(false);
   }, [readerOrientation, setToolbarVisible]);
+  React.useEffect(() => {
+    // 阅读工具栏被正文点击、翻页或打开其他面板收起时，下拉菜单不能独立悬空。
+    if (!isToolbarVisible) setReaderMenuOpen(false);
+  }, [isToolbarVisible]);
   // 目录首次挂载会先渲染列表顶部、再定位当前章；定位完成前锁住条目，避免快速点击误入第一章。
   const [drawerPositioning, setDrawerPositioning] = React.useState(
     !!openDrawer,
@@ -700,6 +698,10 @@ export default function ReaderScreen() {
     expectedItemKey: string;
   } | null>(null);
   const pageReadyFrameRef = React.useRef<number | undefined>(undefined);
+  // 每次新预分页任务或用户手势都会推进 epoch；异步分片只要发现 token 过期
+  // 就停止，避免后台准备继续与当前翻页竞争 JS 线程。
+  const pagePreparationEpochRef = React.useRef(0);
+  const pageMomentumReleasedAtRef = React.useRef<number | null>(null);
   const pageViewabilityConfigRef = React.useRef({
     itemVisiblePercentThreshold: 1,
   });
@@ -1064,7 +1066,6 @@ export default function ReaderScreen() {
   ]);
   const pages = React.useMemo<ReaderPageData[]>(() => {
     const chapterId = chapter?.id || bookId;
-    const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
     // 断行随正文字体变化：不同字体字宽不同，缓存 key 必须带 bodyFont，
     // 否则切字体后仍复用旧字体的测量结果，断行/每页行数会对不上。
     const lineCacheKey = readerLineCacheKey({
@@ -1075,14 +1076,8 @@ export default function ReaderScreen() {
       lineHeight: display.lineHeight,
       fontFamily: bodyFont,
     });
-    const hasMeasuredLines = measuredLinesCache.has(lineCacheKey);
-    const lines = hasMeasuredLines
-      ? measuredLinesCache.get(lineCacheKey)!
-      : estimatedLinesCache.get(lineCacheKey) ||
-        breakLines(paragraphs, pageMetrics.maxWidth, measure);
     const pagesCacheKey = readerPagesCacheKey({
       lineCacheKey,
-      measured: hasMeasuredLines,
       lineHeight: pageMetrics.lineHeight,
       paraGap: pageMetrics.paraGap,
       bodyHeight: pageMetrics.bodyHeight,
@@ -1090,6 +1085,14 @@ export default function ReaderScreen() {
     });
     const cachedPages = readerPagesCache.get(pagesCacheKey);
     if (cachedPages) return cachedPages;
+    const prepareStartedAt = Date.now();
+    const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
+    let lines = estimatedLinesCache.get(lineCacheKey);
+    const cacheHit = !!lines;
+    if (!lines) {
+      lines = breakLines(paragraphs, pageMetrics.maxWidth, measure);
+      cacheReaderLines(estimatedLinesCache, lineCacheKey, lines);
+    }
     const builtPages = buildPages({
       chapterId,
       lines,
@@ -1099,6 +1102,13 @@ export default function ReaderScreen() {
       firstBodyHeight: pageMetrics.firstBodyHeight,
     });
     cacheReaderPages(pagesCacheKey, builtPages);
+    devInfo('[ReaderPerf] foreground pagination', {
+      chapterId,
+      textLength: chapterTextLength,
+      pages: builtPages.length,
+      lineCacheHit: cacheHit,
+      ms: Date.now() - prepareStartedAt,
+    });
     return builtPages;
   }, [
     bookId,
@@ -1129,16 +1139,23 @@ export default function ReaderScreen() {
     return 0;
   }, [chapter?.id, pages]);
 
+  const chapterChangedForPageLayout = prevChapterIdRef.current !== chapter?.id;
+  // 换章使用预定的首/末页落点；同章因横竖屏、字号等重新分页时，则按当前
+  // 逻辑字符偏移寻找新页。门禁必须等待这个真实落点，不能固定等第 1 页，
+  // 否则列表定位到后续页后永远收不到“第 1 页可见”，Loading 会无法解除。
+  const pageRenderTargetIndex = chapterChangedForPageLayout
+    ? initialChapterPageIndex
+    : findPageByOffset(pages, currentOffsetRef.current);
   const pageSessionKey = `${bookId}|${
     chapter?.id || 'chapter'
-  }|${chapterTextLength}|${pages.length}`;
-  const expectedInitialPageKey = pages[initialChapterPageIndex]?.key;
+  }|${chapterTextLength}|${pages.length}|${viewportWidth}|${viewportHeight}`;
+  const expectedRenderedPageKey = pages[pageRenderTargetIndex]?.key;
   pageRenderGateRef.current =
     status === 'ready' &&
     settings.pageMode === 'page' &&
-    expectedInitialPageKey &&
+    expectedRenderedPageKey &&
     readyPageSessionKey !== pageSessionKey
-      ? { sessionKey: pageSessionKey, expectedItemKey: expectedInitialPageKey }
+      ? { sessionKey: pageSessionKey, expectedItemKey: expectedRenderedPageKey }
       : null;
   const pageInteractionReady =
     settings.pageMode !== 'page' ||
@@ -1363,60 +1380,88 @@ export default function ReaderScreen() {
       );
     if (targets.length === 0) return;
 
-    // 网络预取回填后，在所有触摸/导航动画结束再预断行；切到缓存章时直接复用，
-    // 原生端展示后仍会以 onTextLayout 的实测行数据校正。
-    const task = InteractionManager.runAfterInteractions(() => {
-      const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
-      targets.forEach(target => {
-        const targetParsed = getParsedChapterContent(target.id, target.content);
-        const targetParagraphs = targetParsed.paragraphs;
-        const textLength = targetParsed.textLength;
-        const lineCacheKey = readerLineCacheKey({
-          chapterId: target.id,
-          textLength,
-          maxWidth: pageMetrics.maxWidth,
-          fontSize: display.fontSize,
-          lineHeight: display.lineHeight,
-          fontFamily: bodyFont,
-        });
-        if (
-          !measuredLinesCache.has(lineCacheKey) &&
-          !estimatedLinesCache.has(lineCacheKey)
-        ) {
-          cacheReaderLines(
-            estimatedLinesCache,
-            lineCacheKey,
-            breakLines(targetParagraphs, pageMetrics.maxWidth, measure),
-          );
-        }
-        const hasMeasuredLines = measuredLinesCache.has(lineCacheKey);
-        const lines = hasMeasuredLines
-          ? measuredLinesCache.get(lineCacheKey)!
-          : estimatedLinesCache.get(lineCacheKey)!;
-        const pagesCacheKey = readerPagesCacheKey({
-          lineCacheKey,
-          measured: hasMeasuredLines,
-          lineHeight: pageMetrics.lineHeight,
-          paraGap: pageMetrics.paraGap,
-          bodyHeight: pageMetrics.bodyHeight,
-          firstBodyHeight: pageMetrics.firstBodyHeight,
-        });
-        if (!readerPagesCache.has(pagesCacheKey)) {
-          cacheReaderPages(
-            pagesCacheKey,
-            buildPages({
+    // 相邻章只在交互空闲时逐章准备；每章断行内部继续按段落分片让出事件循环。
+    // 用户一开始拖动就推进 epoch，后续分片会立即停止，不再阻塞当前页码回调。
+    const preparationEpoch = ++pagePreparationEpochRef.current;
+    const shouldCancel = () =>
+      pagePreparationEpochRef.current !== preparationEpoch;
+    let task:
+      | ReturnType<typeof InteractionManager.runAfterInteractions>
+      | undefined;
+    // 新章开放后的前 500ms 完全留给用户连续翻页；只在这段时间没有任何新手势
+    // 时才进入 InteractionManager，避免刚到第二页就撞上后台断行。
+    const startTimer = setTimeout(() => {
+      if (shouldCancel()) return;
+      task = InteractionManager.runAfterInteractions(() => {
+        const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
+        void (async () => {
+          for (const target of targets) {
+            if (shouldCancel()) return;
+            const startedAt = Date.now();
+            const targetParsed = getParsedChapterContent(
+              target.id,
+              target.content,
+            );
+            const lineCacheKey = readerLineCacheKey({
               chapterId: target.id,
-              lines,
+              textLength: targetParsed.textLength,
+              maxWidth: pageMetrics.maxWidth,
+              fontSize: display.fontSize,
+              lineHeight: display.lineHeight,
+              fontFamily: bodyFont,
+            });
+            let lines = estimatedLinesCache.get(lineCacheKey);
+            if (!lines) {
+              lines =
+                (await breakLinesCooperatively({
+                  paragraphs: targetParsed.paragraphs,
+                  maxWidth: pageMetrics.maxWidth,
+                  measure,
+                  shouldCancel,
+                })) ?? undefined;
+              if (!lines || shouldCancel()) return;
+              cacheReaderLines(estimatedLinesCache, lineCacheKey, lines);
+            }
+
+            const pagesCacheKey = readerPagesCacheKey({
+              lineCacheKey,
               lineHeight: pageMetrics.lineHeight,
               paraGap: pageMetrics.paraGap,
               bodyHeight: pageMetrics.bodyHeight,
               firstBodyHeight: pageMetrics.firstBodyHeight,
-            }),
-          );
-        }
+            });
+            if (!readerPagesCache.has(pagesCacheKey)) {
+              await yieldToReaderInteraction();
+              if (shouldCancel()) return;
+              const preparedPages = buildPages({
+                chapterId: target.id,
+                lines,
+                lineHeight: pageMetrics.lineHeight,
+                paraGap: pageMetrics.paraGap,
+                bodyHeight: pageMetrics.bodyHeight,
+                firstBodyHeight: pageMetrics.firstBodyHeight,
+              });
+              cacheReaderPages(pagesCacheKey, preparedPages);
+              devInfo('[ReaderPerf] neighbor pagination', {
+                chapterId: target.id,
+                textLength: targetParsed.textLength,
+                pages: preparedPages.length,
+                ms: Date.now() - startedAt,
+              });
+            }
+            // 即使本章全部命中缓存，也在进入下一章前让出一次，保证连续操作优先。
+            await yieldToReaderInteraction();
+          }
+        })();
       });
-    });
-    return () => task.cancel();
+    }, 500);
+    return () => {
+      if (pagePreparationEpochRef.current === preparationEpoch) {
+        pagePreparationEpochRef.current += 1;
+      }
+      clearTimeout(startTimer);
+      task?.cancel();
+    };
   }, [
     bodyFont,
     book?.source?.name,
@@ -2016,6 +2061,14 @@ export default function ReaderScreen() {
 
   const handlePageMomentumEnd = React.useCallback(
     (event: { nativeEvent: { contentOffset: { x: number } } }) => {
+      const releasedAt = pageMomentumReleasedAtRef.current;
+      pageMomentumReleasedAtRef.current = null;
+      if (releasedAt != null && Date.now() - releasedAt > 800) {
+        devInfo('[ReaderPerf] delayed momentum end', {
+          chapterId: chapter?.id,
+          delayMs: Date.now() - releasedAt,
+        });
+      }
       const raw = Math.round(event.nativeEvent.contentOffset.x / viewportWidth);
       const next = Math.max(0, Math.min(pages.length - 1, raw));
       currentOffsetRef.current = pages[next]?.startOffset ?? 0;
@@ -2023,7 +2076,7 @@ export default function ReaderScreen() {
       currentPageIndexRef.current = next;
       setPageIndex(next);
     },
-    [pages, viewportWidth],
+    [chapter?.id, pages, viewportWidth],
   );
 
   const syncPageByScrollOffset = React.useCallback(
@@ -2206,7 +2259,10 @@ export default function ReaderScreen() {
         (settings.pageMode === 'page' ? (
           <>
             <FlatList
-              key={chapter?.id || bookId}
+              // 尺寸变化后分页数据的 ordinal key 可能不变，FlatList 会误复用旧 cell，
+              // 同时不再触发可见回调。按分页会话重建列表，确保横竖屏都以新宽度
+              // 布局，并让首屏绘制门禁能可靠收到目标页可见事件。
+              key={pageSessionKey}
               ref={flatListRef}
               testID="reader-page-list"
               data={pages}
@@ -2233,10 +2289,13 @@ export default function ReaderScreen() {
               // 5 页文本窗口内存增量可控，关闭裁剪可避免正文被误清空。
               removeClippedSubviews={false}
               getItemLayout={getPageLayout}
-              initialScrollIndex={initialChapterPageIndex}
+              initialScrollIndex={pageRenderTargetIndex}
               viewabilityConfig={pageViewabilityConfigRef.current}
               onViewableItemsChanged={onPageViewableItemsChangedRef.current}
               onScrollBeginDrag={event => {
+                // 用户交互优先级最高：终止尚未完成的相邻章节分片预分页。
+                pagePreparationEpochRef.current += 1;
+                pageMomentumReleasedAtRef.current = null;
                 markUserWebScroll();
                 if (Platform.OS !== 'web') {
                   // 连续翻页可能在上一段惯性尚未结束时开始；先按原生实际 offset
@@ -2255,6 +2314,7 @@ export default function ReaderScreen() {
                 setToolbarVisible(false);
               }}
               onScrollEndDrag={event => {
+                let turnedChapter = false;
                 if (Platform.OS !== 'web') {
                   const nativeVelocity = event.nativeEvent.velocity?.x ?? 0;
                   // Android 上报的是手指速度，方向与内容滚动相反；iOS 上报内容速度。
@@ -2262,10 +2322,13 @@ export default function ReaderScreen() {
                     Platform.OS === 'android'
                       ? -nativeVelocity
                       : nativeVelocity;
-                  tryTurnChapterFromGesture(
+                  turnedChapter = tryTurnChapterFromGesture(
                     event.nativeEvent.contentOffset.x,
                     releaseVelocity,
                   );
+                  if (!turnedChapter) {
+                    pageMomentumReleasedAtRef.current = Date.now();
+                  }
                 }
                 const gesture = chapterTurnGestureRef.current;
                 if (gesture.chapterId === chapter?.id) {
@@ -2279,40 +2342,6 @@ export default function ReaderScreen() {
               scrollEventThrottle={16}
               onScroll={handlePageScroll}
             />
-            {Platform.OS !== 'web' && paragraphs.length > 0 && (
-              <Text
-                style={{
-                  position: 'absolute',
-                  opacity: 0,
-                  width: pageMetrics.maxWidth,
-                  // 用真实正文字体测量：断行结果要与渲染一致，硬编码 SERIF_FONT
-                  // 会让非衬线字体下的每页行数/末页留白算错。
-                  fontFamily: bodyFont,
-                  fontSize: display.fontSize,
-                  lineHeight: display.fontSize * display.lineHeight,
-                }}
-                onTextLayout={e => {
-                  const chapterId = chapter?.id || bookId;
-                  const cacheKey = readerLineCacheKey({
-                    chapterId,
-                    textLength: chapterTextLength,
-                    maxWidth: pageMetrics.maxWidth,
-                    fontSize: display.fontSize,
-                    lineHeight: display.lineHeight,
-                    fontFamily: bodyFont,
-                  });
-                  if (measuredLinesCache.has(cacheKey)) return;
-                  const lineTexts = e.nativeEvent.lines.map(l => l.text);
-                  const lines = linesFromTextLayout(paragraphs, lineTexts);
-                  cacheReaderLines(measuredLinesCache, cacheKey, lines);
-                  // 当前 FlatList 挂载期间不替换分页 data。连续滑动中途从估算分页
-                  // 切到实测分页会导致虚拟列表短暂空白，并按尚未落定的旧偏移跳回
-                  // 章首页；实测结果缓存到下次进入本章时直接使用即可。
-                }}
-              >
-                {paragraphs.map(p => INDENT + p).join('\n')}
-              </Text>
-            )}
           </>
         ) : (
           <ScrollView
@@ -2552,9 +2581,61 @@ export default function ReaderScreen() {
             {book.title}
           </Text>
         </View>
-        {/* 与左侧返回按钮等宽占位，确保书名相对整个屏幕几何居中。 */}
-        <View style={styles.barBtn} />
+        {Orientation.isSupported ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="更多阅读选项"
+            onPress={() => setReaderMenuOpen(open => !open)}
+            style={styles.barBtn}
+          >
+            <Icon name="more-vert" size={21} color={display.chrome.ink} />
+          </Pressable>
+        ) : (
+          // 与左侧返回按钮等宽占位，确保书名相对整个屏幕几何居中。
+          <View style={styles.barBtn} />
+        )}
       </Animated.View>
+
+      {readerMenuOpen && isToolbarVisible && (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="关闭更多阅读选项"
+            onPress={() => setReaderMenuOpen(false)}
+            style={styles.readerMenuDismiss}
+          />
+          <View
+            style={[
+              styles.readerMenu,
+              {
+                top: topBarPad + 46,
+                backgroundColor: display.chrome.bg,
+                borderColor: display.chrome.hair,
+              },
+            ]}
+          >
+            <Pressable
+              accessibilityRole="menuitem"
+              onPress={toggleReaderOrientation}
+              style={({ pressed }) => [
+                styles.readerMenuItem,
+                pressed && styles.readerMenuItemPressed,
+              ]}
+            >
+              <Icon
+                name="screen-rotation"
+                size={19}
+                color={display.chrome.ink}
+              />
+              <Text
+                style={[styles.readerMenuText, { color: display.chrome.ink }]}
+              >
+                {readerOrientation === 'portrait' ? '切换横屏' : '切换竖屏'}
+              </Text>
+            </Pressable>
+          </View>
+        </>
+      )}
 
       <Animated.View
         pointerEvents={isToolbarVisible ? 'auto' : 'none'}
@@ -2648,14 +2729,6 @@ export default function ReaderScreen() {
               setReaderTheme(isNight ? settings.dayTheme ?? 'paper' : 'night')
             }
           />
-          {Orientation.isSupported && (
-            <ReaderAction
-              icon="screen-rotation"
-              label={readerOrientation === 'portrait' ? '横屏' : '竖屏'}
-              color={display.chrome.ink}
-              onPress={toggleReaderOrientation}
-            />
-          )}
           <ReaderAction
             icon="tune"
             label="设置"
@@ -4075,6 +4148,38 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignItems: 'center',
     paddingHorizontal: 8,
+  },
+  readerMenuDismiss: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 3,
+  },
+  readerMenu: {
+    position: 'absolute',
+    right: 10,
+    minWidth: 156,
+    paddingVertical: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    zIndex: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 7,
+  },
+  readerMenuItem: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  readerMenuItemPressed: {
+    opacity: 0.58,
+  },
+  readerMenuText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   bottomBar: {
     position: 'absolute',

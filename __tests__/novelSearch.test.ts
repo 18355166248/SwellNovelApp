@@ -35,4 +35,20 @@ describe('searchNovels', () => {
     ]);
     expect(mockFetchHtml).not.toHaveBeenCalled();
   });
+
+  it('道诡异仙在搜索服务不可用时仍返回已核验逐章书源', async () => {
+    await expect(searchNovels('道诡异仙')).resolves.toEqual([
+      {
+        url: 'https://tw.mingzw.net/mzwbook/39572.html',
+        title: '道诡异仙',
+        sourceName: '明智屋中文网',
+      },
+      {
+        url: 'http://wap.bookshuku.org/bookinfo/117811.html',
+        title: '道诡异仙',
+        sourceName: 'TXT图书下载网',
+      },
+    ]);
+    expect(mockFetchHtml).not.toHaveBeenCalled();
+  });
 });
