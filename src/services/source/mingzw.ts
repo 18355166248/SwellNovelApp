@@ -164,6 +164,8 @@ export const mingzwSource: BookSource = {
   id: 'mingzw',
   name: '明智屋中文网',
   host: HOST,
+  // www 节点在部分网络不可达，浏览入口沿用解析时优先的繁体站。
+  homeUrl: `${ORIGIN}/`,
 
   matchUrl(url: string) {
     return /(^|\.)mingzw\.net/i.test(url);

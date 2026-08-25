@@ -52,6 +52,7 @@ const xuanhuangeSource: BookSource = {
   id: 'xuanhuange',
   name: '玄幻阁',
   host: HOST,
+  homeUrl: `${ORIGIN}/`,
 
   matchUrl(url: string): boolean {
     try {

@@ -44,6 +44,12 @@ export interface BookSource {
   id: string; // 书源标识，用作 bookId 前缀，例如 'bookshuku'
   name: string; // 展示名，例如 'TXT图书下载网'
   host: string; // 主机名，例如 'wap.bookshuku.org'
+  /**
+   * 可浏览的站点首页，供内置浏览器的常用站点入口打开。
+   * host 未必等于能直接访问的地址（如明智屋的 www 节点在部分网络不可达，
+   * 实际走繁体站），所以单独给出；缺省时由 registry 用 host 拼 http。
+   */
+  homeUrl?: string;
   /** 判断某个 URL 是否属于本书源。 */
   matchUrl(url: string): boolean;
   /** 从任意站内 URL（详情/目录/正文页）提取站内书籍 id；取不到返回 undefined。 */

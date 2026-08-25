@@ -705,6 +705,7 @@ export const bookshukuSource: BookSource = {
   id: 'bookshuku',
   name: 'TXT图书下载网',
   host: HOST,
+  homeUrl: `${ORIGIN}/`,
 
   matchUrl(url: string) {
     return /(^|\.)bookshuku\.org/i.test(url);

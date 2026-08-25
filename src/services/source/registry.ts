@@ -18,6 +18,11 @@ export function resolveSource(url: string): BookSource | null {
   return SOURCES.find(s => s.matchUrl(url)) ?? null;
 }
 
+/** 书源站点的可浏览首页，供内置浏览器的常用站点入口使用。 */
+export function getSourceHomeUrl(source: BookSource): string {
+  return source.homeUrl ?? `http://${source.host}/`;
+}
+
 /** 按书源 id 查找（用于按已保存的 Book.source.name 定位）。 */
 export function getSourceById(id: string): BookSource | null {
   return SOURCES.find(s => s.id === id) ?? null;

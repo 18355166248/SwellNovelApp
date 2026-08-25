@@ -12,6 +12,7 @@ import {
   StyleSheet,
   TextInput,
   Pressable,
+  ScrollView,
   Image,
   ActivityIndicator,
   Platform,
@@ -34,6 +35,7 @@ import {
   RecognizedBook,
 } from '../services/recognize/recognizer';
 import { fetchRenderedHtml } from '../services/browserFetch/bridge';
+import { SOURCES, getSourceHomeUrl } from '../services/source/registry';
 import { shouldBlockAdNavigation } from '../services/browserFetch/navigationGuard';
 import {
   addBrowserHistory,
@@ -47,7 +49,36 @@ const WebView = RNWebView as unknown as React.ComponentType<any>;
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type BrowserRoute = RouteProp<RootStackParamList, 'InAppBrowser'>;
 
-const START_URL = 'http://wap.xuanhuange.info/';
+/**
+ * 起始页的站点入口。
+ *
+ * 已注册书源直接由 SOURCES 生成，新增书源会自动出现在这里，不必二次维护；
+ * 末尾兜底一个搜索引擎，站点换域名或想找别的书时用户可以自己搜。
+ */
+const SITE_ENTRIES: {
+  name: string;
+  desc: string;
+  url: string;
+  supported: boolean;
+}[] = [
+  ...SOURCES.map(source => {
+    const url = getSourceHomeUrl(source);
+    // 展示真正会打开的域名：host 未必等于首页地址（明智屋浏览走繁体站）。
+    const shown = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    return {
+      name: source.name,
+      desc: `${shown} · 支持识别目录一键导入`,
+      url,
+      supported: true,
+    };
+  }),
+  {
+    name: '用搜索引擎找书',
+    desc: '打开必应，找到书籍目录页后再识别导入',
+    url: 'https://www.bing.com/',
+    supported: false,
+  },
+];
 const RECOGNIZE_CALLBACK_PREFIX = 'nvl-recognize://result?data=';
 
 // 站点的广告脚本会让页面长时间处于 loading，不能等 onLoadEnd 才屏蔽。
@@ -494,17 +525,39 @@ export default function InAppBrowserScreen() {
           <ActivityIndicator size="small" color={theme.colors.primary} />
         </View>
       ) : !url ? (
-        <View style={styles.startPage}>
+        <ScrollView
+          style={styles.startPage}
+          contentContainerStyle={styles.startPageContent}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={[styles.startCard, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
             <Icon name="menu-book" size={27} color={theme.colors.primary} />
             <Text style={[styles.startTitle, { color: theme.colors.text }]}>从书籍目录页开始</Text>
-            <Text style={[styles.startHint, { color: theme.colors.textSecondary }]}>输入网址，或从最近访问继续浏览</Text>
-            <Pressable
-              onPress={() => openUrl(START_URL)}
-              style={[styles.startPrimary, { backgroundColor: theme.colors.primary }]}
-            >
-              <Text style={styles.startPrimaryText}>打开玄幻阁</Text>
-            </Pressable>
+            <Text style={[styles.startHint, { color: theme.colors.textSecondary }]}>选一个站点开始浏览，也可以在上方直接输入网址</Text>
+          </View>
+
+          <View style={styles.siteSection}>
+            <Text style={[styles.historyTitle, { color: theme.colors.text }]}>常用站点</Text>
+            {SITE_ENTRIES.map(site => (
+              <Pressable
+                key={site.url}
+                onPress={() => openUrl(site.url)}
+                style={[styles.siteRow, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+              >
+                <View style={[styles.siteBadge, { backgroundColor: theme.colors.background }]}>
+                  <Icon
+                    name={site.supported ? 'auto-stories' : 'search'}
+                    size={17}
+                    color={site.supported ? theme.colors.primary : theme.colors.textSecondary}
+                  />
+                </View>
+                <View style={styles.siteInfo}>
+                  <Text numberOfLines={1} style={[styles.siteName, { color: theme.colors.text }]}>{site.name}</Text>
+                  <Text numberOfLines={1} style={[styles.siteDesc, { color: theme.colors.textSecondary }]}>{site.desc}</Text>
+                </View>
+                <Icon name="chevron-right" size={18} color={theme.colors.textSecondary} />
+              </Pressable>
+            ))}
           </View>
           {history.length > 0 && (
             <View style={styles.historySection}>
@@ -522,7 +575,7 @@ export default function InAppBrowserScreen() {
               ))}
             </View>
           )}
-        </View>
+        </ScrollView>
       ) : (
       <WebView
         ref={webRef}
@@ -730,12 +783,32 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: 13.5, padding: 0 },
   progressLine: { height: 2, justifyContent: 'center' },
   startLoading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  startPage: { flex: 1, padding: 20 },
+  startPage: { flex: 1 },
+  startPageContent: { padding: 20, paddingBottom: 36 },
   startCard: { alignItems: 'center', borderRadius: 18, paddingHorizontal: 24, paddingVertical: 28 },
   startTitle: { fontSize: 17, fontWeight: '700', marginTop: 11 },
   startHint: { fontSize: 13, marginTop: 7, textAlign: 'center' },
-  startPrimary: { borderRadius: 20, marginTop: 18, paddingHorizontal: 20, paddingVertical: 10 },
-  startPrimaryText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  siteSection: { marginTop: 22 },
+  siteRow: {
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    flexDirection: 'row',
+    gap: 11,
+    marginBottom: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+  },
+  siteBadge: {
+    alignItems: 'center',
+    borderRadius: 9,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  siteInfo: { flex: 1, minWidth: 0 },
+  siteName: { fontSize: 13.5, fontWeight: '600' },
+  siteDesc: { fontSize: 11, marginTop: 3 },
   historySection: { marginTop: 26 },
   historyTitle: { fontSize: 14, fontWeight: '700', marginBottom: 10 },
   historyRow: { alignItems: 'center', borderWidth: 1, borderRadius: 12, flexDirection: 'row', gap: 10, marginBottom: 8, paddingHorizontal: 13, paddingVertical: 13 },
