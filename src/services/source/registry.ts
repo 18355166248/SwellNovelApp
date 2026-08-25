@@ -5,8 +5,13 @@
 import { BookSource } from './types';
 import { bookshukuSource } from './bookshuku';
 import { mingzwSource } from './mingzw';
+import { xuanhuangeSource } from './xuanhuange';
 
-export const SOURCES: BookSource[] = [bookshukuSource, mingzwSource];
+export const SOURCES: BookSource[] = [
+  bookshukuSource,
+  mingzwSource,
+  xuanhuangeSource,
+];
 
 /** 按 URL 找到对应书源；无匹配返回 null。 */
 export function resolveSource(url: string): BookSource | null {

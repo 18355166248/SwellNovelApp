@@ -28,6 +28,7 @@ import {
   RECOGNIZER_JS,
   RECOGNIZE_MESSAGE,
   expandRecognizedCatalog,
+  getRecognitionTargetUrl,
   inputToUrl,
   recognizeBookHtml,
   RecognizedBook,
@@ -341,19 +342,19 @@ export default function InAppBrowserScreen() {
     setRecognizing(true);
     setRecognizeMessage('正在识别当前页面…');
 
-    const readFromHiddenWebView = () => {
+    const readFromHiddenWebView = (targetUrl: string = url) => {
       if (manualRecognizeRef.current !== requestId) return;
-      setRecognizeMessage('正在读取完整目录…');
+      setRecognizeMessage(targetUrl === url ? '正在读取完整目录…' : '正在读取章节列表…');
       // 可见页的 DOM 是首选；仅在站点阻断脚本回传时，再用常驻隐藏 WebView 兜底。
       // 两条链路共用同一解析器，避免出现“看得到章节、导入却读到广告页”的差异。
-      fetchRenderedHtml(url, {
+      fetchRenderedHtml(targetUrl, {
         waitMs: 3500,
         timeout: 35000,
         priority: 'high',
       })
         .then(html => {
           if (manualRecognizeRef.current !== requestId) return;
-          const parsed = recognizeBookHtml(html, url);
+          const parsed = recognizeBookHtml(html, targetUrl);
           setRecognizing(false);
           if (parsed.isDetail) {
             setRecognized(parsed);
@@ -374,6 +375,19 @@ export default function InAppBrowserScreen() {
           manualRecognizeRef.current = '';
         });
     };
+
+    const recognitionTargetUrl = getRecognitionTargetUrl(url);
+    if (recognitionTargetUrl !== url) {
+      // 玄幻阁 info 页只有书籍资料，没有章节锚点。直接读取同书号目录，避免用户手动跳页。
+      recognizeTimerRef.current = setTimeout(() => {
+        if (manualRecognizeRef.current !== requestId) return;
+        setRecognizing(false);
+        setRecognizeMessage('识别超时：请刷新后在书籍详情页或章节列表页重试');
+        manualRecognizeRef.current = '';
+      }, 40000);
+      readFromHiddenWebView(recognitionTargetUrl);
+      return;
+    }
 
     // 当前可见页面已经由用户亲自打开，优先注入并使用自定义 URL 回传，避免站点覆盖
     // ReactNativeWebView 消息对象后导致按钮没有反馈。若 4 秒没有回传才切隐藏页兜底。
@@ -600,7 +614,7 @@ export default function InAppBrowserScreen() {
             {recognizing ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Icon name="menu-book" size={16} color="#fff" />
+              <Icon name="menu-book" size={20} color="#fff" />
             )}
             <View>
               <Text style={styles.fabText}>{recognizing ? '正在扫描目录…' : '识别本页目录'}</Text>
@@ -622,6 +636,7 @@ export default function InAppBrowserScreen() {
             },
           ]}
         >
+          <View style={styles.sheetInfo}>
           {recognized.cover ? (
             <Image source={{ uri: recognized.cover }} style={styles.cover} />
           ) : (
@@ -668,10 +683,15 @@ export default function InAppBrowserScreen() {
           <Pressable onPress={() => setRecognized(null)} style={styles.sheetGhost}>
             <Icon name="close" size={18} color={theme.colors.textSecondary} />
           </Pressable>
+          </View>
           <Pressable
             onPress={onAdd}
             disabled={adding}
-            style={[styles.sheetAdd, { backgroundColor: theme.colors.primary }]}
+            style={[
+              styles.sheetAdd,
+              { backgroundColor: theme.colors.primary },
+              adding && styles.sheetAddBusy,
+            ]}
           >
             <Text style={styles.sheetAddText}>
               {adding ? '导入中…' : '加入书架'}
@@ -723,25 +743,25 @@ const styles = StyleSheet.create({
   fab: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
-    minWidth: 158,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    borderRadius: 17,
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 15,
+    borderRadius: 16,
     elevation: 8,
     shadowColor: '#000',
     shadowOpacity: 0.28,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 5 },
   },
-  recognizeArea: { alignItems: 'flex-end', position: 'absolute', right: 18, left: 18 },
+  // 识别是本页的主行动，按钮撑满可用宽度而不是缩在右下角，避免在整页网页内容里被淹没。
+  recognizeArea: { alignItems: 'stretch', position: 'absolute', right: 18, left: 18 },
   recognizeHint: {
     alignItems: 'center',
     borderRadius: 16,
     flexDirection: 'row',
     gap: 10,
     marginBottom: 8,
-    maxWidth: 340,
     paddingHorizontal: 13,
     paddingVertical: 11,
     elevation: 7,
@@ -755,24 +775,31 @@ const styles = StyleSheet.create({
   recognizeMessage: { color: 'rgba(255,255,255,0.9)', fontSize: 11, lineHeight: 16 },
   fabText: {
     color: '#fff',
-    fontSize: 13.5,
-    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
+    fontSize: 16,
+    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
   },
-  fabSubText: { color: 'rgba(255,255,255,0.72)', fontSize: 10, marginTop: 2 },
+  fabSubText: { color: 'rgba(255,255,255,0.78)', fontSize: 11.5, marginTop: 2 },
+  // 书籍信息与“加入书架”分成两行：主按钮独占一行才够显眼，
+  // 书名和章节数也不再被右侧按钮挤到只剩一小条。
   sheet: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 12,
     paddingHorizontal: 16,
     paddingTop: 14,
     borderTopWidth: 1,
   },
-  cover: { width: 40, height: 54, borderRadius: 4 },
+  sheetInfo: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  cover: { width: 44, height: 59, borderRadius: 4 },
   sheetGhost: { padding: 6 },
-  sheetAdd: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20 },
+  sheetAdd: {
+    alignItems: 'center',
+    borderRadius: 14,
+    justifyContent: 'center',
+    paddingVertical: 14,
+  },
+  sheetAddBusy: { opacity: 0.75 },
   sheetAddText: {
     color: '#fff',
-    fontSize: 13,
-    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
+    fontSize: 16,
+    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
   },
 });

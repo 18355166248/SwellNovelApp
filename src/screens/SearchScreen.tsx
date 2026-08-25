@@ -19,6 +19,7 @@ import {
   searchNovels,
   NovelSearchResult,
 } from '../services/search/novelSearch';
+import { isSameOnlineBook } from '../utils/addOnlineBook';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -90,7 +91,7 @@ export default function SearchScreen() {
 
   const onTapOnline = React.useCallback(
     async (result: NovelSearchResult) => {
-      const existing = allBooks.find(book => book.source?.bookUrl === result.url);
+      const existing = allBooks.find(book => isSameOnlineBook(book, result.url));
       if (existing) {
         navigation.navigate('BookDetail', { bookId: existing.id });
         return;
@@ -211,7 +212,7 @@ export default function SearchScreen() {
             {onlineResults.length > 0 && (
               <View style={[styles.resultList, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
                 {onlineResults.map(result => {
-                  const existing = allBooks.find(book => book.source?.bookUrl === result.url);
+                  const existing = allBooks.find(book => isSameOnlineBook(book, result.url));
                   return (
                     <Pressable key={result.url} onPress={() => onTapOnline(result)} style={[styles.resultRow, { borderBottomColor: theme.colors.border }]}>
                       <Icon name={existing ? 'menu-book' : 'cloud-download'} size={18} color={theme.colors.accentDark} />

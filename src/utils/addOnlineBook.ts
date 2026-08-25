@@ -10,6 +10,23 @@ export interface OnlineBookResult {
   chapters: Chapter[];
 }
 
+/**
+ * 判断书架里的某本书是否就是该链接指向的那本。
+ *
+ * 同一本书可能有两种来源：内置浏览器识别（source.name 为站点 host、bookUrl 是目录页）
+ * 与注册书源（source.name 为书源 id、bookUrl 是详情页）。只比对 URL 会把它们当成两本，
+ * 因此同属一个书源时改按站内书号判定，避免重复加入书架。
+ */
+export function isSameOnlineBook(book: Book, url: string): boolean {
+  const bookUrl = book.source?.bookUrl;
+  if (!bookUrl) return false;
+  if (bookUrl === url) return true;
+  const source = resolveSource(url);
+  if (!source || !source.matchUrl(bookUrl)) return false;
+  const id = source.extractId(url);
+  return !!id && id === source.extractId(bookUrl);
+}
+
 export async function addOnlineBook(url: string): Promise<OnlineBookResult> {
   const trimmed = url.trim();
   const source = resolveSource(trimmed);

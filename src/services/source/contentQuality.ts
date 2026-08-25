@@ -6,6 +6,9 @@ import { isBlockedText } from './contentGuards';
  * 仍永久复用已经落盘的残缺章节；本地 TXT 没有 source，不受影响。
  */
 export const ONLINE_CONTENT_VERSION = 9;
+// 2：浏览器识别源改为一次抓完整章的所有网页子页；
+// 1 版缓存里只有第一子页，必须整体重抓。
+export const BROWSER_CONTENT_VERSION = 2;
 export const MIN_ONLINE_CHAPTER_CHARS = 200;
 
 interface OnlineChapterQualityOptions {
@@ -32,6 +35,14 @@ export function isOnlineChapterCacheUsable(
   if (!chapter?.content) return false;
   // 无 source 的本地书正文由文件解析产生，不套用网络响应质量与版本规则。
   if (!sourceName) return true;
+  // 浏览器识别来源以 host 作为 source name。它过去会把章节网页的第一页误判成整章，
+  // 因此单独校验版本，修复时只重抓这类缓存，不影响内置书源的离线正文。
+  if (
+    sourceName.includes('.') &&
+    chapter.browserContentVersion !== BROWSER_CONTENT_VERSION
+  ) {
+    return false;
+  }
   return (
     chapter.contentVersion === ONLINE_CONTENT_VERSION &&
     !isInvalidOnlineChapterContent(chapter.content, {

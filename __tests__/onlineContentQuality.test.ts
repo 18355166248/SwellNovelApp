@@ -1,4 +1,5 @@
 import {
+  BROWSER_CONTENT_VERSION,
   isInvalidOnlineChapterContent,
   isOnlineChapterCacheUsable,
   ONLINE_CONTENT_VERSION,
@@ -48,7 +49,10 @@ describe('online chapter content quality', () => {
     expect(isOnlineChapterCacheUsable(chapter(valid), 'mingzw')).toBe(false);
     expect(
       isOnlineChapterCacheUsable(
-        chapter(valid, ONLINE_CONTENT_VERSION),
+        {
+          ...chapter(valid, ONLINE_CONTENT_VERSION),
+          browserContentVersion: BROWSER_CONTENT_VERSION,
+        },
         'example.com',
       ),
     ).toBe(true);
@@ -59,5 +63,33 @@ describe('online chapter content quality', () => {
         'bookshuku',
       ),
     ).toBe(true);
+  });
+
+  it('浏览器识别来源单独失效旧缓存，不影响内置书源缓存', () => {
+    const valid = '有效正文。'.repeat(80);
+    const current = chapter(valid, ONLINE_CONTENT_VERSION);
+    expect(isOnlineChapterCacheUsable(current, 'wap.xuanhuange.info')).toBe(
+      false,
+    );
+    expect(
+      isOnlineChapterCacheUsable(
+        { ...current, browserContentVersion: BROWSER_CONTENT_VERSION },
+        'wap.xuanhuange.info',
+      ),
+    ).toBe(true);
+    expect(isOnlineChapterCacheUsable(current, 'mingzw')).toBe(true);
+  });
+
+  it('浏览器识别来源的 1 版缓存只有首个子页，必须整体重抓', () => {
+    const valid = '有效正文。'.repeat(80);
+    expect(
+      isOnlineChapterCacheUsable(
+        {
+          ...chapter(valid, ONLINE_CONTENT_VERSION),
+          browserContentVersion: 1,
+        },
+        'wap.xuanhuange.info',
+      ),
+    ).toBe(false);
   });
 });

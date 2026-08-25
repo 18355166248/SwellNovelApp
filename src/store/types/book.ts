@@ -39,6 +39,7 @@ export interface Chapter {
   order: number;
   wordCount?: number;
   contentVersion?: number; // 在线书正文解析版本：书源修复后可识别旧缓存并按需重拉。
+  browserContentVersion?: number; // 浏览器识别来源的正文版本；与内置书源分开失效，避免全量重抓。
   sourceUrl?: string; // 在线书：该章正文页的绝对 URL
   nextPageUrl?: string; // 分页章节：下一正文子页 URL；为空表示当前章节已读完整。
   contentComplete?: boolean; // false 表示已缓存当前子页，但本章还有后续分页待按需加载。

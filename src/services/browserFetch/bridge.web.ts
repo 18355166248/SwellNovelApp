@@ -30,6 +30,11 @@ export interface BrowserFetchOptions {
   priority?: BrowserFetchPriority;
 }
 
+export interface RenderedChapterPage {
+  content: string;
+  nextPageUrl?: string;
+}
+
 export function registerBrowserFetcher(): void {
   // Web 端不挂载隐藏 WebView，保留 API 形状避免平台分支泄漏到调用方。
 }
@@ -61,6 +66,39 @@ export async function fetchRenderedContent(
 ): Promise<string> {
   const html = await fetchRenderedHtml(url, options);
   return extractTextFromHtml(html);
+}
+
+export async function fetchRenderedChapterPage(
+  url: string,
+  options: BrowserFetchOptions | number = {},
+): Promise<RenderedChapterPage> {
+  const html = await fetchRenderedHtml(url, options);
+  if (typeof DOMParser === 'undefined') {
+    return { content: extractTextFromHtml(html) };
+  }
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const next = Array.from(doc.querySelectorAll('a[href]')).find(a => {
+    const label = (a.textContent || a.getAttribute('title') || '')
+      .replace(/\s+/g, '')
+      .replace(/[>»›→]+$/g, '');
+    return /^(下一页|下一頁|下页|下頁)(继续阅读)?$/.test(label);
+  });
+  let nextPageUrl: string | undefined;
+  if (next) {
+    try {
+      const candidate = new URL(next.getAttribute('href') || '', url);
+      const current = new URL(url);
+      if (
+        candidate.origin === current.origin &&
+        candidate.href !== current.href
+      ) {
+        nextPageUrl = candidate.href;
+      }
+    } catch {
+      // 非法链接按章节已结束处理。
+    }
+  }
+  return { content: extractTextFromHtml(html), nextPageUrl };
 }
 
 function extractTextFromHtml(html: string): string {
@@ -128,6 +166,10 @@ function extractTextFromHtml(html: string): string {
 }
 
 export function extractorJs(id: string): string {
+  return `/* web fallback does not inject scripts: ${id} */`;
+}
+
+export function chapterPageExtractorJs(id: string): string {
   return `/* web fallback does not inject scripts: ${id} */`;
 }
 

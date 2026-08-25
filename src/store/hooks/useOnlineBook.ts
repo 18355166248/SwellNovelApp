@@ -11,12 +11,15 @@ import type { ParsedChapterContent } from '../../services/source/types';
 import {
   isInvalidOnlineChapterContent,
   isOnlineChapterCacheUsable,
+  BROWSER_CONTENT_VERSION,
   ONLINE_CONTENT_VERSION,
 } from '../../services/source/contentQuality';
+import { isBlockedText } from '../../services/source/contentGuards';
+import { collectChapterPages } from '../../services/source/chapterPages';
 import { loadBookChapters, saveBookChapters } from '../../utils/libraryStorage';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
-  fetchRenderedContent,
+  fetchRenderedChapterPage,
   cleanRenderedText,
 } from '../../services/browserFetch/bridge';
 
@@ -41,6 +44,7 @@ const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // 阅读器后台预取与用户主动切章可能同时命中同一章。按章节合并在途请求，
 // 避免重复占用书源连接；前台切章会直接等待已经开始的预取结果。
 const chapterContentRequests = new Map<string, Promise<Chapter | null>>();
+const chapterPageRequests = new Map<string, Promise<Chapter | null>>();
 
 function scheduleCache(bookId: string, chapters: Chapter[]) {
   const existing = cacheTimers.get(bookId);
@@ -515,20 +519,49 @@ export const useEnsureChapterContent = () => {
       } else {
         const sourceUrl = chapter.sourceUrl;
         if (!sourceUrl) return chapter;
-        const raw = await withTimeout(
-          fetchRenderedContent(sourceUrl, {
+        const rendered = await withTimeout(
+          fetchRenderedChapterPage(sourceUrl, {
             priority: options.background ? 'low' : 'high',
           }),
           ENSURE_CHAPTER_TIMEOUT_MS,
           `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
         );
-        content = cleanRenderedText(raw, chapter.title);
+        content = cleanRenderedText(rendered.content, chapter.title);
         if (isInvalidOnlineChapterContent(content)) {
           throw new Error('网页返回正文不完整，未写入章节缓存');
         }
         chapter = {
           ...chapter,
           title: resolveChapterTitle(chapter, undefined, content),
+        };
+        // 站点把一章拆成多个网页子页时，这里一次性读完再入库，让阅读器拿到完整
+        // 章节，而不是读到章尾才现拉下一页。中途失败保留 nextPageUrl 交给续载兜底。
+        const chapterTitle = chapter.title;
+        const merged = await collectChapterPages({
+          firstContent: content,
+          firstNextPageUrl: rendered.nextPageUrl,
+          fetchPage: pageUrl =>
+            withTimeout(
+              fetchRenderedChapterPage(pageUrl, {
+                priority: options.background ? 'low' : 'high',
+              }),
+              ENSURE_CHAPTER_TIMEOUT_MS,
+              `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+            ),
+          cleanPage: raw => cleanRenderedText(raw, chapterTitle),
+          onError: (pageUrl, error) => {
+            console.warn('[useOnlineBook] merge chapter page failed', {
+              bookId,
+              index,
+              url: pageUrl,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          },
+        });
+        content = merged.content;
+        parsedMeta = {
+          nextPageUrl: merged.nextPageUrl,
+          complete: !merged.nextPageUrl,
         };
       }
 
@@ -537,6 +570,7 @@ export const useEnsureChapterContent = () => {
         content,
         wordCount: content.length,
         contentVersion: ONLINE_CONTENT_VERSION,
+        browserContentVersion: source ? undefined : BROWSER_CONTENT_VERSION,
         contentTrustedShort: parsedMeta.trustedShort,
         nextPageUrl: parsedMeta.nextPageUrl,
         contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
@@ -594,68 +628,108 @@ export const useLoadNextChapterPage = () => {
     const chapter = chapters?.[index];
     const book = store.get(booksAtom).find(b => b.id === bookId);
     const source = book?.source ? getSourceById(book.source.name) : null;
-    if (!chapter || !chapter.nextPageUrl || !source) return chapter ?? null;
+    if (!chapter || !chapter.nextPageUrl || !book?.source) return chapter ?? null;
 
-    console.info('[useOnlineBook] load next page start', {
-      bookId,
-      index,
-      title: chapter.title,
-      url: chapter.nextPageUrl,
-      currentLength: chapter.content.length,
-    });
+    const requestKey = `${bookId}:${chapter.id}:${chapter.nextPageUrl}`;
+    const existingRequest = chapterPageRequests.get(requestKey);
+    if (existingRequest) return existingRequest;
 
-    const parsed = unpackChapterContent(
-      await withTimeout(
-        source.parseChapterContent(chapter.nextPageUrl, {
-          priority: options.background ? 'low' : 'high',
-        }),
-        ENSURE_CHAPTER_TIMEOUT_MS,
-        `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-      ),
-    );
-    const content = chapter.content
-      ? `${chapter.content}\n${parsed.content}`
-      : parsed.content;
-    if (
-      isInvalidOnlineChapterContent(parsed.content, {
-        trustedShort: parsed.trustedShort,
-      })
-    ) {
-      throw new Error('书源返回分页正文不完整，未写入章节缓存');
+    const request = (async (): Promise<Chapter | null> => {
+      console.info('[useOnlineBook] load next page start', {
+        bookId,
+        index,
+        title: chapter.title,
+        url: chapter.nextPageUrl,
+        currentLength: chapter.content.length,
+      });
+
+      const requestedPageUrl = chapter.nextPageUrl!;
+      const parsed: ReturnType<typeof unpackChapterContent> = source
+        ? unpackChapterContent(
+            await withTimeout(
+              source.parseChapterContent(requestedPageUrl, {
+                priority: options.background ? 'low' : 'high',
+              }),
+              ENSURE_CHAPTER_TIMEOUT_MS,
+              `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+            ),
+          )
+        : await (async (): Promise<
+            ReturnType<typeof unpackChapterContent>
+          > => {
+            const rendered = await withTimeout(
+              fetchRenderedChapterPage(requestedPageUrl, {
+                priority: options.background ? 'low' : 'high',
+              }),
+              ENSURE_CHAPTER_TIMEOUT_MS,
+              `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+            );
+            return {
+              content: cleanRenderedText(rendered.content, chapter.title),
+              nextPageUrl: rendered.nextPageUrl,
+              complete: !rendered.nextPageUrl,
+            };
+          })();
+      const content = chapter.content
+        ? `${chapter.content}\n${parsed.content}`
+        : parsed.content;
+      // 子页是整章的一部分，尾页天然可能很短。浏览器识别源没有书源级的短章确认，
+      // 只挡空白页和广告/拦截页；注册书源仍按自己的 trustedShort 口径校验。
+      const invalidPage = source
+        ? isInvalidOnlineChapterContent(parsed.content, {
+            trustedShort: parsed.trustedShort,
+          })
+        : !parsed.content || isBlockedText(parsed.content);
+      if (invalidPage) {
+        throw new Error('书源返回分页正文不完整，未写入章节缓存');
+      }
+      const filled: Chapter = {
+        ...chapter,
+        title: resolveChapterTitle(chapter, parsed.title, content),
+        content,
+        wordCount: content.length,
+        contentVersion: ONLINE_CONTENT_VERSION,
+        browserContentVersion: source ? undefined : BROWSER_CONTENT_VERSION,
+        contentTrustedShort:
+          content.replace(/\s+/g, '').length < 200
+            ? !!chapter.contentTrustedShort && !!parsed.trustedShort
+            : undefined,
+        nextPageUrl: parsed.nextPageUrl,
+        contentComplete: parsed.complete ?? !parsed.nextPageUrl,
+      };
+
+      let nextForBook: Chapter[] | undefined;
+      store.set(chaptersAtom, prev => {
+        const list = prev[bookId];
+        if (!list) return prev;
+        const latest = list.find(c => c.id === filled.id);
+        // 快速翻页可能在请求返回前已完成同一子页；只允许仍指向本次 URL 的请求落盘。
+        if (latest?.nextPageUrl !== requestedPageUrl) return prev;
+        const next = list.map(c => (c.id === filled.id ? filled : c));
+        nextForBook = next;
+        return { ...prev, [bookId]: next };
+      });
+      if (nextForBook) scheduleCache(bookId, nextForBook);
+
+      console.info('[useOnlineBook] load next page done', {
+        bookId,
+        index,
+        ms: Date.now() - startedAt,
+        length: filled.content.length,
+        contentComplete: filled.contentComplete,
+        nextPageUrl: filled.nextPageUrl,
+      });
+      return filled;
+    })();
+
+    chapterPageRequests.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      if (chapterPageRequests.get(requestKey) === request) {
+        chapterPageRequests.delete(requestKey);
+      }
     }
-    const filled: Chapter = {
-      ...chapter,
-      title: resolveChapterTitle(chapter, parsed.title, content),
-      content,
-      wordCount: content.length,
-      contentVersion: ONLINE_CONTENT_VERSION,
-      contentTrustedShort:
-        content.replace(/\s+/g, '').length < 200
-          ? !!chapter.contentTrustedShort && !!parsed.trustedShort
-          : undefined,
-      nextPageUrl: parsed.nextPageUrl,
-      contentComplete: parsed.complete ?? !parsed.nextPageUrl,
-    };
-
-    let nextForBook: Chapter[] | undefined;
-    store.set(chaptersAtom, prev => {
-      const list = prev[bookId];
-      if (!list) return prev;
-      const next = list.map(c => (c.id === filled.id ? filled : c));
-      nextForBook = next;
-      return { ...prev, [bookId]: next };
-    });
-    if (nextForBook) scheduleCache(bookId, nextForBook);
-
-    console.info('[useOnlineBook] load next page done', {
-      bookId,
-      index,
-      ms: Date.now() - startedAt,
-      length: filled.content.length,
-      contentComplete: filled.contentComplete,
-      nextPageUrl: filled.nextPageUrl,
-    });
-    return filled;
   };
 };
 

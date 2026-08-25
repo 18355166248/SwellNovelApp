@@ -1,5 +1,6 @@
 import {
   expandRecognizedCatalog,
+  getRecognitionTargetUrl,
   parseRecognizedChaptersHtml,
   parseRecognizedPageUrlsHtml,
   recognizeBookHtml,
@@ -10,6 +11,18 @@ const PAGE_TWO = `
   <a href="/book/9/12.html">第十二章 夜谈</a>`;
 
 describe('browser catalog recognizer', () => {
+  it('玄幻阁详情页自动换算到同书号目录页', () => {
+    expect(getRecognitionTargetUrl('http://wap.xuanhuange.info/info-170446/')).toBe(
+      'http://wap.xuanhuange.info/wapbook-170446/',
+    );
+    expect(getRecognitionTargetUrl('http://wap.xuanhuange.info/wapbook-170446/')).toBe(
+      'http://wap.xuanhuange.info/wapbook-170446/',
+    );
+    expect(getRecognitionTargetUrl('http://example.com/info-170446/')).toBe(
+      'http://example.com/info-170446/',
+    );
+  });
+
   it('从分页 HTML 提取并归一化章节链接', () => {
     expect(
       parseRecognizedChaptersHtml(PAGE_TWO, 'http://wap.example.com/book/9/2.html'),

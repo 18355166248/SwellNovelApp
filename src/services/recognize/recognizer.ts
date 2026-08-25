@@ -33,6 +33,25 @@ export const RECOGNIZE_MESSAGE = 'nvl-recognize';
 export const MIN_CHAPTERS = 5;
 
 /**
+ * 已知站点的详情页本身不展示章节，需要先换算到目录页再执行通用识别。
+ * 只转换同站、可从路径确定书号的路由，避免根据页面文案猜测并跳到广告链接。
+ */
+export function getRecognitionTargetUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (/(^|\.)xuanhuange\.info$/i.test(parsed.hostname)) {
+      const match = /^\/info-(\d+)\/?$/i.exec(parsed.pathname);
+      if (match) {
+        return `${parsed.protocol}//${parsed.host}/wapbook-${match[1]}/`;
+      }
+    }
+  } catch {
+    // 地址栏会负责提示非法 URL；识别器保持原值，避免生成不可控地址。
+  }
+  return url;
+}
+
+/**
  * 注入页面执行的识别脚本（纯字符串，DOM-only）。结果经 window.ReactNativeWebView
  * .postMessage 回传。末尾的 `true;` 是 iOS injectedJavaScript 的要求。
  */

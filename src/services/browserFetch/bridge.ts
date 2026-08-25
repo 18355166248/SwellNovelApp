@@ -33,6 +33,15 @@ export interface BrowserFetchOptions {
   priority?: BrowserFetchPriority;
 }
 
+export interface RenderedChapterPage {
+  content: string;
+  nextPageUrl?: string;
+}
+
+interface RenderedChapterPagePayload extends RenderedChapterPage {
+  nextPageLabel?: string;
+}
+
 type Enqueue = (job: FetchJob) => void;
 
 let enqueueImpl: Enqueue | null = null;
@@ -65,6 +74,70 @@ export function fetchRenderedContent(
     'WebView 取正文超时',
     normalized.priority ?? 'normal',
   );
+}
+
+/**
+ * 抓取浏览器识别来源的一个章节网页，同时读取页面明确标注的“下一页”。
+ * 这里只识别章节内部分页，不把“下一章”当作续页，避免跨章内容被错误拼接。
+ */
+export async function fetchRenderedChapterPage(
+  url: string,
+  options: BrowserFetchOptions | number = {},
+): Promise<RenderedChapterPage> {
+  const normalized =
+    typeof options === 'number' ? { timeout: options } : options;
+  const payload = await fetchRendered(
+    url,
+    chapterPageExtractorJs,
+    normalized.waitMs ?? 6000,
+    normalized.timeout ?? 25000,
+    'WebView 取章节分页超时',
+    normalized.priority ?? 'normal',
+  );
+  return parseRenderedChapterPagePayload(payload, url);
+}
+
+export function parseRenderedChapterPagePayload(
+  raw: string,
+  currentUrl: string,
+): RenderedChapterPage {
+  const parsed = JSON.parse(raw) as RenderedChapterPagePayload;
+  if (!parsed || typeof parsed.content !== 'string') {
+    throw new Error('网页章节解析结果无效');
+  }
+  return {
+    content: parsed.content,
+    nextPageUrl: validateNextPageUrl(
+      currentUrl,
+      parsed.nextPageUrl,
+      parsed.nextPageLabel,
+    ),
+  };
+}
+
+function validateNextPageUrl(
+  currentUrl: string,
+  candidate?: string,
+  label?: string,
+): string | undefined {
+  const normalizedLabel = (label || '')
+    .replace(/\s+/g, '')
+    .replace(/[>»›→]+$/g, '');
+  if (!/^(下一页|下一頁|下页|下頁)(继续阅读)?$/.test(normalizedLabel)) {
+    return undefined;
+  }
+  try {
+    const current = new URL(currentUrl);
+    const next = new URL(candidate || '', current);
+    current.hash = '';
+    next.hash = '';
+    if (!/^https?:$/.test(next.protocol) || next.origin !== current.origin) {
+      return undefined;
+    }
+    return next.href !== current.href ? next.href : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 取某 URL 经 WebView 执行 JS/挑战后的完整 HTML，用于详情页/目录页解析兜底。 */
@@ -186,6 +259,45 @@ export function extractorJs(id: string): string {
       }
       var text = best ? (best.innerText||'') : '';
       post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:text });
+    } catch(e){
+      post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) });
+    }
+  })(); true;`.replace(/__ID__/g, id);
+}
+
+/** 与正文抽取使用同一容器规则，并额外回传严格匹配的章节“下一页”链接。 */
+export function chapterPageExtractorJs(id: string): string {
+  return `(function(){
+    function post(payload){
+      var message=JSON.stringify(payload);
+      try {
+        if(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ReactNativeWebView){
+          window.webkit.messageHandlers.ReactNativeWebView.postMessage(message); return;
+        }
+      } catch(ignore) {}
+      try { window.ReactNativeWebView.postMessage(message); } catch(ignore) {}
+    }
+    try {
+      var sels=['#chaptercontent','#content','.content','#booktext','#booktxt','#nr1','#nr','.read-content','.article-content','.txtnav','.neirong','.articlecon','.chapter-content','#htmlContent','#BookText','.RreadContent','#TXT','.txt','article'];
+      function tlen(el){ return (el && el.innerText ? el.innerText.length : 0); }
+      var best=null, bestLen=0, i;
+      for(i=0;i<sels.length;i++){ var el=document.querySelector(sels[i]); var l=tlen(el); if(l>bestLen){best=el;bestLen=l;} }
+      if(!best || bestLen<100){
+        var nodes=document.querySelectorAll('div,article,section'), j;
+        for(j=0;j<nodes.length;j++){
+          var n=nodes[j], nl=tlen(n);
+          if(nl>200 && nl>bestLen && n.querySelectorAll('div,article,section').length<8){ best=n; bestLen=nl; }
+        }
+      }
+      var nextUrl='', nextLabel='', links=document.querySelectorAll('a[href]'), k;
+      for(k=0;k<links.length;k++){
+        var a=links[k];
+        var label=(a.innerText||a.textContent||a.getAttribute('title')||a.getAttribute('aria-label')||'').replace(/\\s+/g,'').replace(/[>»›→]+$/g,'');
+        if(/^(下一页|下一頁|下页|下頁)(继续阅读)?$/.test(label)){
+          nextUrl=a.href||a.getAttribute('href')||''; nextLabel=label; break;
+        }
+      }
+      post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:true, text:JSON.stringify({content:best?(best.innerText||''):'',nextPageUrl:nextUrl,nextPageLabel:nextLabel}) });
     } catch(e){
       post({ type:'${CONTENT_MESSAGE}', id:'__ID__', ok:false, error:String(e) });
     }

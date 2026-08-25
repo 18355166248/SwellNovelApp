@@ -24,6 +24,7 @@ import {
   loadSourceRecommendationCache,
   saveSourceRecommendationCache,
 } from '../utils/sourceRecommendationCache';
+import { isSameOnlineBook } from '../utils/addOnlineBook';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -77,7 +78,7 @@ export default function DiscoverScreen() {
 
   const addRecommendation = React.useCallback(
     async (item: SourceRecommendation) => {
-      const existing = allBooks.find(book => book.source?.bookUrl === item.url);
+      const existing = allBooks.find(book => isSameOnlineBook(book, item.url));
       if (existing) {
         navigation.navigate('BookDetail', { bookId: existing.id });
         return;
@@ -174,9 +175,7 @@ export default function DiscoverScreen() {
             ]}
           >
             {recommendations.map((item, index) => {
-              const existing = allBooks.find(
-                book => book.source?.bookUrl === item.url,
-              );
+              const existing = allBooks.find(book => isSameOnlineBook(book, item.url));
               return (
                 <Pressable
                   key={item.url}
