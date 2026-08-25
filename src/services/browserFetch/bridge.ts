@@ -9,6 +9,7 @@
  */
 
 import { HEADING_RE } from '../source/contentGuards';
+import { stripContentNoise } from '../source/contentNoise';
 import { devInfo } from '../../utils/devLog';
 
 /** 抽正文脚本回传的消息类型。 */
@@ -370,7 +371,8 @@ function httpFetchExtractorJs(id: string, url: string): string {
 
 /** 清洗抽到的正文：去空行、去开头的章节标题回显。 */
 export function cleanRenderedText(raw: string, title?: string): string {
-  const lines = raw
+  // 先剥掉站点水印与翻页提示，再做去空行与章节名回显处理。
+  const lines = stripContentNoise(raw)
     .split(/\r?\n/)
     .map(l => l.replace(/ /g, ' ').trim())
     .filter(l => l.length > 0);

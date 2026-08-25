@@ -5,10 +5,12 @@ import { isBlockedText } from './contentGuards';
  * 所有在线正文共用同一解析版本。提升版本会让旧版本缓存按需重抓，避免书源修复后
  * 仍永久复用已经落盘的残缺章节；本地 TXT 没有 source，不受影响。
  */
-export const ONLINE_CONTENT_VERSION = 9;
-// 2：浏览器识别源改为一次抓完整章的所有网页子页；
-// 1 版缓存里只有第一子页，必须整体重抓。
-export const BROWSER_CONTENT_VERSION = 2;
+// 10：正文改由 contentNoise 统一剔除站点水印与翻页提示；
+// 9 版缓存里仍夹着“最新网址:xxx”这类噪声行，需要重抓才能清掉。
+export const ONLINE_CONTENT_VERSION = 10;
+// 3：同上，浏览器识别源的正文也要按新的噪声规则重抓；
+// 2：改为一次抓完整章的所有网页子页，1 版缓存里只有第一子页。
+export const BROWSER_CONTENT_VERSION = 3;
 export const MIN_ONLINE_CHAPTER_CHARS = 200;
 
 interface OnlineChapterQualityOptions {

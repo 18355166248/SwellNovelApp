@@ -8,6 +8,7 @@
 
 import { fetchHtml } from '../http/fetchHtml';
 import { decodeEntities, stripTags } from '../source/html';
+import { stripContentNoise } from '../source/contentNoise';
 
 export const CONTENT_MESSAGE = 'nvl-content';
 export type BrowserFetchPriority = 'high' | 'normal' | 'low';
@@ -180,7 +181,8 @@ export function htmlExtractorJs(id: string): string {
 /** 清洗抽到的正文：去空行、去开头的章节标题回显。 */
 export function cleanRenderedText(raw: string, title?: string): string {
   const heading = /^第[零一二三四五六七八九十百千两万0-9]+[章节回卷]/;
-  const lines = raw
+  // 先剥掉站点水印与翻页提示，再做去空行与章节名回显处理。
+  const lines = stripContentNoise(raw)
     .split(/\r?\n/)
     .map(l => l.replace(/ /g, ' ').trim())
     .filter(l => l.length > 0);

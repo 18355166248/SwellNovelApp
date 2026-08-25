@@ -34,6 +34,7 @@ import {
   isBlockedText,
 } from './contentGuards';
 import { devInfo } from '../../utils/devLog';
+import { stripContentNoise } from './contentNoise';
 
 const HOST = 'wap.bookshuku.org';
 const ORIGIN = `http://${HOST}`;
@@ -181,11 +182,8 @@ function cleanArticle(html: string): string {
       .replace(/<div class="ad"[\s\S]*?<\/div>/gi, '')
       .replace(/<br\s*\/?>/gi, '\n'),
   );
-  // 去掉分页标记（含包裹它的中英文括号），例如 “(第1/3页)”“（第2/3页）”。
-  return stripTags(text)
-    .replace(/[（(]?\s*第\d+\/\d+页\s*[)）]?/g, '')
-    .replace(/（本章未完，请点击下一页继续阅读）/g, '')
-    .replace(/\(本章未完，请点击下一页继续阅读\)/g, '');
+  // 分页标记与“本章未完”提示统一由 contentNoise 处理，各站写法差异集中维护。
+  return stripContentNoise(stripTags(text));
 }
 
 /** 把多子页文本合并、逐行清洗、去掉开头的章节名回显。 */
@@ -197,7 +195,7 @@ function normalizeChapter(parts: string[]): string {
     .filter(l => l.length > 0)
     // 站点每个分页正文开头都会重复章节标题，合并多页时要全部剔除。
     .filter(l => !(l.length < 40 && HEADING_RE.test(l)));
-  return lines.join('\n');
+  return stripContentNoise(lines.join('\n'));
 }
 
 function normalizeTitle(raw?: string): string | undefined {

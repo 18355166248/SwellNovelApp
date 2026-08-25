@@ -20,6 +20,7 @@ import {
 } from './types';
 import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
 import { isInvalidOnlineChapterContent } from './contentQuality';
+import { stripContentNoise } from './contentNoise';
 
 const HOST = 'www.mingzw.net';
 // www 节点在部分国内云服务器上会被解析到不可达地址；繁体站保留同一书库与目录结构，
@@ -142,7 +143,7 @@ function cleanArticle(html: string): string {
   ) {
     start++;
   }
-  return lines.slice(start).join('\n');
+  return stripContentNoise(lines.slice(start).join('\n'));
 }
 
 function alternateMingzwUrls(url: string): string[] {
