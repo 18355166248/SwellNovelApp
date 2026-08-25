@@ -912,7 +912,6 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   addTile: {
-    aspectRatio: 3 / 4,
     borderWidth: 1.5,
     borderStyle: 'dashed',
   },
