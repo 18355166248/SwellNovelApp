@@ -5,7 +5,9 @@
 import { useEffect } from 'react';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
+  activeBooksAtom,
   booksAtom,
+  deletedBooksAtom,
   selectedBookIdAtom,
   currentBookAtom,
   currentBookHistoryAtom,
@@ -31,10 +33,16 @@ export const useBooks = () => {
 };
 
 /**
- * 获取原始书籍列表（不过滤）
+ * 获取书架上的书籍列表（不含回收站）。
+ * 回收站里的书对书架、搜索去重、统计、追更都应当视为不存在。
  */
 export const useAllBooks = () => {
-  return useAtomValue(booksAtom);
+  return useAtomValue(activeBooksAtom);
+};
+
+/** 回收站列表，最近删除的排在前面。 */
+export const useDeletedBooks = () => {
+  return useAtomValue(deletedBooksAtom);
 };
 
 /**
@@ -67,39 +75,76 @@ export const useSelectBook = () => {
 export const useAddBook = () => {
   const setBooks = useSetAtom(booksAtom);
   return (book: Book) => {
-    setBooks(prev => [...prev, book]);
+    setBooks(prev => {
+      // 同一本书可能还在回收站里（在线书的 id 由书源与书号推出，是稳定的）。
+      // 这时按还原处理：保留原有阅读进度，而不是并排放两条同 id 记录。
+      const existing = prev.find(item => item.id === book.id);
+      if (!existing) return [...prev, book];
+      return prev.map(item =>
+        item.id === book.id
+          ? { ...item, ...book, progress: item.progress, deletedAt: undefined }
+          : item,
+      );
+    });
   };
 };
 
 /**
- * 删除书籍
+ * 把书籍移入回收站。
+ *
+ * 只打一个 deletedAt 标记：章节缓存、阅读进度、书签摘抄都原样留着，还原后能接着
+ * 上次的位置读。真正的清除交给 usePurgeBooks，由回收站页面显式触发。
  */
 export const useRemoveBook = () => {
+  const setBooks = useSetAtom(booksAtom);
+
+  return (bookId: string) => {
+    const deletedAt = Date.now();
+    setBooks(prev =>
+      prev.map(book => (book.id === bookId ? { ...book, deletedAt } : book)),
+    );
+  };
+};
+
+/** 从回收站还原：清掉标记即可，关联数据从未被删除。 */
+export const useRestoreBook = () => {
+  const setBooks = useSetAtom(booksAtom);
+
+  return (bookId: string) => {
+    setBooks(prev =>
+      prev.map(book =>
+        book.id === bookId ? { ...book, deletedAt: undefined } : book,
+      ),
+    );
+  };
+};
+
+/**
+ * 永久删除：连同章节缓存、阅读进度、书签一并清除，并删掉磁盘上的正文文件。
+ * 这是唯一不可撤销的路径，只应由回收站的「彻底删除 / 清空」触发。
+ */
+export const usePurgeBooks = () => {
   const setBooks = useSetAtom(booksAtom);
   const setChapters = useSetAtom(chaptersAtom);
   const setHistory = useSetAtom(readingHistoryAtom);
   const setBookmarks = useSetAtom(bookmarksAtom);
 
-  return (bookId: string) => {
-    setBooks(prev => prev.filter(book => book.id !== bookId));
-    setChapters(prev => {
+  return (bookIds: string[]) => {
+    if (bookIds.length === 0) return;
+    const targets = new Set(bookIds);
+    setBooks(prev => prev.filter(book => !targets.has(book.id)));
+    const dropTargets = <T,>(prev: Record<string, T>): Record<string, T> => {
       const next = { ...prev };
-      delete next[bookId];
+      targets.forEach(bookId => delete next[bookId]);
       return next;
-    });
-    setHistory(prev => {
-      const next = { ...prev };
-      delete next[bookId];
-      return next;
-    });
-    setBookmarks(prev => {
-      const next = { ...prev };
-      delete next[bookId];
-      return next;
-    });
-    // 同步删除该书的章节正文文件。
-    deleteBookChapters(bookId).catch(error => {
-      console.warn('[useRemoveBook] delete chapters failed', error);
+    };
+    setChapters(dropTargets);
+    setHistory(dropTargets);
+    setBookmarks(dropTargets);
+    bookIds.forEach(bookId => {
+      deleteBookChapters(bookId).catch(error => {
+        console.warn('[usePurgeBooks] delete chapters failed', error);
+      });
     });
   };
 };

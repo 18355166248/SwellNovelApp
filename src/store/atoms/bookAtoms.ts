@@ -5,8 +5,20 @@
 import { atom } from 'jotai';
 import { Book, Chapter, Bookmark, ReadingHistory } from '../types/book';
 
-// 书籍列表
+// 书籍列表（含回收站中的书，删除与还原都在这份列表上改标记）
 export const booksAtom = atom<Book[]>([]);
+
+/** 书架可见的书：回收站中的书对绝大多数界面都应当不存在。 */
+export const activeBooksAtom = atom<Book[]>(get =>
+  get(booksAtom).filter(book => !book.deletedAt),
+);
+
+/** 回收站列表，最近删除的排在前面。 */
+export const deletedBooksAtom = atom<Book[]>(get =>
+  get(booksAtom)
+    .filter(book => !!book.deletedAt)
+    .sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0)),
+);
 
 /** LibraryPersistence 完成磁盘快照恢复后才允许导出或恢复备份。 */
 export const libraryHydratedAtom = atom<boolean>(false);
@@ -58,7 +70,7 @@ export const searchHistoryAtom = atom<string[]>([]);
 
 // 筛选后的书籍列表
 export const filteredBooksAtom = atom<Book[]>((get) => {
-  const books = get(booksAtom);
+  const books = get(activeBooksAtom);
   const query = get(bookSearchQueryAtom).toLowerCase().trim();
 
   if (!query) return books;

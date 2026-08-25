@@ -498,10 +498,11 @@ export default function BookDetailScreen() {
             ]}
           >
             <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>
-              删除书籍
+              移到回收站
             </Text>
             <Text style={[styles.deleteMessage, { color: theme.colors.textSecondary }]}>
-              确定删除《{book.title}》？章节缓存、阅读进度与书签都会被永久清除。
+              《{book.title}》将移出书架。章节缓存、阅读进度与书签都会保留，
+              可在「我的 - 回收站」还原。
             </Text>
             <View style={styles.deleteActions}>
               <Pressable
@@ -518,7 +519,7 @@ export default function BookDetailScreen() {
                   navigation.goBack();
                 }}
               >
-                <Text style={styles.deleteConfirmText}>删除</Text>
+                <Text style={styles.deleteConfirmText}>移到回收站</Text>
               </Pressable>
             </View>
           </View>

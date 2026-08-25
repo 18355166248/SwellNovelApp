@@ -5,6 +5,7 @@ import { Button, Input, Text, Icon } from '../components';
 import { ProfileIdentityCard } from '../components/ProfileIdentityCard';
 import {
   useAllBooks,
+  useDeletedBooks,
   useReaderSettings,
   useSetFullscreenPref,
   useReadingStats,
@@ -48,6 +49,7 @@ export default function MeScreen({
   const { theme, isDarkMode, toggleTheme } = useTheme();
   const navigation = useNavigation<NavigationProp>();
   const books = useAllBooks();
+  const deletedBooks = useDeletedBooks();
   const readerSettings = useReaderSettings();
   const setFullscreenPref = useSetFullscreenPref();
   // 记住偏好；Web 端切换开关本身是用户手势，可在此直接进入/退出全屏（进入全屏必须在手势内）。
@@ -599,6 +601,23 @@ export default function MeScreen({
           <View style={styles.settingInfo}>
             <Text style={[styles.settingTitle, { color: theme.colors.text }]}>缓存管理</Text>
             <Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>查看占用、清理已读章节与单本缓存</Text>
+          </View>
+          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
+        </Pressable>
+        <Pressable
+          style={styles.cloudMenu}
+          onPress={() => navigation.navigate('RecycleBin')}
+        >
+          <View style={styles.settingIcon}>
+            <Icon name="delete-outline" size={20} color={theme.colors.text} />
+          </View>
+          <View style={styles.settingInfo}>
+            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>回收站</Text>
+            <Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>
+              {deletedBooks.length > 0
+                ? `${deletedBooks.length} 本可还原，阅读进度都还在`
+                : '从书架删除的书会先放到这里'}
+            </Text>
           </View>
           <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
         </Pressable>

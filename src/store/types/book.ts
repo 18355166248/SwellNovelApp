@@ -18,6 +18,9 @@ export interface Book {
   fileFormat?: 'txt' | 'epub' | 'mobi';
   addedAt: number;
   updatedAt: number;
+  // 存在则表示已移入回收站：书架与统计都不再显示，但章节缓存、阅读进度和书签
+  // 原样保留，还原后可以接着读。清空回收站才真正删除这些数据。
+  deletedAt?: number;
   lastReadAt?: number;
   finishedAt?: number; // 首次读到 100% 的时间，用于年度阅读记录
   progress: number; // 阅读进度 0-100

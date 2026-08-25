@@ -712,9 +712,10 @@ export default function BookshelfScreen() {
               theme.shadows.md,
             ]}
           >
-            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>删除 {pendingDeleteIds.length} 本书籍</Text>
+            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>移到回收站</Text>
             <Text style={[styles.deleteMessage, { color: theme.colors.textSecondary }]}>
-              章节缓存、阅读进度与书签都会被永久清除。
+              {pendingDeleteIds.length} 本书将移出书架。章节缓存、阅读进度与书签都会保留，
+              可在「我的 - 回收站」还原。
             </Text>
             <View style={styles.deleteActions}>
               <Pressable
@@ -732,7 +733,7 @@ export default function BookshelfScreen() {
                   setSelectionMode(false);
                 }}
               >
-                <Text style={styles.deleteConfirmText}>删除</Text>
+                <Text style={styles.deleteConfirmText}>移到回收站</Text>
               </Pressable>
             </View>
           </View>

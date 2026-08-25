@@ -29,6 +29,7 @@ import ReaderScreen from '../screens/ReaderScreen';
 import BookDetailScreen from '../screens/BookDetailScreen';
 import InAppBrowserScreen from '../screens/InAppBrowserScreen';
 import CacheManagementScreen from '../screens/CacheManagementScreen';
+import RecycleBinScreen from '../screens/RecycleBinScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -52,6 +53,7 @@ const linking: LinkingOptions<RootStackParamList> = {
       Settings: 'settings',
       WebDavBackup: 'settings/webdav',
       CacheManagement: 'settings/cache',
+      RecycleBin: 'settings/recycle-bin',
       BookDetail: 'book/:bookId',
       Reader: 'read/:bookId',
       InAppBrowser: 'browser',
@@ -211,6 +213,7 @@ export default function AppNavigator() {
             name="CacheManagement"
             component={CacheManagementScreen}
           />
+          <Stack.Screen name="RecycleBin" component={RecycleBinScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>
