@@ -10,6 +10,10 @@ import {
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 
+// 必须在模块级只创建一次：放进组件体内会让每次 render 产生新的组件类型，
+// React 据此卸载并重建 TextInput，表现为「每输入一个字就失去光标」。
+const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
+
 interface InputProps extends TextInputProps {
   label?: string;
   error?: string;
@@ -26,7 +30,6 @@ export const Input: React.FC<InputProps> = ({
   const { theme } = useTheme();
   const [isFocused, setIsFocused] = useState(false);
   const focusAnim = useRef(new Animated.Value(0)).current;
-  const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 
   const borderColor = error
     ? theme.colors.error
