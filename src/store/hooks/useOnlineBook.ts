@@ -253,6 +253,9 @@ export const useAddOnlineBook = () => {
                 totalChapters: mergedChapters.length,
                 source: book.source,
                 updatedAt: Date.now(),
+                // 同 id 的书可能正躺在回收站；用户再次添加即视为还原，
+                // 否则后续跳详情页时会被 activeBooksAtom 过滤掉。
+                deletedAt: undefined,
               }
             : b,
         ),
@@ -308,6 +311,8 @@ export const useAddRecognizedBook = () => {
         cover: data.cover || existing.cover,
         totalChapters: chapters.length,
         updatedAt: Date.now(),
+        // 浏览器再次识别同一本书也应恢复到书架，不能只刷新目录却保留回收站标记。
+        deletedAt: undefined,
       };
       store.set(booksAtom, prev =>
         prev.map(book => (book.id === bookId ? updated : book)),
@@ -983,7 +988,8 @@ export const useCheckFollowedBooks = () => {
   return async (options: { cacheNewChapters?: boolean } = {}) => {
     const followed = store
       .get(booksAtom)
-      .filter(book => book.source && book.following);
+      // 回收站里的书已经从书架移除，不应继续消耗网络检查追更或缓存新章。
+      .filter(book => !book.deletedAt && book.source && book.following);
     let updated = 0;
     let failed = 0;
     let cached = 0;

@@ -131,6 +131,19 @@ describe('buildReadingInsights', () => {
     expect(insights.weekdays[0].totalMinutes).toBe(0);
   });
 
+  it('年度热力图的阅读天数不混入窗口外的历史记录', () => {
+    const insights = buildReadingInsights(
+      statsOf({
+        '2025-01-01': 60,
+        '2026-08-24': 30,
+        '2026-08-25': 30,
+      }),
+      NOW,
+    );
+    expect(insights.activeDays).toBe(3);
+    expect(insights.heatmapActiveDays).toBe(2);
+  });
+
   it('月度返回近 12 个月且按时间正序，末项是本月', () => {
     const insights = buildReadingInsights(
       statsOf({ '2026-08-25': 30, '2026-07-10': 20, '2026-07-11': 25 }),

@@ -139,7 +139,7 @@ export default function ReadingStatsScreen() {
               过去一年
             </Text>
             <Text style={[styles.cardMeta, { color: theme.colors.textSecondary }]}>
-              {insights.activeDays} 天有记录
+              {insights.heatmapActiveDays} 天有记录
             </Text>
           </View>
           <ScrollView

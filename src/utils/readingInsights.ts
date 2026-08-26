@@ -65,6 +65,8 @@ export interface ReadingInsights {
   heatmapWeeks: HeatmapCell[][];
   /** 热力图覆盖的天数（含无记录的日子）。 */
   heatmapDays: number;
+  /** 热力图窗口内实际有阅读记录的天数。 */
+  heatmapActiveDays: number;
   last30Minutes: number;
   last30ActiveDays: number;
 }
@@ -208,6 +210,9 @@ export function buildReadingInsights(
     slot.averageMinutes =
       slot.activeDays > 0 ? Math.round(slot.totalMinutes / slot.activeDays) : 0;
   });
+  const heatmapActiveDays = heatmapWeeks
+    .flat()
+    .filter(cell => !cell.padding && cell.minutes > 0).length;
 
   // 近 12 个月，按时间正序。
   const monthly: MonthStat[] = [];
@@ -251,6 +256,7 @@ export function buildReadingInsights(
     weekdays: weekdayTotals,
     heatmapWeeks,
     heatmapDays,
+    heatmapActiveDays,
     last30Minutes: last30Keys.reduce(
       (sum, key) => sum + minutesOf(stats, key),
       0,
