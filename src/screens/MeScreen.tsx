@@ -311,13 +311,19 @@ export default function MeScreen({
           streak={stats.streak}
         />
         <View style={[styles.readingCard, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
-          <View style={styles.readingCardHeader}>
-            <View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="查看完整阅读足迹"
+            onPress={() => navigation.navigate('ReadingStats')}
+            style={styles.readingCardHeader}
+          >
+            <View style={styles.readingCardHeading}>
               <Text style={[styles.readingCardTitle, { color: theme.colors.text }]}>阅读足迹</Text>
               <Text style={[styles.readingCardMeta, { color: theme.colors.textSecondary }]}>本周 {stats.weekTotalMinutes} 分钟 · 今年读完 {finishedThisYear} 本</Text>
             </View>
             <Text style={[styles.readingStreak, { color: theme.colors.accent }]}>{stats.streak} 天连续</Text>
-          </View>
+            <Icon name="chevron-right" size={18} color={theme.colors.textSecondary} />
+          </Pressable>
           <View style={styles.goalHeader}>
             <Text style={[styles.goalLabel, { color: theme.colors.text }]}>今日 {stats.todayMinutes} / {stats.dailyGoalMinutes} 分钟</Text>
             <Text style={[styles.goalPercent, { color: theme.colors.textSecondary }]}>{Math.round(stats.todayGoalProgress * 100)}%</Text>
@@ -937,9 +943,11 @@ const styles = StyleSheet.create({
     paddingTop: 15,
     paddingBottom: 14,
   },
+  readingCardHeading: { flex: 1, minWidth: 0 },
   readingCardHeader: {
-    alignItems: 'flex-start',
+    alignItems: 'center',
     flexDirection: 'row',
+    gap: 8,
     justifyContent: 'space-between',
   },
   readingCardTitle: {

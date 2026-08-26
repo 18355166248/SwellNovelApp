@@ -16,4 +16,5 @@ export type RootStackParamList = {
   WebDavBackup: undefined;
   CacheManagement: undefined;
   RecycleBin: undefined;
+  ReadingStats: undefined;
 };
