@@ -34,7 +34,20 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const CELL_SIZE = 11;
 const CELL_GAP = 3;
-const MONTH_LABELS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+const MONTH_LABELS = [
+  '1月',
+  '2月',
+  '3月',
+  '4月',
+  '5月',
+  '6月',
+  '7月',
+  '8月',
+  '9月',
+  '10月',
+  '11月',
+  '12月',
+];
 
 /** 色阶：0 用边框色描空格，1~4 逐级加深主题绿。 */
 function heatColor(level: HeatLevel, empty: string, accent: string): string {
@@ -89,13 +102,16 @@ export default function ReadingStatsScreen() {
     >
       <View style={styles.header}>
         <Pressable
+          accessibilityRole="button"
           accessibilityLabel="返回"
           onPress={() => navigation.goBack()}
           style={styles.backButton}
         >
           <Icon name="arrow-back" size={22} color={theme.colors.text} />
         </Pressable>
-        <Text style={[styles.title, { color: theme.colors.text }]}>阅读足迹</Text>
+        <Text style={[styles.title, { color: theme.colors.text }]}>
+          阅读足迹
+        </Text>
         <View style={styles.backButton} />
       </View>
 
@@ -118,7 +134,10 @@ export default function ReadingStatsScreen() {
                 {metric.value}
               </Text>
               <Text
-                style={[styles.metricLabel, { color: theme.colors.textSecondary }]}
+                style={[
+                  styles.metricLabel,
+                  { color: theme.colors.textSecondary },
+                ]}
               >
                 {metric.label}
               </Text>
@@ -138,7 +157,9 @@ export default function ReadingStatsScreen() {
             <Text style={[styles.cardTitle, { color: theme.colors.text }]}>
               过去一年
             </Text>
-            <Text style={[styles.cardMeta, { color: theme.colors.textSecondary }]}>
+            <Text
+              style={[styles.cardMeta, { color: theme.colors.textSecondary }]}
+            >
               {insights.heatmapActiveDays} 天有记录
             </Text>
           </View>
@@ -179,7 +200,23 @@ export default function ReadingStatsScreen() {
                       <Pressable
                         key={cell.date}
                         disabled={cell.padding}
-                        hitSlop={2}
+                        accessible={!cell.padding && cell.minutes > 0}
+                        accessibilityRole={
+                          !cell.padding && cell.minutes > 0
+                            ? 'button'
+                            : undefined
+                        }
+                        accessibilityLabel={
+                          !cell.padding && cell.minutes > 0
+                            ? `${formatDate(cell.date)}，阅读 ${formatMinutes(
+                                cell.minutes,
+                              )}`
+                            : undefined
+                        }
+                        accessibilityState={{
+                          selected: picked?.date === cell.date,
+                        }}
+                        hitSlop={4}
                         onPress={() => setPicked(cell)}
                         style={[
                           styles.heatCell,
@@ -204,16 +241,28 @@ export default function ReadingStatsScreen() {
             </View>
           </ScrollView>
           <View style={styles.legendRow}>
-            <Text style={[styles.legendText, { color: theme.colors.textSecondary }]}>
-              {picked
-                ? `${formatDate(picked.date)} · ${
-                    picked.minutes > 0 ? formatMinutes(picked.minutes) : '未阅读'
-                  }`
-                : '点格子查看当天时长'}
-            </Text>
+            <View accessibilityLiveRegion="polite">
+              <Text
+                style={[
+                  styles.legendText,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                {picked
+                  ? `${formatDate(picked.date)} · ${
+                      picked.minutes > 0
+                        ? formatMinutes(picked.minutes)
+                        : '未阅读'
+                    }`
+                  : '点格子查看当天时长'}
+              </Text>
+            </View>
             <View style={styles.legendScale}>
               <Text
-                style={[styles.legendText, { color: theme.colors.textSecondary }]}
+                style={[
+                  styles.legendText,
+                  { color: theme.colors.textSecondary },
+                ]}
               >
                 少
               </Text>
@@ -233,7 +282,10 @@ export default function ReadingStatsScreen() {
                 />
               ))}
               <Text
-                style={[styles.legendText, { color: theme.colors.textSecondary }]}
+                style={[
+                  styles.legendText,
+                  { color: theme.colors.textSecondary },
+                ]}
               >
                 多
               </Text>
@@ -253,7 +305,9 @@ export default function ReadingStatsScreen() {
             <Text style={[styles.cardTitle, { color: theme.colors.text }]}>
               一周里的习惯
             </Text>
-            <Text style={[styles.cardMeta, { color: theme.colors.textSecondary }]}>
+            <Text
+              style={[styles.cardMeta, { color: theme.colors.textSecondary }]}
+            >
               按星期累计
             </Text>
           </View>
@@ -306,7 +360,9 @@ export default function ReadingStatsScreen() {
             <Text style={[styles.cardTitle, { color: theme.colors.text }]}>
               近 12 个月
             </Text>
-            <Text style={[styles.cardMeta, { color: theme.colors.textSecondary }]}>
+            <Text
+              style={[styles.cardMeta, { color: theme.colors.textSecondary }]}
+            >
               近 30 天 {formatMinutes(insights.last30Minutes)}
             </Text>
           </View>
@@ -357,7 +413,9 @@ export default function ReadingStatsScreen() {
           {[
             {
               label: '日均时长',
-              value: `${formatMinutes(insights.averageMinutesPerActiveDay)} / 阅读日`,
+              value: `${formatMinutes(
+                insights.averageMinutesPerActiveDay,
+              )} / 阅读日`,
             },
             {
               label: '达标天数',
@@ -384,16 +442,24 @@ export default function ReadingStatsScreen() {
             {
               label: '开始阅读',
               value: insights.firstDate
-                ? `${formatDate(insights.firstDate)} · 至今 ${insights.spanDays} 天`
+                ? `${formatDate(insights.firstDate)} · 至今 ${
+                    insights.spanDays
+                  } 天`
                 : '—',
             },
           ].map(row => (
             <View
               key={row.label}
-              style={[styles.detailRow, { borderTopColor: theme.colors.border }]}
+              style={[
+                styles.detailRow,
+                { borderTopColor: theme.colors.border },
+              ]}
             >
               <Text
-                style={[styles.detailLabel, { color: theme.colors.textSecondary }]}
+                style={[
+                  styles.detailLabel,
+                  { color: theme.colors.textSecondary },
+                ]}
               >
                 {row.label}
               </Text>
@@ -423,9 +489,9 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignItems: 'center',
-    height: 28,
+    height: 44,
     justifyContent: 'center',
-    width: 28,
+    width: 44,
   },
   title: {
     fontFamily: SERIF_FONT,

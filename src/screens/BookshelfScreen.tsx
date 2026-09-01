@@ -29,14 +29,11 @@ import {
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
 import { pickTxtFile } from '../utils/importBook';
-import {
-  paletteForId,
-  COVER_GRADIENT_DIRECTION,
-} from '../theme/readerThemes';
+import { paletteForId, COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-const FILTERS = ['全部', '在线', '导入', '连载', '完结'] as const;
+const FILTERS = ['全部', '在线', '导入', '未读完', '已读完'] as const;
 
 const waitForNextPaint = () =>
   new Promise<void>(resolve => {
@@ -51,13 +48,23 @@ function applyFilter(books: Book[], filter: (typeof FILTERS)[number]) {
       return books.filter(b => b.fileFormat !== 'txt');
     case '导入':
       return books.filter(b => b.fileFormat === 'txt');
-    case '连载':
+    case '未读完':
       return books.filter(b => b.progress < 100);
-    case '完结':
+    case '已读完':
       return books.filter(b => b.progress >= 100);
     default:
       return books;
   }
+}
+
+function bookAccessibilityLabel(book: Book) {
+  const progress = Math.round(book.progress);
+  const updateLabel = book.unreadUpdates
+    ? `，有 ${book.unreadUpdates} 章更新`
+    : '';
+  return `${book.title}，${book.author}，${
+    progress >= 100 ? '已读完' : `已读 ${progress}%`
+  }${updateLabel}`;
 }
 
 function coverTitleFontSize(title: string, base: number) {
@@ -69,11 +76,26 @@ const BOOK_COVER_ARTWORKS: Array<{
   ink: string;
 }> = [
   { source: require('../assets/book-covers/cover-lychee.jpg'), ink: '#f2e4cf' },
-  { source: require('../assets/book-covers/cover-botanical.jpg'), ink: '#292822' },
-  { source: require('../assets/book-covers/cover-night-boat.jpg'), ink: '#f1e2c7' },
-  { source: require('../assets/book-covers/cover-bookshop.jpg'), ink: '#292822' },
-  { source: require('../assets/book-covers/cover-sunset-courtyard.jpg'), ink: '#f2dfc8' },
-  { source: require('../assets/book-covers/cover-blue-alley.jpg'), ink: '#eee1cb' },
+  {
+    source: require('../assets/book-covers/cover-botanical.jpg'),
+    ink: '#292822',
+  },
+  {
+    source: require('../assets/book-covers/cover-night-boat.jpg'),
+    ink: '#f1e2c7',
+  },
+  {
+    source: require('../assets/book-covers/cover-bookshop.jpg'),
+    ink: '#292822',
+  },
+  {
+    source: require('../assets/book-covers/cover-sunset-courtyard.jpg'),
+    ink: '#f2dfc8',
+  },
+  {
+    source: require('../assets/book-covers/cover-blue-alley.jpg'),
+    ink: '#eee1cb',
+  },
 ];
 
 function coverArtworkForId(id: string) {
@@ -96,7 +118,9 @@ function isShortChineseText(value: string) {
 }
 
 function verticalCoverText(value: string) {
-  return isShortChineseText(value) ? Array.from(value.trim()).join('\n') : value;
+  return isShortChineseText(value)
+    ? Array.from(value.trim()).join('\n')
+    : value;
 }
 
 function isToday(timestamp?: number) {
@@ -133,7 +157,9 @@ export default function BookshelfScreen() {
   const checkFollowedBooks = useCheckFollowedBooks();
   const libraryHydrated = useAtomValue(libraryHydratedAtom);
   const [selectedBookIds, setSelectedBookIds] = React.useState<string[]>([]);
-  const [pendingDeleteIds, setPendingDeleteIds] = React.useState<string[] | null>(null);
+  const [pendingDeleteIds, setPendingDeleteIds] = React.useState<
+    string[] | null
+  >(null);
   const [selectionMode, setSelectionMode] = React.useState(false);
 
   const toggleSelection = React.useCallback((bookId: string) => {
@@ -209,9 +235,12 @@ export default function BookshelfScreen() {
     }
   }, [addBook, importState.active, navigation, setChapters]);
 
-  const continuing = books.filter(b => b.progress < 100).length;
+  const unfinishedCount = books.filter(b => b.progress < 100).length;
   const followedCount = books.filter(b => b.following).length;
-  const unreadUpdates = books.reduce((sum, book) => sum + (book.unreadUpdates || 0), 0);
+  const unreadUpdates = books.reduce(
+    (sum, book) => sum + (book.unreadUpdates || 0),
+    0,
+  );
   const needsDailyFollowCheck = books.some(
     book => book.following && !isToday(book.lastUpdateCheckAt),
   );
@@ -222,6 +251,25 @@ export default function BookshelfScreen() {
       return `${book.title} ${book.author}`.toLowerCase().includes(keyword);
     });
   }, [books, filter, shelfQuery]);
+  const hasActiveShelfFilters =
+    filter !== '全部' || shelfQuery.trim().length > 0;
+  const filteredEmptyMessage = React.useMemo(() => {
+    const keyword = shelfQuery.trim();
+    if (keyword && filter !== '全部') {
+      return `“${keyword}”在“${filter}”分类下没有匹配书籍`;
+    }
+    if (keyword) {
+      return `没有找到书名或作者包含“${keyword}”的书籍`;
+    }
+    return `书架中暂无“${filter}”书籍`;
+  }, [filter, shelfQuery]);
+
+  const clearShelfFilters = React.useCallback(() => {
+    // 一次重置分类和关键词，避免用户在空结果页逐项排查隐藏条件。
+    setFilter('全部');
+    setShelfQuery('');
+    setShelfSearchOpen(false);
+  }, []);
 
   const openBookFinder = React.useCallback(() => {
     navigation.navigate('MainTabs', { screen: 'Search' });
@@ -250,7 +298,8 @@ export default function BookshelfScreen() {
 
     automaticCheckStartedRef.current = true;
     setFollowChecking(true);
-    checkFollowedBooksRef.current({ cacheNewChapters: true })
+    checkFollowedBooksRef
+      .current({ cacheNewChapters: true })
       .then(result => {
         // 自动检查保持安静：只有发现新章时才给出文字反馈，失败可由用户手动重试。
         if (screenMountedRef.current && result.updated > 0) {
@@ -269,10 +318,11 @@ export default function BookshelfScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
-          <View>
+          <View style={styles.headerCopy}>
             <Text style={[styles.title, { color: theme.colors.text }]}>
               {selectionMode ? `已选择 ${selectedBookIds.length} 本` : '书架'}
             </Text>
@@ -282,79 +332,141 @@ export default function BookshelfScreen() {
               style={{ marginTop: 3 }}
             >
               共 {books.length} 本
-              {continuing > 0 ? ` · ${continuing} 本连载中` : ''}
+              {unfinishedCount > 0 ? ` · ${unfinishedCount} 本未读完` : ''}
             </Text>
           </View>
           <View style={styles.headerActions}>
             {selectionMode ? (
               <>
                 <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel="全选书籍"
+                  accessibilityState={{ disabled: shown.length === 0 }}
+                  disabled={shown.length === 0}
+                  hitSlop={4}
                   onPress={() => setSelectedBookIds(shown.map(book => book.id))}
-                  style={[styles.iconBtn, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}
+                  style={[
+                    styles.iconBtn,
+                    { backgroundColor: theme.colors.surface },
+                    theme.shadows.sm,
+                  ]}
                 >
                   <Icon name="select-all" size={18} color={theme.colors.text} />
                 </Pressable>
                 <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel="删除已选书籍"
+                  accessibilityState={{
+                    disabled: selectedBookIds.length === 0,
+                  }}
                   disabled={selectedBookIds.length === 0}
+                  hitSlop={4}
                   onPress={() => setPendingDeleteIds(selectedBookIds)}
-                  style={[styles.iconBtn, { backgroundColor: theme.colors.danger, opacity: selectedBookIds.length ? 1 : 0.45 }, theme.shadows.sm]}
+                  style={[
+                    styles.iconBtn,
+                    {
+                      backgroundColor: theme.colors.danger,
+                      opacity: selectedBookIds.length ? 1 : 0.45,
+                    },
+                    theme.shadows.sm,
+                  ]}
                 >
                   <Icon name="delete-outline" size={18} color="#fff" />
                 </Pressable>
                 <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel="取消选择"
-                  onPress={() => { setSelectedBookIds([]); setSelectionMode(false); }}
-                  style={[styles.iconBtn, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}
+                  hitSlop={4}
+                  onPress={() => {
+                    setSelectedBookIds([]);
+                    setSelectionMode(false);
+                  }}
+                  style={[
+                    styles.iconBtn,
+                    { backgroundColor: theme.colors.surface },
+                    theme.shadows.sm,
+                  ]}
                 >
                   <Icon name="close" size={18} color={theme.colors.text} />
                 </Pressable>
               </>
             ) : (
               <Pressable
+                accessibilityRole="button"
                 accessibilityLabel="批量删除书籍"
+                hitSlop={4}
                 onPress={() => setSelectionMode(true)}
-                style={[styles.iconBtn, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}
+                style={[
+                  styles.iconBtn,
+                  { backgroundColor: theme.colors.surface },
+                  theme.shadows.sm,
+                ]}
               >
-                <Icon name="delete-outline" size={18} color={theme.colors.text} />
+                <Icon
+                  name="delete-outline"
+                  size={18}
+                  color={theme.colors.text}
+                />
               </Pressable>
             )}
-            {!selectionMode ? <Pressable
-              accessibilityLabel={shelfSearchOpen ? '关闭书架搜索' : '搜索书架'}
-              onPress={() => {
-                setShelfSearchOpen(open => !open);
-                if (shelfSearchOpen) setShelfQuery('');
-              }}
-              style={[
-                styles.iconBtn,
-                { backgroundColor: theme.colors.surface },
-                theme.shadows.sm,
-              ]}
-            >
-              <Icon name="search" size={18} color={theme.colors.text} />
-            </Pressable> : null}
-            <Pressable
-              onPress={() => setGridView(v => !v)}
-              style={[
-                styles.iconBtn,
-                { backgroundColor: theme.colors.surface },
-                theme.shadows.sm,
-              ]}
-            >
-              <Icon
-                name={gridView ? 'view-list' : 'grid-view'}
-                size={18}
-                color={theme.colors.text}
-              />
-            </Pressable>
+            {!selectionMode ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  shelfSearchOpen ? '关闭书架搜索' : '搜索书架'
+                }
+                accessibilityState={{ expanded: shelfSearchOpen }}
+                hitSlop={4}
+                onPress={() => {
+                  setShelfSearchOpen(open => !open);
+                  if (shelfSearchOpen) setShelfQuery('');
+                }}
+                style={[
+                  styles.iconBtn,
+                  { backgroundColor: theme.colors.surface },
+                  theme.shadows.sm,
+                ]}
+              >
+                <Icon name="search" size={18} color={theme.colors.text} />
+              </Pressable>
+            ) : null}
+            {!selectionMode ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  gridView ? '切换为列表视图' : '切换为网格视图'
+                }
+                hitSlop={4}
+                onPress={() => setGridView(v => !v)}
+                style={[
+                  styles.iconBtn,
+                  { backgroundColor: theme.colors.surface },
+                  theme.shadows.sm,
+                ]}
+              >
+                <Icon
+                  name={gridView ? 'view-list' : 'grid-view'}
+                  size={18}
+                  color={theme.colors.text}
+                />
+              </Pressable>
+            ) : null}
           </View>
         </View>
 
         {shelfSearchOpen ? (
-          <View style={[styles.shelfSearch, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+          <View
+            style={[
+              styles.shelfSearch,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
             <Icon name="search" size={17} color={theme.colors.textSecondary} />
             <TextInput
+              accessibilityLabel="搜索书架"
               value={shelfQuery}
               onChangeText={setShelfQuery}
               placeholder="在书架中搜索书名、作者"
@@ -362,7 +474,21 @@ export default function BookshelfScreen() {
               autoFocus
               style={[styles.shelfSearchInput, { color: theme.colors.text }]}
             />
-            {shelfQuery ? <Pressable onPress={() => setShelfQuery('')} hitSlop={8}><Icon name="close" size={17} color={theme.colors.textSecondary} /></Pressable> : null}
+            {shelfQuery ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="清除书架搜索关键词"
+                onPress={() => setShelfQuery('')}
+                hitSlop={8}
+                style={styles.searchClearButton}
+              >
+                <Icon
+                  name="close"
+                  size={17}
+                  color={theme.colors.textSecondary}
+                />
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
@@ -377,6 +503,9 @@ export default function BookshelfScreen() {
             return (
               <Pressable
                 key={f}
+                accessibilityRole="button"
+                accessibilityLabel={`筛选：${f}`}
+                accessibilityState={{ selected: on }}
                 onPress={() => setFilter(f)}
                 style={[
                   styles.filterChip,
@@ -404,16 +533,73 @@ export default function BookshelfScreen() {
           })}
         </ScrollView>
 
-        {followedCount > 0 ? (
-          <Pressable onPress={onCheckFollowed} disabled={followChecking} style={[styles.followBar, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-            <Icon name="notifications-active" size={18} color={theme.colors.accentDark} />
-            <Text style={[styles.followText, { color: theme.colors.text }]}>{followChecking ? '正在检查追更…' : unreadUpdates > 0 ? `追更更新：${unreadUpdates} 章` : `检查 ${followedCount} 本追更书`}</Text>
-            <Icon name="chevron-right" size={18} color={theme.colors.textSecondary} />
+        {hasActiveShelfFilters && shown.length > 0 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="清除书架筛选与搜索"
+            onPress={clearShelfFilters}
+            style={styles.clearFiltersButton}
+          >
+            <Icon name="close" size={15} color={theme.colors.accent} />
+            <Text
+              style={[styles.clearFiltersText, { color: theme.colors.accent }]}
+            >
+              清除筛选与搜索
+            </Text>
           </Pressable>
         ) : null}
-        {followMessage ? <Text style={[styles.followMessage, { color: theme.colors.textSecondary }]}>{followMessage}</Text> : null}
 
-        {books.length === 0 ? (
+        {followedCount > 0 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              followChecking ? '正在检查追更' : `检查 ${followedCount} 本追更书`
+            }
+            accessibilityState={{
+              disabled: followChecking,
+              busy: followChecking,
+            }}
+            onPress={onCheckFollowed}
+            disabled={followChecking}
+            style={[
+              styles.followBar,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <Icon
+              name="notifications-active"
+              size={18}
+              color={theme.colors.accentDark}
+            />
+            <Text style={[styles.followText, { color: theme.colors.text }]}>
+              {followChecking
+                ? '正在检查追更…'
+                : unreadUpdates > 0
+                ? `追更更新：${unreadUpdates} 章`
+                : `检查 ${followedCount} 本追更书`}
+            </Text>
+            <Icon
+              name="chevron-right"
+              size={18}
+              color={theme.colors.textSecondary}
+            />
+          </Pressable>
+        ) : null}
+        {followMessage ? (
+          <Text
+            style={[
+              styles.followMessage,
+              { color: theme.colors.textSecondary },
+            ]}
+          >
+            {followMessage}
+          </Text>
+        ) : null}
+
+        {books.length === 0 && !hasActiveShelfFilters ? (
           <View style={styles.empty}>
             <Icon
               name="menu-book"
@@ -428,6 +614,8 @@ export default function BookshelfScreen() {
               书架空空如也，先去搜一本喜欢的书
             </Text>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="去搜书"
               onPress={openBookFinder}
               style={[
                 styles.emptyImportBtn,
@@ -445,9 +633,15 @@ export default function BookshelfScreen() {
               </Text>
             </Pressable>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="导入本地 TXT"
+              accessibilityState={{
+                disabled: importState.active,
+                busy: importState.active,
+              }}
               onPress={handleImportTxt}
               disabled={importState.active}
-              style={{ marginTop: 14 }}
+              style={styles.emptySecondaryImport}
             >
               <Text style={{ color: theme.colors.accent, fontSize: 13.5 }}>
                 导入本地 TXT
@@ -456,10 +650,34 @@ export default function BookshelfScreen() {
           </View>
         ) : shown.length === 0 ? (
           <View style={styles.emptyFiltered}>
-            <Icon name="search-off" size={32} color={theme.colors.textSecondary} />
-            <Text variant="body" color="textSecondary" style={{ marginTop: 10 }}>
-              书架中没有匹配的书籍
+            <Icon
+              name="search-off"
+              size={32}
+              color={theme.colors.textSecondary}
+            />
+            <Text
+              variant="body"
+              color="textSecondary"
+              style={{ marginTop: 10 }}
+            >
+              {filteredEmptyMessage}
             </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="清除书架筛选与搜索"
+              onPress={clearShelfFilters}
+              style={[
+                styles.emptyClearButton,
+                { borderColor: theme.colors.border },
+              ]}
+            >
+              <Icon name="close" size={16} color={theme.colors.accent} />
+              <Text
+                style={[styles.emptyClearText, { color: theme.colors.accent }]}
+              >
+                清除筛选与搜索
+              </Text>
+            </Pressable>
           </View>
         ) : gridView ? (
           <View style={styles.grid}>
@@ -473,17 +691,36 @@ export default function BookshelfScreen() {
                 : coverTitleFontSize(b.title, 19);
               const badge =
                 (b.unreadUpdates || 0) > 0
-                  ? { label: `更新 ${b.unreadUpdates}`, color: theme.colors.accent }
+                  ? {
+                      label: `更新 ${b.unreadUpdates}`,
+                      color: theme.colors.accent,
+                    }
                   : b.progress >= 100
-                  ? { label: '完结', color: theme.colors.gold }
+                  ? { label: '已读完', color: theme.colors.gold }
                   : b.fileFormat === 'txt'
                   ? { label: '导入', color: theme.colors.accent }
                   : null;
               return (
                 <Pressable
                   key={b.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={bookAccessibilityLabel(b)}
+                  accessibilityHint={
+                    selectionMode
+                      ? '双击切换选择状态'
+                      : '双击打开书籍，长按进入多选'
+                  }
+                  accessibilityState={
+                    selectionMode
+                      ? { selected: selectedBookIds.includes(b.id) }
+                      : undefined
+                  }
                   style={styles.gridItem}
-                  onPress={() => selectionMode ? toggleSelection(b.id) : navigation.navigate('BookDetail', { bookId: b.id })}
+                  onPress={() =>
+                    selectionMode
+                      ? toggleSelection(b.id)
+                      : navigation.navigate('BookDetail', { bookId: b.id })
+                  }
                   onLongPress={() => enterSelection(b.id)}
                   delayLongPress={350}
                 >
@@ -533,7 +770,10 @@ export default function BookshelfScreen() {
                       </Text>
                     </View>
                     <View style={styles.coverProgress}>
-                      <Text style={styles.coverProgressText} maxFontSizeMultiplier={1}>
+                      <Text
+                        style={styles.coverProgressText}
+                        maxFontSizeMultiplier={1}
+                      >
                         读至 {Math.round(b.progress)}%
                       </Text>
                       <View style={styles.coverProgressTrack}>
@@ -542,7 +782,10 @@ export default function BookshelfScreen() {
                             styles.coverProgressFill,
                             {
                               backgroundColor: theme.colors.accent,
-                              width: `${Math.max(0, Math.min(100, b.progress))}%`,
+                              width: `${Math.max(
+                                0,
+                                Math.min(100, b.progress),
+                              )}%`,
                             },
                           ]}
                         />
@@ -563,52 +806,90 @@ export default function BookshelfScreen() {
                     )}
                   </ImageBackground>
                   {selectionMode ? (
-                    <View style={[styles.selectionBadge, { backgroundColor: selectedBookIds.includes(b.id) ? theme.colors.accentDark : theme.colors.surface, borderColor: theme.colors.border }]}>
-                      <Icon name={selectedBookIds.includes(b.id) ? 'check' : 'add'} size={15} color={selectedBookIds.includes(b.id) ? '#fff' : theme.colors.textSecondary} />
+                    <View
+                      style={[
+                        styles.selectionBadge,
+                        {
+                          backgroundColor: selectedBookIds.includes(b.id)
+                            ? theme.colors.accentDark
+                            : theme.colors.surface,
+                          borderColor: theme.colors.border,
+                        },
+                      ]}
+                    >
+                      <Icon
+                        name={selectedBookIds.includes(b.id) ? 'check' : 'add'}
+                        size={15}
+                        color={
+                          selectedBookIds.includes(b.id)
+                            ? '#fff'
+                            : theme.colors.textSecondary
+                        }
+                      />
                     </View>
                   ) : null}
                 </Pressable>
               );
             })}
-            {!selectionMode ? <Pressable
-              style={styles.gridItem}
-              onPress={openBookFinder}
-            >
-              <View
-                style={[
-                  styles.cover,
-                  styles.addTile,
-                  { borderColor: theme.colors.border },
-                ]}
+            {!selectionMode ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="去搜书"
+                style={styles.gridItem}
+                onPress={openBookFinder}
               >
-                <View style={styles.addTileContent}>
-                  <Icon
-                    name="add"
-                    size={26}
-                    color={theme.colors.textSecondary}
-                    style={styles.addTileIcon}
-                  />
-                  <Text
-                    variant="caption"
-                    color="textSecondary"
-                    style={styles.addTileText}
-                  >
-                    去搜书
-                  </Text>
+                <View
+                  style={[
+                    styles.cover,
+                    styles.addTile,
+                    { borderColor: theme.colors.border },
+                  ]}
+                >
+                  <View style={styles.addTileContent}>
+                    <Icon
+                      name="add"
+                      size={26}
+                      color={theme.colors.textSecondary}
+                      style={styles.addTileIcon}
+                    />
+                    <Text
+                      variant="caption"
+                      color="textSecondary"
+                      style={styles.addTileText}
+                    >
+                      去搜书
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            </Pressable> : null}
+              </Pressable>
+            ) : null}
           </View>
         ) : (
           <View style={styles.list}>
             {shown.map(b => (
               <Pressable
                 key={b.id}
+                accessibilityRole="button"
+                accessibilityLabel={bookAccessibilityLabel(b)}
+                accessibilityHint={
+                  selectionMode
+                    ? '双击切换选择状态'
+                    : '双击打开书籍，长按进入多选'
+                }
+                accessibilityState={
+                  selectionMode
+                    ? { selected: selectedBookIds.includes(b.id) }
+                    : undefined
+                }
                 style={[
                   styles.listItem,
                   { borderBottomColor: theme.colors.border },
                 ]}
-                onPress={() => selectionMode ? toggleSelection(b.id) : navigation.navigate('BookDetail', { bookId: b.id })}
+                onPress={() =>
+                  selectionMode
+                    ? toggleSelection(b.id)
+                    : navigation.navigate('BookDetail', { bookId: b.id })
+                }
                 onLongPress={() => enterSelection(b.id)}
                 delayLongPress={350}
               >
@@ -646,34 +927,60 @@ export default function BookshelfScreen() {
                     {b.author} · 已读 {b.progress}%
                   </Text>
                 </View>
-                {selectionMode ? <Icon name={selectedBookIds.includes(b.id) ? 'check-circle' : 'radio-button-unchecked'} size={21} color={selectedBookIds.includes(b.id) ? theme.colors.accentDark : theme.colors.textSecondary} /> : null}
+                {selectionMode ? (
+                  <Icon
+                    name={
+                      selectedBookIds.includes(b.id)
+                        ? 'check-circle'
+                        : 'radio-button-unchecked'
+                    }
+                    size={21}
+                    color={
+                      selectedBookIds.includes(b.id)
+                        ? theme.colors.accentDark
+                        : theme.colors.textSecondary
+                    }
+                  />
+                ) : null}
               </Pressable>
             ))}
-            {!selectionMode ? <Pressable
-              onPress={openBookFinder}
-              style={[
-                styles.listImportBtn,
-                { borderColor: theme.colors.border },
-              ]}
-            >
-              <Icon name="add" size={18} color={theme.colors.textSecondary} />
-              <Text
-                variant="body"
-                color="textSecondary"
-                style={{ marginLeft: 6 }}
+            {!selectionMode ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="去搜书"
+                onPress={openBookFinder}
+                style={[
+                  styles.listImportBtn,
+                  { borderColor: theme.colors.border },
+                ]}
               >
-                去搜书
-              </Text>
-            </Pressable> : null}
-            {!selectionMode ? <Pressable
-              onPress={handleImportTxt}
-              disabled={importState.active}
-              style={styles.listSecondaryImport}
-            >
-              <Text style={{ color: theme.colors.accent, fontSize: 13.5 }}>
-                导入本地 TXT
-              </Text>
-            </Pressable> : null}
+                <Icon name="add" size={18} color={theme.colors.textSecondary} />
+                <Text
+                  variant="body"
+                  color="textSecondary"
+                  style={{ marginLeft: 6 }}
+                >
+                  去搜书
+                </Text>
+              </Pressable>
+            ) : null}
+            {!selectionMode ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="导入本地 TXT"
+                accessibilityState={{
+                  disabled: importState.active,
+                  busy: importState.active,
+                }}
+                onPress={handleImportTxt}
+                disabled={importState.active}
+                style={styles.listSecondaryImport}
+              >
+                <Text style={{ color: theme.colors.accent, fontSize: 13.5 }}>
+                  导入本地 TXT
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         )}
       </ScrollView>
@@ -712,20 +1019,38 @@ export default function BookshelfScreen() {
               theme.shadows.md,
             ]}
           >
-            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>移到回收站</Text>
-            <Text style={[styles.deleteMessage, { color: theme.colors.textSecondary }]}>
-              {pendingDeleteIds.length} 本书将移出书架。章节缓存、阅读进度与书签都会保留，
-              可在「我的 - 回收站」还原。
+            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>
+              移到回收站
+            </Text>
+            <Text
+              style={[
+                styles.deleteMessage,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              {pendingDeleteIds.length}{' '}
+              本书将移出书架。章节缓存、阅读进度与书签都会保留， 可在「我的 -
+              回收站」还原。
             </Text>
             <View style={styles.deleteActions}>
               <Pressable
-                style={[styles.deleteButton, { borderColor: theme.colors.border }]}
+                accessibilityRole="button"
+                accessibilityLabel="取消移到回收站"
+                style={[
+                  styles.deleteButton,
+                  { borderColor: theme.colors.border },
+                ]}
                 onPress={() => setPendingDeleteIds(null)}
               >
                 <Text style={{ color: theme.colors.text }}>取消</Text>
               </Pressable>
               <Pressable
-                style={[styles.deleteButton, { backgroundColor: theme.colors.danger }]}
+                accessibilityRole="button"
+                accessibilityLabel={`将 ${pendingDeleteIds.length} 本书移到回收站`}
+                style={[
+                  styles.deleteButton,
+                  { backgroundColor: theme.colors.danger },
+                ]}
                 onPress={() => {
                   pendingDeleteIds.forEach(removeBook);
                   setPendingDeleteIds(null);
@@ -757,6 +1082,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  headerCopy: { flex: 1, minWidth: 0 },
   title: {
     fontFamily: SERIF_FONT,
     fontSize: 25,
@@ -771,20 +1097,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: 8,
-    height: 42,
+    height: 44,
     marginHorizontal: 20,
     marginTop: 6,
     paddingHorizontal: 12,
   },
   shelfSearchInput: { flex: 1, fontSize: 13.5, padding: 0 },
+  searchClearButton: {
+    alignItems: 'center',
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
   iconBtn: {
-    width: 38,
-    height: 38,
+    width: 44,
+    height: 44,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   filterRow: { marginTop: 14, paddingHorizontal: 20 },
+  clearFiltersButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    gap: 4,
+    justifyContent: 'center',
+    marginRight: 20,
+    minHeight: 44,
+    paddingHorizontal: 4,
+  },
+  clearFiltersText: { fontSize: 12.5 },
   followBar: {
     alignItems: 'center',
     borderRadius: 8,
@@ -792,24 +1135,54 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginHorizontal: 20,
     marginTop: 14,
+    minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 11,
   },
   followText: { flex: 1, fontSize: 13, fontWeight: '600', marginLeft: 8 },
   followMessage: { fontSize: 12, marginHorizontal: 20, marginTop: 7 },
   filterChip: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: 7,
     paddingHorizontal: 14,
     borderRadius: 20,
     borderWidth: 1,
   },
   empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
-  emptyFiltered: { alignItems: 'center', paddingTop: 52, paddingHorizontal: 32 },
+  emptyFiltered: {
+    alignItems: 'center',
+    paddingTop: 52,
+    paddingHorizontal: 32,
+  },
   emptyImportBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: 12,
     paddingHorizontal: 26,
     borderRadius: 10,
   },
+  emptySecondaryImport: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    minHeight: 44,
+    paddingHorizontal: 12,
+  },
+  emptyClearButton: {
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 5,
+    justifyContent: 'center',
+    marginTop: 16,
+    minHeight: 44,
+    paddingHorizontal: 16,
+  },
+  emptyClearText: { fontSize: 13 },
   grid: {
     paddingHorizontal: 20,
     paddingTop: 14,
@@ -969,6 +1342,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: 11,
     borderWidth: 1,
     borderRadius: 8,
@@ -976,6 +1350,7 @@ const styles = StyleSheet.create({
   listSecondaryImport: {
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: 12,
   },
   importOverlay: {
@@ -1033,6 +1408,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     flex: 1,
+    minHeight: 44,
     paddingVertical: 10,
   },
   deleteConfirmText: { color: '#fff', fontWeight: '600' },

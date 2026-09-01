@@ -16,6 +16,7 @@ import { FullscreenController } from './src/components/FullscreenController';
 import { WebViewFetcher } from './src/components/WebViewFetcher';
 import { BookshukuSelfTest } from './src/dev/BookshukuSelfTest';
 import { AppLaunchSplash } from './src/components/AppLaunchSplash';
+import { LibraryReadyGate } from './src/components/LibraryReadyGate';
 
 function AppContent() {
   return (
@@ -24,7 +25,9 @@ function AppContent() {
       <FullscreenController />
       <WebViewFetcher />
       <BookshukuSelfTest />
-      <AppNavigator />
+      <LibraryReadyGate>
+        <AppNavigator />
+      </LibraryReadyGate>
     </>
   );
 }
@@ -41,9 +44,7 @@ function App() {
           <View style={styles.root}>
             <AppContent />
             {showLaunchSplash ? (
-              <AppLaunchSplash
-                onFinished={() => setShowLaunchSplash(false)}
-              />
+              <AppLaunchSplash onFinished={() => setShowLaunchSplash(false)} />
             ) : null}
           </View>
         </ThemeProvider>

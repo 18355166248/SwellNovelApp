@@ -46,7 +46,7 @@ describe('readerProgress', () => {
     ).toBe(0);
   });
 
-  it('falls back to the start when content is not scrollable', () => {
+  it('marks a non-empty short chapter as fully visible', () => {
     expect(
       scrollOffsetToReadingPosition({
         scrollY: 100,
@@ -54,13 +54,40 @@ describe('readerProgress', () => {
         viewportHeight: 400,
         contentLength: 1000,
       }),
-    ).toBe(0);
+    ).toBe(1000);
+    expect(
+      scrollOffsetToReadingPosition({
+        scrollY: 0,
+        contentHeight: 300,
+        viewportHeight: 400,
+        contentLength: 600,
+      }),
+    ).toBe(600);
     expect(
       readingPositionToScrollOffset({
         position: 800,
         contentHeight: 400,
         viewportHeight: 400,
         contentLength: 1000,
+      }),
+    ).toBe(0);
+  });
+
+  it('keeps empty or not-yet-measured content at the start', () => {
+    expect(
+      scrollOffsetToReadingPosition({
+        scrollY: 0,
+        contentHeight: 300,
+        viewportHeight: 400,
+        contentLength: 0,
+      }),
+    ).toBe(0);
+    expect(
+      scrollOffsetToReadingPosition({
+        scrollY: 0,
+        contentHeight: 0,
+        viewportHeight: 400,
+        contentLength: 600,
       }),
     ).toBe(0);
   });

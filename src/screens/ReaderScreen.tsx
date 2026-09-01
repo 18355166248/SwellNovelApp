@@ -57,6 +57,7 @@ import {
 } from '../store';
 import {
   DRAWER_WIDTH,
+  FONT_SIZES,
   NOVEL_ACCENT,
   NOVEL_GOLD,
   READER_THEMES,
@@ -105,6 +106,12 @@ import {
   readingPositionToScrollOffset,
   scrollOffsetToReadingPosition,
 } from '../utils/readerProgress';
+import { calculateReadingProgress } from '../utils/readingProgressPercent';
+import {
+  buildReaderLineCacheKey,
+  buildReaderScrollMeasurementKey,
+  fingerprintReaderContent,
+} from '../utils/readerScrollMeasurement';
 import {
   canHandleBoundaryTurnGesture,
   ChapterNavigationIntent,
@@ -328,27 +335,6 @@ function cacheReaderLines(
   cache.set(key, lines);
 }
 
-function readerLineCacheKey({
-  chapterId,
-  textLength,
-  maxWidth,
-  fontSize,
-  lineHeight,
-  fontFamily,
-}: {
-  chapterId: string;
-  textLength: number;
-  maxWidth: number;
-  fontSize: number;
-  lineHeight: number;
-  fontFamily?: string;
-}): string {
-  // 正文续载或解析修复后 chapter id 不变，必须带长度使旧断行缓存失效。
-  return `${chapterId}|${textLength}|${maxWidth}|${fontSize}|${lineHeight}|${
-    fontFamily || 'system'
-  }`;
-}
-
 function readerPagesCacheKey({
   lineCacheKey,
   lineHeight,
@@ -432,6 +418,9 @@ export default function ReaderScreen() {
   const progressHintBottom =
     Platform.OS === 'web' ? 10 : Math.max(insets.bottom, 10);
   const { bookId, openDrawer } = route.params;
+  // 从详情页“仅查看目录”进入时，先保持预览态；真正选章或关闭目录开始阅读后，
+  // 才允许记录阅读时长与进度，避免一次目录浏览污染续读位置和阅读统计。
+  const [readingEngaged, setReadingEngaged] = React.useState(!openDrawer);
   // 仅阅读器存活期间检查自动备份，避免书架浏览也产生不必要的云端上传。
   const { trackReadingPosition } = useWebDavAutoBackup();
 
@@ -465,6 +454,8 @@ export default function ReaderScreen() {
   const setReaderTheme = useSetReaderTheme();
   const setReaderBackgroundOpacity = useSetReaderBackgroundOpacity();
   const { inc: incFont, dec: decFont } = useAdjustFontSize();
+  const canDecreaseFont = settings.fontSizeIndex > 0;
+  const canIncreaseFont = settings.fontSizeIndex < FONT_SIZES.length - 1;
   const setLineHeightIndex = useSetLineHeightIndex();
   const setReaderFont = useSetReaderFont();
   const setPageMode = useSetPageMode();
@@ -500,10 +491,10 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     addReadingTimeRef.current = addReadingTime;
   });
-  React.useEffect(
-    () => startReadingSession(ms => addReadingTimeRef.current(ms)),
-    [],
-  );
+  React.useEffect(() => {
+    if (!readingEngaged) return;
+    return startReadingSession(ms => addReadingTimeRef.current(ms));
+  }, [readingEngaged]);
 
   const bookmarks = useBookmarks(bookId);
   const toggleBookmark = useToggleBookmark();
@@ -534,6 +525,10 @@ export default function ReaderScreen() {
     React.useState<Orientation.AppOrientation>('portrait');
   const [readerMenuOpen, setReaderMenuOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(!!openDrawer);
+  const closeDrawerAndStartReading = React.useCallback(() => {
+    setReadingEngaged(true);
+    setDrawerOpen(false);
+  }, []);
 
   React.useEffect(() => {
     // 阅读页每次进入都从竖屏开始，离开前也恢复竖屏，避免横屏状态泄漏到书架等页面。
@@ -678,6 +673,7 @@ export default function ReaderScreen() {
   >(null);
   const [scrollPosition, setScrollPosition] = React.useState(0);
   const [scrollMetrics, setScrollMetrics] = React.useState({
+    measurementKey: '',
     contentHeight: 0,
     viewportHeight: 0,
   });
@@ -955,7 +951,9 @@ export default function ReaderScreen() {
     () => excerpts.filter(item => item.chapterId === chapter?.id),
     [chapter?.id, excerpts],
   );
-  const chapterSourceContent = content || chapter?.content || '';
+  // 章节表是按需抓取与分页续载后的最新正文来源；reader atom 只保存打开瞬间的快照，
+  // 若优先使用它，同章追加子页后会继续渲染旧内容，也无法触发新的高度测量。
+  const chapterSourceContent = chapter?.content || content || '';
   const chapterExcerptRanges = React.useMemo(
     () =>
       chapterExcerpts
@@ -991,11 +989,44 @@ export default function ReaderScreen() {
   );
   const paragraphs = parsedChapter.paragraphs;
   const chapterTextLength = parsedChapter.textLength;
+  const chapterContentFingerprint = React.useMemo(
+    () => fingerprintReaderContent(chapterSourceContent),
+    [chapterSourceContent],
+  );
+  const scrollMeasurementKey = React.useMemo(
+    () =>
+      buildReaderScrollMeasurementKey({
+        chapterId: chapter?.id,
+        contentVersion: chapter?.contentVersion,
+        content: chapterSourceContent,
+        contentFingerprint: chapterContentFingerprint,
+        textLength: chapterTextLength,
+        fontSize: display.fontSize,
+        lineHeight: display.lineHeight,
+        paraGap: display.paraGap,
+        fontFamily: bodyFont,
+        viewportWidth,
+        viewportHeight,
+      }),
+    [
+      bodyFont,
+      chapter?.contentVersion,
+      chapter?.id,
+      chapterContentFingerprint,
+      chapterSourceContent,
+      chapterTextLength,
+      display.fontSize,
+      display.lineHeight,
+      display.paraGap,
+      viewportHeight,
+      viewportWidth,
+    ],
+  );
   const openExcerptDraft = React.useCallback(
     (visibleText: string, fallbackPosition: number) => {
       if (!chapter) return;
       const resolved = resolveExcerptDraft(
-        content || chapter.content,
+        chapterSourceContent,
         visibleText,
         fallbackPosition,
       );
@@ -1011,7 +1042,7 @@ export default function ReaderScreen() {
         note: '',
       });
     },
-    [chapter, content, setToolbarVisible],
+    [chapter, chapterSourceContent, setToolbarVisible],
   );
   const topChapterLabel = formatReaderChapterLabel(chapter, chapterIndex);
 
@@ -1068,9 +1099,10 @@ export default function ReaderScreen() {
     const chapterId = chapter?.id || bookId;
     // 断行随正文字体变化：不同字体字宽不同，缓存 key 必须带 bodyFont，
     // 否则切字体后仍复用旧字体的测量结果，断行/每页行数会对不上。
-    const lineCacheKey = readerLineCacheKey({
+    const lineCacheKey = buildReaderLineCacheKey({
       chapterId,
       textLength: chapterTextLength,
+      contentFingerprint: chapterContentFingerprint,
       maxWidth: pageMetrics.maxWidth,
       fontSize: display.fontSize,
       lineHeight: display.lineHeight,
@@ -1113,6 +1145,7 @@ export default function ReaderScreen() {
   }, [
     bookId,
     chapter?.id,
+    chapterContentFingerprint,
     chapterTextLength,
     display.fontSize,
     display.lineHeight,
@@ -1148,7 +1181,9 @@ export default function ReaderScreen() {
     : findPageByOffset(pages, currentOffsetRef.current);
   const pageSessionKey = `${bookId}|${
     chapter?.id || 'chapter'
-  }|${chapterTextLength}|${pages.length}|${viewportWidth}|${viewportHeight}`;
+  }|${chapterContentFingerprint}|${chapterTextLength}|${
+    pages.length
+  }|${viewportWidth}|${viewportHeight}`;
   const expectedRenderedPageKey = pages[pageRenderTargetIndex]?.key;
   pageRenderGateRef.current =
     status === 'ready' &&
@@ -1249,9 +1284,15 @@ export default function ReaderScreen() {
       : 0;
   const pageProgressPct =
     total > 0
-      ? settings.pageMode === 'page' && pages.length > 0
-        ? Math.round(((chapterIndex + pageIndex / pages.length) / total) * 100)
-        : Math.round(((chapterIndex + scrollChapterFraction) / total) * 100)
+      ? calculateReadingProgress({
+          chapterIndex,
+          totalChapters: total,
+          // 翻页模式按当前已展示页计入阅读；最后一页出现时才真正完成本章。
+          chapterFraction:
+            settings.pageMode === 'page' && pages.length > 0
+              ? Math.min(1, (pageIndex + 1) / pages.length)
+              : scrollChapterFraction,
+        })
       : progressPct;
   const progressLabel =
     settings.pageMode === 'page'
@@ -1264,7 +1305,9 @@ export default function ReaderScreen() {
 
   // 翻页/滚动落定后，把当前页内偏移与书籍进度持久化，重开时精确续读。
   React.useEffect(() => {
-    if (status !== 'ready' || !chapter) return;
+    if (!readingEngaged || drawerOpen || status !== 'ready' || !chapter) {
+      return;
+    }
     updateProgressRef.current(
       bookId,
       pageProgressPct,
@@ -1272,16 +1315,35 @@ export default function ReaderScreen() {
       currentOffsetRef.current,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId, chapter?.id, pageIndex, pageProgressPct, scrollPosition, status]);
+  }, [
+    bookId,
+    chapter?.id,
+    drawerOpen,
+    pageIndex,
+    pageProgressPct,
+    readingEngaged,
+    scrollPosition,
+    status,
+  ]);
 
   React.useEffect(() => {
-    if (status !== 'ready' || !chapter) return;
+    if (!readingEngaged || drawerOpen || status !== 'ready' || !chapter) {
+      return;
+    }
     trackReadingPosition({
       chapterId: chapter.id,
       pageIndex,
       pageMode: settings.pageMode,
     });
-  }, [chapter, pageIndex, settings.pageMode, status, trackReadingPosition]);
+  }, [
+    chapter,
+    drawerOpen,
+    pageIndex,
+    readingEngaged,
+    settings.pageMode,
+    status,
+    trackReadingPosition,
+  ]);
 
   // 在线书：当前章正文尚未抓取时按需拉取并缓存，复用现成的 loading / error 态。
   // 本地书章节已带正文，直接置为 ready。effect 以 chapter.id 为键，换章会自动重跑。
@@ -1394,7 +1456,7 @@ export default function ReaderScreen() {
       if (shouldCancel()) return;
       task = InteractionManager.runAfterInteractions(() => {
         const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
-        void (async () => {
+        (async () => {
           for (const target of targets) {
             if (shouldCancel()) return;
             const startedAt = Date.now();
@@ -1402,9 +1464,12 @@ export default function ReaderScreen() {
               target.id,
               target.content,
             );
-            const lineCacheKey = readerLineCacheKey({
+            const lineCacheKey = buildReaderLineCacheKey({
               chapterId: target.id,
               textLength: targetParsed.textLength,
+              contentFingerprint: fingerprintReaderContent(
+                targetParsed.content,
+              ),
               maxWidth: pageMetrics.maxWidth,
               fontSize: display.fontSize,
               lineHeight: display.lineHeight,
@@ -1452,7 +1517,12 @@ export default function ReaderScreen() {
             // 即使本章全部命中缓存，也在进入下一章前让出一次，保证连续操作优先。
             await yieldToReaderInteraction();
           }
-        })();
+        })().catch(error => {
+          // 相邻章预排版只是性能优化，失败时交给前台分页重算，不能影响当前阅读。
+          devInfo('[ReaderPerf] neighbor pagination skipped', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
       });
     }, 500);
     return () => {
@@ -1489,6 +1559,7 @@ export default function ReaderScreen() {
   const closeReadingChrome = React.useCallback(() => {
     // 翻页动作应回到沉浸阅读态：无论当前开的是上下栏、设置面板还是目录抽屉，
     // 都先收起，避免用户点左右翻页后旧浮层继续遮挡正文。
+    setReadingEngaged(true);
     setSettingsOpen(false);
     setDrawerOpen(false);
     setToolbarVisible(false);
@@ -1684,6 +1755,7 @@ export default function ReaderScreen() {
     (chapterId: string, position: number) => {
       const idx = chapters.findIndex(c => c.id === chapterId);
       if (idx < 0) return;
+      setReadingEngaged(true);
       setDrawerOpen(false);
       if (idx !== chapterIndex) {
         resumeRef.current = { chapterId, position };
@@ -1750,20 +1822,35 @@ export default function ReaderScreen() {
   const updateScrollMetrics = React.useCallback(
     (next: Partial<typeof scrollMetrics>) => {
       setScrollMetrics(prev => {
-        const merged = { ...prev, ...next };
+        // 正文或排版变化时先丢弃旧测量，避免旧短章高度让新正文首帧误判为已读完。
+        const base =
+          prev.measurementKey === scrollMeasurementKey
+            ? prev
+            : {
+                measurementKey: scrollMeasurementKey,
+                contentHeight: 0,
+                viewportHeight: 0,
+              };
+        const merged = {
+          ...base,
+          ...next,
+          measurementKey: scrollMeasurementKey,
+        };
         return prev.contentHeight === merged.contentHeight &&
-          prev.viewportHeight === merged.viewportHeight
+          prev.viewportHeight === merged.viewportHeight &&
+          prev.measurementKey === merged.measurementKey
           ? prev
           : merged;
       });
     },
-    [],
+    [scrollMeasurementKey],
   );
 
   React.useEffect(() => {
     if (
       status !== 'ready' ||
       settings.pageMode !== 'scroll' ||
+      scrollMetrics.measurementKey !== scrollMeasurementKey ||
       pendingScrollPositionRef.current == null ||
       scrollMetrics.contentHeight <= 0 ||
       scrollMetrics.viewportHeight <= 0
@@ -1785,7 +1872,41 @@ export default function ReaderScreen() {
   }, [
     chapterTextLength,
     scrollMetrics.contentHeight,
+    scrollMetrics.measurementKey,
     scrollMetrics.viewportHeight,
+    scrollMeasurementKey,
+    settings.pageMode,
+    status,
+  ]);
+
+  React.useEffect(() => {
+    if (
+      status !== 'ready' ||
+      settings.pageMode !== 'scroll' ||
+      scrollMetrics.measurementKey !== scrollMeasurementKey ||
+      scrollMetrics.contentHeight <= 0 ||
+      scrollMetrics.viewportHeight <= 0 ||
+      scrollMetrics.contentHeight > scrollMetrics.viewportHeight ||
+      chapterTextLength <= 0
+    ) {
+      return;
+    }
+    // 一屏内完整可见的短章通常不会触发 onScroll；测量完成后主动同步一次，
+    // 让进度语义与用户实际已经看到整章保持一致。
+    const position = scrollOffsetToReadingPosition({
+      scrollY: 0,
+      contentHeight: scrollMetrics.contentHeight,
+      viewportHeight: scrollMetrics.viewportHeight,
+      contentLength: chapterTextLength,
+    });
+    currentOffsetRef.current = position;
+    setScrollPosition(prev => (prev === position ? prev : position));
+  }, [
+    chapterTextLength,
+    scrollMetrics.contentHeight,
+    scrollMetrics.measurementKey,
+    scrollMetrics.viewportHeight,
+    scrollMeasurementKey,
     settings.pageMode,
     status,
   ]);
@@ -1859,7 +1980,7 @@ export default function ReaderScreen() {
         return true;
       }
       if (drawerOpen) {
-        setDrawerOpen(false);
+        closeDrawerAndStartReading();
         return true;
       }
       if (isToolbarVisible) {
@@ -1873,6 +1994,7 @@ export default function ReaderScreen() {
   }, [
     backgroundOpen,
     closeBackgroundStudio,
+    closeDrawerAndStartReading,
     excerptDraft,
     settingsOpen,
     drawerOpen,
@@ -1941,6 +2063,8 @@ export default function ReaderScreen() {
           ]}
         >
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="阅读正文，点击左侧或右侧翻页，点击中间显示工具栏"
             onPress={handlePagedReaderPress}
             // ImageBackground 负责页内原画，Pressable 只承载正文和翻页点击，避免原生分页裁掉绝对定位图片。
             style={styles.pagePressTarget}
@@ -1948,6 +2072,8 @@ export default function ReaderScreen() {
             {item.showHeader && (
               <>
                 <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
                   style={[
                     styles.chapterTitle,
                     {
@@ -1960,6 +2086,8 @@ export default function ReaderScreen() {
                   {chapter?.title || book?.title}
                 </Text>
                 <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
                   style={[styles.chapterMeta, { color: display.theme.sub }]}
                 >
                   {book?.title} · {book?.author}
@@ -2224,7 +2352,32 @@ export default function ReaderScreen() {
     navigation.navigate('BookDetail', { bookId });
   };
 
-  if (!book) return null;
+  if (!book) {
+    return (
+      <View style={[styles.missingBook, { backgroundColor: display.theme.bg }]}>
+        <Icon name="menu-book" size={40} color={display.theme.sub} />
+        <Text
+          accessibilityRole="header"
+          style={[styles.missingBookTitle, { color: display.theme.text }]}
+        >
+          无法打开这本书
+        </Text>
+        <Text style={[styles.missingBookMessage, { color: display.theme.sub }]}>
+          书籍可能已被移到回收站，返回书架后可重新选择。
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="返回书架"
+          onPress={() =>
+            navigation.navigate('MainTabs', { screen: 'Bookshelf' })
+          }
+          style={[styles.missingBookButton, { backgroundColor: NOVEL_ACCENT }]}
+        >
+          <Text style={styles.missingBookButtonText}>返回书架</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -2345,6 +2498,9 @@ export default function ReaderScreen() {
           </>
         ) : (
           <ScrollView
+            // 正文或排版 key 变化时重挂载滚动容器，确保即使新旧内容等高，
+            // onLayout 与 onContentSizeChange 也会为新 key 重新提交完整测量。
+            key={scrollMeasurementKey}
             ref={scrollViewRef}
             style={StyleSheet.absoluteFill}
             contentContainerStyle={{
@@ -2466,6 +2622,7 @@ export default function ReaderScreen() {
         <View style={[styles.centerFill, { paddingHorizontal: 40 }]}>
           <Icon name="error-outline" size={44} color={display.theme.sub} />
           <Text
+            accessibilityRole="header"
             style={{
               color: display.theme.text,
               fontSize: 15,
@@ -2477,6 +2634,7 @@ export default function ReaderScreen() {
             章节加载失败
           </Text>
           <Text
+            accessibilityLiveRegion="polite"
             style={{
               color: display.theme.sub,
               fontSize: 12.5,
@@ -2484,10 +2642,12 @@ export default function ReaderScreen() {
               textAlign: 'center',
             }}
           >
-            网络似乎不太稳定，请检查连接后重试。已缓存章节仍可离线阅读。
+            当前章节暂时无法读取，可能是网络或书源内容异常。你可以重试，或从目录选择已缓存章节。
           </Text>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="重新加载当前章节"
               onPress={() => goToChapter(chapterIndex)}
               style={[styles.retryBtn, { backgroundColor: NOVEL_ACCENT }]}
             >
@@ -2502,6 +2662,8 @@ export default function ReaderScreen() {
               </Text>
             </Pressable>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="打开章节目录"
               onPress={() => setDrawerOpen(true)}
               style={[
                 styles.retryBtn,
@@ -2509,7 +2671,7 @@ export default function ReaderScreen() {
               ]}
             >
               <Text style={{ color: display.theme.text, fontSize: 13 }}>
-                返回目录
+                查看目录
               </Text>
             </Pressable>
           </View>
@@ -2659,8 +2821,12 @@ export default function ReaderScreen() {
       >
         <View style={styles.chapterNav}>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="上一章"
+            accessibilityState={{ disabled: chapterIndex <= 0 }}
             onPress={() => goToChapter(chapterIndex - 1, 'prev')}
             disabled={chapterIndex <= 0}
+            style={styles.chapterNavButton}
           >
             <Text
               style={{
@@ -2673,21 +2839,37 @@ export default function ReaderScreen() {
             </Text>
           </Pressable>
           <View
+            accessible
+            accessibilityRole="progressbar"
+            accessibilityLabel="整本阅读进度"
+            accessibilityValue={{
+              min: 0,
+              max: 100,
+              now: pageProgressPct,
+              text: `${pageProgressPct}%`,
+            }}
             style={[
               styles.sliderTrack,
               { backgroundColor: display.chrome.hair },
             ]}
           >
-            <View style={[styles.sliderFill, { width: `${progressPct}%` }]} />
-            <View style={[styles.sliderThumb, { left: `${progressPct}%` }]} />
+            <View
+              style={[styles.sliderFill, { width: `${pageProgressPct}%` }]}
+            />
           </View>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={chapter?.nextPageUrl ? '下一页' : '下一章'}
+            accessibilityState={{
+              disabled: !chapter?.nextPageUrl && chapterIndex >= total - 1,
+            }}
             onPress={() => {
               if (!loadCurrentChapterNextPage()) {
                 goToChapter(chapterIndex + 1, 'next');
               }
             }}
             disabled={!chapter?.nextPageUrl && chapterIndex >= total - 1}
+            style={styles.chapterNavButton}
           >
             <Text
               style={{
@@ -2875,6 +3057,8 @@ export default function ReaderScreen() {
             style={[styles.overlay, { opacity: sheetTransition.value }]}
           >
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="关闭阅读设置"
               style={StyleSheet.absoluteFill}
               onPress={() => setSettingsOpen(false)}
             />
@@ -2900,350 +3084,421 @@ export default function ReaderScreen() {
               style={[styles.grabber, { backgroundColor: display.chrome.hair }]}
             />
 
-            {Brightness.isSupported && (
-              <View style={styles.brightnessRow}>
-                <Icon
-                  name="brightness-6"
-                  size={18}
-                  color={display.chrome.sheetSub}
-                />
-                <View
-                  style={[
-                    styles.sliderTrack,
-                    { backgroundColor: display.chrome.hair, height: 5 },
-                  ]}
-                  onLayout={e => {
-                    brightnessTrackWRef.current = e.nativeEvent.layout.width;
-                  }}
-                  onStartShouldSetResponder={() => true}
-                  onMoveShouldSetResponder={() => true}
-                  onResponderGrant={e =>
-                    applyBrightness(
-                      e.nativeEvent.locationX /
-                        (brightnessTrackWRef.current || 1),
-                    )
-                  }
-                  onResponderMove={e =>
-                    applyBrightness(
-                      e.nativeEvent.locationX /
-                        (brightnessTrackWRef.current || 1),
-                    )
-                  }
-                >
-                  <View
-                    style={[
-                      styles.sliderFill,
-                      {
-                        width: `${Math.round(brightnessLevel * 100)}%`,
-                        backgroundColor: NOVEL_GOLD,
-                      },
-                    ]}
+            <ScrollView
+              contentContainerStyle={[
+                styles.sheetContent,
+                { paddingBottom: Math.max(insets.bottom, 20) },
+              ]}
+              showsVerticalScrollIndicator={false}
+            >
+              {Brightness.isSupported && (
+                <View style={styles.brightnessRow}>
+                  <Icon
+                    name="brightness-6"
+                    size={18}
+                    color={display.chrome.sheetSub}
                   />
                   <View
-                    style={[
-                      styles.sliderThumb,
-                      { left: `${Math.round(brightnessLevel * 100)}%` },
+                    accessible
+                    accessibilityRole="adjustable"
+                    accessibilityLabel="阅读亮度"
+                    accessibilityValue={{
+                      min: 0,
+                      max: 100,
+                      now: Math.round(brightnessLevel * 100),
+                      text: `${Math.round(brightnessLevel * 100)}%`,
+                    }}
+                    accessibilityActions={[
+                      { name: 'increment', label: '提高亮度' },
+                      { name: 'decrement', label: '降低亮度' },
                     ]}
-                  />
+                    onAccessibilityAction={event =>
+                      applyBrightness(
+                        brightnessLevel +
+                          (event.nativeEvent.actionName === 'increment'
+                            ? 0.1
+                            : -0.1),
+                      )
+                    }
+                    style={[
+                      styles.sliderTrack,
+                      { backgroundColor: display.chrome.hair, height: 5 },
+                    ]}
+                    onLayout={e => {
+                      brightnessTrackWRef.current = e.nativeEvent.layout.width;
+                    }}
+                    onStartShouldSetResponder={() => true}
+                    onMoveShouldSetResponder={() => true}
+                    onResponderGrant={e =>
+                      applyBrightness(
+                        e.nativeEvent.locationX /
+                          (brightnessTrackWRef.current || 1),
+                      )
+                    }
+                    onResponderMove={e =>
+                      applyBrightness(
+                        e.nativeEvent.locationX /
+                          (brightnessTrackWRef.current || 1),
+                      )
+                    }
+                  >
+                    <View
+                      style={[
+                        styles.sliderFill,
+                        {
+                          width: `${Math.round(brightnessLevel * 100)}%`,
+                          backgroundColor: NOVEL_GOLD,
+                        },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.sliderThumb,
+                        { left: `${Math.round(brightnessLevel * 100)}%` },
+                      ]}
+                    />
+                  </View>
                 </View>
-              </View>
-            )}
+              )}
 
-            <View style={styles.fontRow}>
-              <Text
-                style={{
-                  color: display.chrome.sheetSub,
-                  fontSize: 12,
-                  width: 42,
-                }}
-              >
-                字号
-              </Text>
-              <Pressable
-                onPress={decFont}
-                style={[styles.fontBtn, { borderColor: display.chrome.hair }]}
-              >
-                <Text style={{ color: display.chrome.sheetInk, fontSize: 15 }}>
-                  A−
-                </Text>
-              </Pressable>
-              <View style={{ width: 30, alignItems: 'center' }}>
+              <View style={styles.fontRow}>
                 <Text
                   style={{
-                    color: display.chrome.sheetInk,
-                    fontSize: 15,
-                    fontFamily: SERIF_FONT,
+                    color: display.chrome.sheetSub,
+                    fontSize: 12,
+                    width: 42,
                   }}
                 >
-                  {display.fontSize}
+                  字号
                 </Text>
-              </View>
-              <Pressable
-                onPress={incFont}
-                style={[styles.fontBtn, { borderColor: display.chrome.hair }]}
-              >
-                <Text style={{ color: display.chrome.sheetInk, fontSize: 19 }}>
-                  A+
-                </Text>
-              </Pressable>
-            </View>
-
-            <View style={{ marginBottom: 18 }}>
-              <Text
-                style={{
-                  color: display.chrome.sheetSub,
-                  fontSize: 12,
-                  marginBottom: 7,
-                }}
-              >
-                行间距
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                {LINE_LABELS.map((label, i) => {
-                  const on = settings.lineHeightIndex === i;
-                  return (
-                    <Pressable
-                      key={label}
-                      onPress={() => setLineHeightIndex(i)}
-                      style={[
-                        styles.optBtn,
-                        {
-                          backgroundColor: on ? NOVEL_ACCENT : 'transparent',
-                          borderColor: on ? NOVEL_ACCENT : display.chrome.hair,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={{
-                          color: on ? '#fff' : display.chrome.sheetInk,
-                          fontSize: 12,
-                        }}
-                      >
-                        {label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={{ marginBottom: 18 }}>
-              <Text
-                style={{
-                  color: display.chrome.sheetSub,
-                  fontSize: 12,
-                  marginBottom: 7,
-                }}
-              >
-                {fontDownloadBusy ? '字体下载处理中，请稍候' : '字体'}
-              </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                {FONTS.map(f => {
-                  // 旧版本若保存了已删除的 system/lxgwlite，目录解析会回退宋体，
-                  // 这里也用同一解析结果，避免界面出现“没有任何字体被选中”。
-                  const on = getFontDef(settings.fontKey).key === f.key;
-                  const remote = f.kind === 'remote';
-                  const busy = remote && isFontLoading(f.key);
-                  const needDl = remote && !isFontReady(f.key) && !busy;
-                  return (
-                    <Pressable
-                      key={f.key}
-                      disabled={fontDownloadBusy}
-                      accessibilityState={{
-                        disabled: fontDownloadBusy,
-                        busy,
-                      }}
-                      onPress={async () => {
-                        // disabled 状态更新前仍可能发生同一帧连点，管理器同步锁再兜底。
-                        if (isAnyFontLoading()) return;
-                        if (!remote || isFontReady(f.key)) {
-                          setReaderFont(f.key);
-                          return;
-                        }
-                        try {
-                          // 待下载字体只有在文件下载并完成原生注册后才写入设置；
-                          // 失败时继续保留当前字体，避免渲染不存在的 family。
-                          await ensureFont(f);
-                          if (!isFontReady(f.key)) {
-                            throw new Error('字体注册未完成');
-                          }
-                          setReaderFont(f.key);
-                        } catch (error) {
-                          console.warn('[ReaderScreen] font download failed', {
-                            key: f.key,
-                            error:
-                              error instanceof Error
-                                ? error.message
-                                : String(error),
-                          });
-                          Alert.alert(
-                            '字体下载失败',
-                            '请检查网络后重试，当前阅读字体不会改变。',
-                          );
-                        }
-                      }}
-                      style={[
-                        styles.fontBtn,
-                        {
-                          backgroundColor: on ? NOVEL_ACCENT : 'transparent',
-                          borderColor: on ? NOVEL_ACCENT : display.chrome.hair,
-                          opacity: fontDownloadBusy && !busy ? 0.42 : 1,
-                        },
-                      ]}
-                    >
-                      <Text
-                        numberOfLines={1}
-                        style={{
-                          color: on ? '#fff' : display.chrome.sheetInk,
-                          fontSize: 12,
-                          // 已可用的选项直接用自身字体展示名称，切换结果更直观。
-                          fontFamily: fontFamilyFor(f),
-                        }}
-                      >
-                        {f.label}
-                        {needDl ? ' ↓' : ''}
-                      </Text>
-                      {busy && (
-                        <ActivityIndicator
-                          size="small"
-                          color={on ? '#fff' : NOVEL_ACCENT}
-                        />
-                      )}
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={styles.quickThemeSection}>
-              <View style={styles.quickThemeHeader}>
-                <View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="减小字号"
+                  accessibilityState={{ disabled: !canDecreaseFont }}
+                  disabled={!canDecreaseFont}
+                  onPress={decFont}
+                  style={[
+                    styles.fontBtn,
+                    { borderColor: display.chrome.hair },
+                    !canDecreaseFont && styles.fontBtnDisabled,
+                  ]}
+                >
                   <Text
-                    style={{ color: display.chrome.sheetSub, fontSize: 12 }}
+                    style={{ color: display.chrome.sheetInk, fontSize: 15 }}
                   >
-                    常用背景
+                    A−
                   </Text>
+                </Pressable>
+                <View style={{ width: 30, alignItems: 'center' }}>
                   <Text
-                    style={{ color: display.chrome.sheetSub, fontSize: 10 }}
+                    style={{
+                      color: display.chrome.sheetInk,
+                      fontSize: 15,
+                      fontFamily: SERIF_FONT,
+                    }}
                   >
-                    点击立即生效
+                    {display.fontSize}
                   </Text>
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="打开全部阅读背景"
-                  onPress={openBackgroundStudio}
-                  style={styles.quickThemeMore}
+                  accessibilityLabel="增大字号"
+                  accessibilityState={{ disabled: !canIncreaseFont }}
+                  disabled={!canIncreaseFont}
+                  onPress={incFont}
+                  style={[
+                    styles.fontBtn,
+                    { borderColor: display.chrome.hair },
+                    !canIncreaseFont && styles.fontBtnDisabled,
+                  ]}
                 >
-                  <Text style={{ color: NOVEL_ACCENT, fontSize: 12 }}>
-                    更多背景
+                  <Text
+                    style={{ color: display.chrome.sheetInk, fontSize: 19 }}
+                  >
+                    A+
                   </Text>
-                  <Icon name="chevron-right" size={16} color={NOVEL_ACCENT} />
                 </Pressable>
               </View>
-              <View style={styles.quickThemeRow}>
-                {QUICK_THEME_ORDER.map(key => {
-                  const theme = READER_THEMES[key];
-                  const selected = settings.theme === key;
-                  const artwork =
-                    READER_BACKGROUND_DECORATION[key] ||
-                    READER_BACKGROUND_ARTWORK[key];
-                  return (
-                    <Pressable
-                      key={key}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      accessibilityLabel={`快捷阅读背景 ${theme.label}`}
-                      onPress={() => setReaderTheme(key)}
-                      style={[
-                        styles.quickThemeItem,
-                        {
-                          borderColor: selected
-                            ? NOVEL_ACCENT
-                            : display.chrome.hair,
-                          backgroundColor: selected
-                            ? `${NOVEL_ACCENT}12`
-                            : 'transparent',
-                        },
-                      ]}
-                    >
-                      <View
+
+              <View style={{ marginBottom: 18 }}>
+                <Text
+                  style={{
+                    color: display.chrome.sheetSub,
+                    fontSize: 12,
+                    marginBottom: 7,
+                  }}
+                >
+                  行间距
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {LINE_LABELS.map((label, i) => {
+                    const on = settings.lineHeightIndex === i;
+                    return (
+                      <Pressable
+                        key={label}
+                        accessibilityRole="button"
+                        accessibilityLabel={`行间距 ${label}`}
+                        accessibilityState={{ selected: on }}
+                        onPress={() => setLineHeightIndex(i)}
                         style={[
-                          styles.quickThemePreview,
-                          { backgroundColor: theme.bg },
+                          styles.optBtn,
+                          {
+                            backgroundColor: on ? NOVEL_ACCENT : 'transparent',
+                            borderColor: on
+                              ? NOVEL_ACCENT
+                              : display.chrome.hair,
+                          },
                         ]}
                       >
-                        {artwork && (
-                          <Image
-                            source={artwork}
-                            resizeMode="stretch"
-                            style={StyleSheet.absoluteFill}
+                        <Text
+                          style={{
+                            color: on ? '#fff' : display.chrome.sheetInk,
+                            fontSize: 12,
+                          }}
+                        >
+                          {label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={{ marginBottom: 18 }}>
+                <Text
+                  style={{
+                    color: display.chrome.sheetSub,
+                    fontSize: 12,
+                    marginBottom: 7,
+                  }}
+                >
+                  {fontDownloadBusy ? '字体下载处理中，请稍候' : '字体'}
+                </Text>
+                <View
+                  style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}
+                >
+                  {FONTS.map(f => {
+                    // 旧版本若保存了已删除的 system/lxgwlite，目录解析会回退宋体，
+                    // 这里也用同一解析结果，避免界面出现“没有任何字体被选中”。
+                    const on = getFontDef(settings.fontKey).key === f.key;
+                    const remote = f.kind === 'remote';
+                    const busy = remote && isFontLoading(f.key);
+                    const needDl = remote && !isFontReady(f.key) && !busy;
+                    return (
+                      <Pressable
+                        key={f.key}
+                        disabled={fontDownloadBusy}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${f.label}${
+                          needDl ? '，需要下载' : ''
+                        }`}
+                        accessibilityState={{
+                          disabled: fontDownloadBusy,
+                          busy,
+                          selected: on,
+                        }}
+                        onPress={async () => {
+                          // disabled 状态更新前仍可能发生同一帧连点，管理器同步锁再兜底。
+                          if (isAnyFontLoading()) return;
+                          if (!remote || isFontReady(f.key)) {
+                            setReaderFont(f.key);
+                            return;
+                          }
+                          try {
+                            // 待下载字体只有在文件下载并完成原生注册后才写入设置；
+                            // 失败时继续保留当前字体，避免渲染不存在的 family。
+                            await ensureFont(f);
+                            if (!isFontReady(f.key)) {
+                              throw new Error('字体注册未完成');
+                            }
+                            setReaderFont(f.key);
+                          } catch (error) {
+                            console.warn(
+                              '[ReaderScreen] font download failed',
+                              {
+                                key: f.key,
+                                error:
+                                  error instanceof Error
+                                    ? error.message
+                                    : String(error),
+                              },
+                            );
+                            Alert.alert(
+                              '字体下载失败',
+                              '请检查网络后重试，当前阅读字体不会改变。',
+                            );
+                          }
+                        }}
+                        style={[
+                          styles.fontBtn,
+                          {
+                            backgroundColor: on ? NOVEL_ACCENT : 'transparent',
+                            borderColor: on
+                              ? NOVEL_ACCENT
+                              : display.chrome.hair,
+                            opacity: fontDownloadBusy && !busy ? 0.42 : 1,
+                          },
+                        ]}
+                      >
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            color: on ? '#fff' : display.chrome.sheetInk,
+                            fontSize: 12,
+                            // 已可用的选项直接用自身字体展示名称，切换结果更直观。
+                            fontFamily: fontFamilyFor(f),
+                          }}
+                        >
+                          {f.label}
+                          {needDl ? ' ↓' : ''}
+                        </Text>
+                        {busy && (
+                          <ActivityIndicator
+                            size="small"
+                            color={on ? '#fff' : NOVEL_ACCENT}
                           />
                         )}
-                        {selected && (
-                          <View style={styles.quickThemeCheck}>
-                            <Icon name="check" size={10} color="#fff" />
-                          </View>
-                        )}
-                      </View>
-                      <Text
-                        numberOfLines={1}
-                        style={{
-                          color: selected
-                            ? NOVEL_ACCENT
-                            : display.chrome.sheetInk,
-                          fontSize: 10.5,
-                        }}
-                      >
-                        {theme.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
-            </View>
 
-            <View>
-              <Text
-                style={{
-                  color: display.chrome.sheetSub,
-                  fontSize: 12,
-                  marginBottom: 7,
-                }}
-              >
-                翻页方式
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                {[
-                  { key: 'scroll', label: '上下滚动' },
-                  { key: 'page', label: '左右翻页' },
-                ].map(o => {
-                  const on = settings.pageMode === o.key;
-                  return (
-                    <Pressable
-                      key={o.key}
-                      onPress={() => setPageMode(o.key as 'scroll' | 'page')}
-                      style={[
-                        styles.optBtn,
-                        {
-                          backgroundColor: on ? NOVEL_ACCENT : 'transparent',
-                          borderColor: on ? NOVEL_ACCENT : display.chrome.hair,
-                        },
-                      ]}
+              <View style={styles.quickThemeSection}>
+                <View style={styles.quickThemeHeader}>
+                  <View>
+                    <Text
+                      style={{ color: display.chrome.sheetSub, fontSize: 12 }}
                     >
-                      <Text
-                        style={{
-                          color: on ? '#fff' : display.chrome.sheetInk,
-                          fontSize: 12,
-                        }}
+                      常用背景
+                    </Text>
+                    <Text
+                      style={{ color: display.chrome.sheetSub, fontSize: 10 }}
+                    >
+                      点击立即生效
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="打开全部阅读背景"
+                    onPress={openBackgroundStudio}
+                    style={styles.quickThemeMore}
+                  >
+                    <Text style={{ color: NOVEL_ACCENT, fontSize: 12 }}>
+                      更多背景
+                    </Text>
+                    <Icon name="chevron-right" size={16} color={NOVEL_ACCENT} />
+                  </Pressable>
+                </View>
+                <View style={styles.quickThemeRow}>
+                  {QUICK_THEME_ORDER.map(key => {
+                    const theme = READER_THEMES[key];
+                    const selected = settings.theme === key;
+                    const artwork =
+                      READER_BACKGROUND_DECORATION[key] ||
+                      READER_BACKGROUND_ARTWORK[key];
+                    return (
+                      <Pressable
+                        key={key}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        accessibilityLabel={`快捷阅读背景 ${theme.label}`}
+                        onPress={() => setReaderTheme(key)}
+                        style={[
+                          styles.quickThemeItem,
+                          {
+                            borderColor: selected
+                              ? NOVEL_ACCENT
+                              : display.chrome.hair,
+                            backgroundColor: selected
+                              ? `${NOVEL_ACCENT}12`
+                              : 'transparent',
+                          },
+                        ]}
                       >
-                        {o.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+                        <View
+                          style={[
+                            styles.quickThemePreview,
+                            { backgroundColor: theme.bg },
+                          ]}
+                        >
+                          {artwork && (
+                            <Image
+                              source={artwork}
+                              resizeMode="stretch"
+                              style={StyleSheet.absoluteFill}
+                            />
+                          )}
+                          {selected && (
+                            <View style={styles.quickThemeCheck}>
+                              <Icon name="check" size={10} color="#fff" />
+                            </View>
+                          )}
+                        </View>
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            color: selected
+                              ? NOVEL_ACCENT
+                              : display.chrome.sheetInk,
+                            fontSize: 10.5,
+                          }}
+                        >
+                          {theme.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
-            </View>
+
+              <View>
+                <Text
+                  style={{
+                    color: display.chrome.sheetSub,
+                    fontSize: 12,
+                    marginBottom: 7,
+                  }}
+                >
+                  翻页方式
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {[
+                    { key: 'scroll', label: '上下滚动' },
+                    { key: 'page', label: '左右翻页' },
+                  ].map(o => {
+                    const on = settings.pageMode === o.key;
+                    return (
+                      <Pressable
+                        key={o.key}
+                        accessibilityRole="button"
+                        accessibilityLabel={`翻页方式 ${o.label}`}
+                        accessibilityState={{ selected: on }}
+                        onPress={() => setPageMode(o.key as 'scroll' | 'page')}
+                        style={[
+                          styles.optBtn,
+                          {
+                            backgroundColor: on ? NOVEL_ACCENT : 'transparent',
+                            borderColor: on
+                              ? NOVEL_ACCENT
+                              : display.chrome.hair,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            color: on ? '#fff' : display.chrome.sheetInk,
+                            fontSize: 12,
+                          }}
+                        >
+                          {o.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            </ScrollView>
           </Animated.View>
         </>
       )}
@@ -3479,8 +3734,10 @@ export default function ReaderScreen() {
             ]}
           >
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="关闭章节目录"
               style={StyleSheet.absoluteFill}
-              onPress={() => setDrawerOpen(false)}
+              onPress={closeDrawerAndStartReading}
             />
           </Animated.View>
           <Animated.View
@@ -3528,9 +3785,20 @@ export default function ReaderScreen() {
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                 {(['toc', 'search', 'notes', 'marks'] as const).map(tab => {
                   const active = drawerTab === tab;
+                  const tabLabel =
+                    tab === 'toc'
+                      ? '目录'
+                      : tab === 'search'
+                      ? '全文'
+                      : tab === 'notes'
+                      ? '摘抄'
+                      : '书签';
                   return (
                     <Pressable
                       key={tab}
+                      accessibilityRole="tab"
+                      accessibilityLabel={tabLabel}
+                      accessibilityState={{ selected: active }}
                       onPress={() => setDrawerTab(tab)}
                       style={{
                         paddingVertical: 5,
@@ -3548,13 +3816,7 @@ export default function ReaderScreen() {
                           fontWeight: active ? '600' : '400',
                         }}
                       >
-                        {tab === 'toc'
-                          ? '目录'
-                          : tab === 'search'
-                          ? '全文'
-                          : tab === 'notes'
-                          ? '摘抄'
-                          : '书签'}
+                        {tabLabel}
                       </Text>
                     </Pressable>
                   );
@@ -3574,6 +3836,9 @@ export default function ReaderScreen() {
                       color={display.chrome.sheetSub}
                     />
                     <TextInput
+                      accessibilityLabel={
+                        drawerTab === 'toc' ? '搜索章节' : '搜索正文关键词'
+                      }
                       value={
                         drawerTab === 'toc' ? drawerQuery : textSearchInput
                       }
@@ -3598,6 +3863,10 @@ export default function ReaderScreen() {
                   </View>
                   {drawerTab === 'toc' ? (
                     <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`切换为${
+                        drawerOrder === 'asc' ? '倒序' : '正序'
+                      }章节列表`}
                       onPress={() =>
                         setDrawerOrder(o => (o === 'asc' ? 'desc' : 'asc'))
                       }
@@ -3657,6 +3926,11 @@ export default function ReaderScreen() {
                     .map(({ bm, idx }) => (
                       <Pressable
                         key={bm.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`跳转到${
+                          chapters[idx]?.title || `第 ${idx + 1} 章`
+                        }的书签`}
+                        accessibilityHint="长按可删除书签"
                         onPress={() =>
                           jumpToBookmark(bm.chapterId, bm.position)
                         }
@@ -3740,6 +4014,9 @@ export default function ReaderScreen() {
                     .map(({ item, idx }) => (
                       <Pressable
                         key={item.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`跳转到摘抄：${item.excerpt}`}
+                        accessibilityHint="长按可删除摘抄"
                         onPress={() =>
                           jumpToBookmark(item.chapterId, item.position)
                         }
@@ -3828,6 +4105,11 @@ export default function ReaderScreen() {
                 }}
                 renderItem={({ item }) => (
                   <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`跳转到${displayChapterTitle(
+                      chapters[item.chapterIndex],
+                      item.chapterIndex,
+                    )}中的搜索结果`}
                     onPress={() =>
                       jumpToBookmark(item.chapterId, item.position)
                     }
@@ -3959,7 +4241,16 @@ export default function ReaderScreen() {
                   return (
                     <Pressable
                       disabled={drawerPositioning}
-                      accessibilityState={{ disabled: drawerPositioning }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`第 ${
+                        idx + 1
+                      } 章 ${displayChapterTitle(c, idx)}${
+                        isCached ? '，已缓存' : ''
+                      }`}
+                      accessibilityState={{
+                        disabled: drawerPositioning,
+                        selected: isCur,
+                      }}
                       onPress={() => goToChapter(idx)}
                       style={[
                         styles.chapterRow,
@@ -4011,8 +4302,7 @@ export default function ReaderScreen() {
                   );
                 }}
                 ListFooterComponent={
-                  <Pressable
-                    disabled
+                  <View
                     style={[
                       styles.drawerFooterBtn,
                       { borderColor: display.chrome.hair },
@@ -4023,7 +4313,7 @@ export default function ReaderScreen() {
                     >
                       已显示全部章节
                     </Text>
-                  </Pressable>
+                  </View>
                 }
               />
             )}
@@ -4046,7 +4336,12 @@ function ReaderAction({
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={styles.actionItem}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={styles.actionItem}
+    >
       <Icon name={icon} size={21} color={color} />
       <Text style={{ color, fontSize: 11, marginTop: 5 }}>{label}</Text>
     </Pressable>
@@ -4055,6 +4350,29 @@ function ReaderAction({
 
 const styles = StyleSheet.create({
   container: { flex: 1, overflow: 'hidden' },
+  missingBook: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 36,
+  },
+  missingBookButton: {
+    alignItems: 'center',
+    borderRadius: 8,
+    justifyContent: 'center',
+    marginTop: 20,
+    minHeight: 46,
+    paddingHorizontal: 24,
+  },
+  missingBookButtonText: { color: '#fff', fontWeight: '600' },
+  missingBookMessage: {
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 8,
+    maxWidth: 300,
+    textAlign: 'center',
+  },
+  missingBookTitle: { fontSize: 18, fontWeight: '600', marginTop: 14 },
   pagePanel: {
     paddingHorizontal: PAGE_HORIZONTAL_PADDING,
   },
@@ -4095,7 +4413,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
   },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 8 },
+  retryBtn: {
+    alignItems: 'center',
+    borderRadius: 8,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 22,
+  },
   progressHint: {
     position: 'absolute',
     bottom: 10,
@@ -4192,7 +4516,13 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     zIndex: 2,
   },
-  chapterNav: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  chapterNav: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chapterNavButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 56,
+  },
   sliderTrack: { flex: 1, height: 4, borderRadius: 2, position: 'relative' },
   sliderFill: {
     position: 'absolute',
@@ -4214,7 +4544,12 @@ const styles = StyleSheet.create({
     transform: [{ translateX: -7 }, { translateY: -7 }],
   },
   actionRow: { flexDirection: 'row', marginTop: 14 },
-  actionItem: { flex: 1, alignItems: 'center' },
+  actionItem: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+  },
   overlay: {
     position: 'absolute',
     top: 0,
@@ -4316,8 +4651,10 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     padding: 20,
     paddingTop: 8,
+    maxHeight: '86%',
     zIndex: 4,
   },
+  sheetContent: { paddingTop: 4 },
   backgroundSheet: {
     position: 'absolute',
     left: 0,
@@ -4351,7 +4688,7 @@ const styles = StyleSheet.create({
   },
   optBtn: {
     flex: 1,
-    height: 36,
+    minHeight: 44,
     borderWidth: 1,
     borderRadius: 7,
     alignItems: 'center',
@@ -4360,7 +4697,7 @@ const styles = StyleSheet.create({
   // 字体卡片：按标签宽度自适应（不 flex 拉伸），配合容器 flexWrap 自然换多行，
   // 让“霞鹜文楷 Lite”等长标签单行显示。
   fontBtn: {
-    height: 34,
+    minHeight: 44,
     paddingHorizontal: 14,
     borderWidth: 1,
     borderRadius: 7,
@@ -4369,6 +4706,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  fontBtnDisabled: { opacity: 0.38 },
   quickThemeSection: {
     marginBottom: 18,
     gap: 9,

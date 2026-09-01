@@ -20,7 +20,7 @@ export interface Theme {
     gold: string;
     /** terracotta — "有更新" badges, new-chapter markers */
     danger: string;
-    /** slate — "完结" badges */
+    /** slate — muted reading-state badges */
     badgeMuted: string;
     /** translucent tab/toolbar chrome background */
     tabBar: string;

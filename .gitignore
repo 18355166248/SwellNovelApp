@@ -82,5 +82,8 @@ android/build-*.log
 # 部署包内的构建产物（由 web 构建生成，不入库）
 /deploy/dist
 
+# 图片压缩上传工具的本机配置与预览历史
+/.xmly-skills
+
 # 设计交接资料（本地参考，不纳入版本库）
 /claude-design

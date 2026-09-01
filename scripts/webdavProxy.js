@@ -1,3 +1,5 @@
+/* eslint-env node */
+
 const https = require('https');
 
 const allowedHosts = () =>
@@ -44,23 +46,32 @@ const webDavProxy = async (req, res) => {
   try {
     payload = await readJson(req);
     const target = new URL(payload.url);
-    if (target.protocol !== 'https:' || !allowedHosts().includes(target.hostname.toLowerCase())) {
+    if (
+      target.protocol !== 'https:' ||
+      !allowedHosts().includes(target.hostname.toLowerCase())
+    ) {
       send(res, 403, 'WebDAV host not allowed');
       return;
     }
     const body = payload.body ? Buffer.from(payload.body, 'base64') : undefined;
-    const upstream = https.request(target, {
-      method: payload.method,
-      headers: payload.headers,
-      timeout: 30000,
-    }, upstreamRes => {
-      if (typeof res.status === 'function') res.status(upstreamRes.statusCode || 502);
-      else res.statusCode = upstreamRes.statusCode || 502;
-      ['content-type', 'content-length', 'last-modified'].forEach(header => {
-        if (upstreamRes.headers[header]) res.set(header, upstreamRes.headers[header]);
-      });
-      upstreamRes.pipe(res);
-    });
+    const upstream = https.request(
+      target,
+      {
+        method: payload.method,
+        headers: payload.headers,
+        timeout: 30000,
+      },
+      upstreamRes => {
+        if (typeof res.status === 'function')
+          res.status(upstreamRes.statusCode || 502);
+        else res.statusCode = upstreamRes.statusCode || 502;
+        ['content-type', 'content-length', 'last-modified'].forEach(header => {
+          if (upstreamRes.headers[header])
+            res.set(header, upstreamRes.headers[header]);
+        });
+        upstreamRes.pipe(res);
+      },
+    );
     upstream.on('timeout', () => upstream.destroy(new Error('WebDAV timeout')));
     upstream.on('error', () => {
       if (!res.headersSent) send(res, 502, 'WebDAV upstream error');

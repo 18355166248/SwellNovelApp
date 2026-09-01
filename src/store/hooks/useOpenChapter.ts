@@ -7,6 +7,12 @@ import { useAtomValue } from 'jotai';
 import { chaptersAtom } from '../atoms';
 import { useSelectBook, useUpdateReadingProgress } from './useBooks';
 import { useSetChapterContent, useSetChapterIndex } from './useReader';
+import { calculateReadingProgress } from '../../utils/readingProgressPercent';
+
+interface OpenChapterOptions {
+  /** 仅为目录抽屉准备上下文时设为 false，避免“查看目录”被记录成实际阅读。 */
+  updateProgress?: boolean;
+}
 
 export const useOpenChapter = () => {
   const chaptersMap = useAtomValue(chaptersAtom);
@@ -15,14 +21,23 @@ export const useOpenChapter = () => {
   const setChapterContent = useSetChapterContent();
   const updateProgress = useUpdateReadingProgress();
 
-  return (bookId: string, chapterIndex: number) => {
+  return (
+    bookId: string,
+    chapterIndex: number,
+    options: OpenChapterOptions = {},
+  ) => {
     const chapters = chaptersMap[bookId] || [];
     const chapter = chapters[chapterIndex];
     selectBook(bookId);
     setChapterIndex(chapterIndex);
     setChapterContent(chapter?.content || '');
-    if (chapter && chapters.length > 0) {
-      const progress = Math.round(((chapterIndex + 1) / chapters.length) * 100);
+    if (chapter && chapters.length > 0 && options.updateProgress !== false) {
+      // 打开章节只代表到达章首，不能把整章都算作已读；尤其末章不能在进入时就记为 100%。
+      const progress = calculateReadingProgress({
+        chapterIndex,
+        totalChapters: chapters.length,
+        chapterFraction: 0,
+      });
       // 只更新书籍进度/当前章，不写 readingHistory.position——页内偏移由阅读器
       // 按实际翻页落盘，这里传 0 会把续读位置清成章首。
       updateProgress(bookId, progress, chapter.id);

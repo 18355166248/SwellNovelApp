@@ -40,10 +40,15 @@ export default function DiscoverScreen() {
     'loading' | 'done' | 'empty'
   >('loading');
   const [addingUrl, setAddingUrl] = React.useState<string | null>(null);
+  const [showAllRecommendations, setShowAllRecommendations] =
+    React.useState(false);
+  const [recommendationOffset, setRecommendationOffset] = React.useState(0);
   const recommendationsRef = React.useRef<SourceRecommendation[]>([]);
 
   const loadRecommendations = React.useCallback(async () => {
     setRecommendState('loading');
+    setShowAllRecommendations(false);
+    setRecommendationOffset(0);
     const items = await fetchSourceRecommendations();
     // 刷新失败时保留已展示的缓存，不把“发现”页回退为空白状态。
     if (!items.length && recommendationsRef.current.length) {
@@ -104,15 +109,47 @@ export default function DiscoverScreen() {
   );
 
   const ranks = allBooks
-    .filter(book => book.lastReadAt)
+    .filter(book => book.lastReadAt && book.progress < 100)
     .sort((a, b) => (b.lastReadAt || 0) - (a.lastReadAt || 0))
-    .slice(0, 6);
+    .slice(0, 3);
   const updates = allBooks.filter(book => (book.unreadUpdates || 0) > 0);
   const recentlyAdded = [...allBooks]
     .sort((a, b) => b.addedAt - a.addedAt)
     .slice(0, 6);
+  // “最近加入”是补充发现入口，避免把上方已经出现的在读/追更书目再次重复展示。
+  const surfacedBookIds = new Set([
+    ...ranks.map(book => book.id),
+    ...updates.map(book => book.id),
+  ]);
+  const uniqueRecentlyAdded = recentlyAdded.filter(
+    book => !surfacedBookIds.has(book.id),
+  );
+  const visibleRecommendations = React.useMemo(() => {
+    if (showAllRecommendations || recommendations.length <= 5) {
+      return recommendations;
+    }
+    // “换一批”只在已获取的数据中轮换，避免每次点击都重新抓同一组书源首页。
+    const rotated = [
+      ...recommendations.slice(recommendationOffset),
+      ...recommendations.slice(0, recommendationOffset),
+    ];
+    return rotated.slice(0, 5);
+  }, [recommendationOffset, recommendations, showAllRecommendations]);
+  const recommendationSources = Array.from(
+    new Set(recommendations.map(item => item.sourceName)),
+  ).join('、');
   const openDetail = (bookId: string) =>
     navigation.navigate('BookDetail', { bookId });
+  const continueReading = (bookId: string) =>
+    navigation.navigate('Reader', { bookId });
+  const showNextRecommendations = () => {
+    if (recommendations.length <= 5) {
+      loadRecommendations();
+      return;
+    }
+    setShowAllRecommendations(false);
+    setRecommendationOffset(offset => (offset + 5) % recommendations.length);
+  };
 
   return (
     <ScrollView
@@ -125,106 +162,16 @@ export default function DiscoverScreen() {
           <Text style={[styles.title, { color: theme.colors.text }]}>发现</Text>
           <Text variant="caption" color="textSecondary" style={styles.subtitle}>
             {allBooks.length > 0
-              ? `书库共 ${allBooks.length} 本 · 最近在读`
-              : '导入本地 TXT，开始你的书架'}
+              ? `书库共 ${allBooks.length} 本 · 继续阅读与发现新书`
+              : '从书源推荐挑一本开始阅读'}
           </Text>
         </View>
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.recommendHeading}>
-          <View>
-            <Text
-              style={[
-                styles.sectionTitle,
-                { color: theme.colors.text, marginBottom: 2 },
-              ]}
-            >
-              书源推荐
-            </Text>
-            <Text variant="caption" color="textSecondary">
-              来自 TXT图书下载网、明智屋中文网
-            </Text>
-          </View>
-          <Pressable
-            onPress={loadRecommendations}
-            accessibilityLabel="刷新书源推荐"
-          >
-            <Icon name="refresh" size={18} color={theme.colors.accent} />
-          </Pressable>
-        </View>
-        {recommendState === 'loading' && (
-          <View style={styles.recommendLoading}>
-            <ActivityIndicator size="small" color={theme.colors.accent} />
-            <Text variant="caption" color="textSecondary">
-              正在获取推荐书目…
-            </Text>
-          </View>
-        )}
-        {recommendState === 'empty' && (
-          <Text variant="caption" color="textSecondary">
-            暂时无法获取推荐，可稍后刷新
-          </Text>
-        )}
-        {recommendations.length > 0 && (
-          <View
-            style={[
-              styles.rankList,
-              { backgroundColor: theme.colors.surface },
-              theme.shadows.sm,
-            ]}
-          >
-            {recommendations.map((item, index) => {
-              const existing = allBooks.find(book => isSameOnlineBook(book, item.url));
-              return (
-                <Pressable
-                  key={item.url}
-                  onPress={() => addRecommendation(item)}
-                  style={[
-                    styles.rankRow,
-                    {
-                      borderBottomColor:
-                        index === recommendations.length - 1
-                          ? 'transparent'
-                          : theme.colors.border,
-                    },
-                  ]}
-                >
-                  <Icon
-                    name={existing ? 'menu-book' : 'add-circle-outline'}
-                    size={19}
-                    color={theme.colors.accent}
-                  />
-                  <View style={styles.rankInfo}>
-                    <Text
-                      style={[styles.rankTitle, { color: theme.colors.text }]}
-                      numberOfLines={1}
-                    >
-                      {item.title}
-                    </Text>
-                    <Text variant="caption" color="textSecondary">
-                      {item.author ? `${item.author} · ` : ''}
-                      {item.sourceName}
-                    </Text>
-                  </View>
-                  <Text variant="caption" color="textSecondary">
-                    {addingUrl === item.url
-                      ? '加入中…'
-                      : existing
-                      ? '已在书架'
-                      : '加入'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
       </View>
 
       {ranks.length > 0 && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            最近在读
+            继续阅读
           </Text>
           <View
             style={[
@@ -236,8 +183,10 @@ export default function DiscoverScreen() {
             {ranks.map((item, index) => (
               <Pressable
                 key={item.id}
-                onPress={() => openDetail(item.id)}
-                style={[
+                accessibilityRole="button"
+                accessibilityLabel={`继续阅读《${item.title}》，已读 ${item.progress}%`}
+                onPress={() => continueReading(item.id)}
+                style={({ pressed }) => [
                   styles.rankRow,
                   {
                     borderBottomColor:
@@ -245,19 +194,10 @@ export default function DiscoverScreen() {
                         ? 'transparent'
                         : theme.colors.border,
                   },
+                  pressed && styles.rowPressed,
                 ]}
               >
-                <Text
-                  style={[
-                    styles.rankNo,
-                    {
-                      color:
-                        index === 0 ? theme.colors.danger : theme.colors.accent,
-                    },
-                  ]}
-                >
-                  {index + 1}
-                </Text>
+                <Icon name="menu-book" size={19} color={theme.colors.accent} />
                 <View style={styles.rankInfo}>
                   <Text
                     style={[styles.rankTitle, { color: theme.colors.text }]}
@@ -280,6 +220,181 @@ export default function DiscoverScreen() {
         </View>
       )}
 
+      <View style={styles.section}>
+        <View style={styles.recommendHeading}>
+          <View>
+            <Text
+              style={[
+                styles.sectionTitle,
+                { color: theme.colors.text, marginBottom: 2 },
+              ]}
+            >
+              书源推荐
+            </Text>
+            <Text variant="caption" color="textSecondary">
+              {recommendationSources
+                ? `来自 ${recommendationSources}`
+                : '来自已接入书源'}
+            </Text>
+          </View>
+          <Pressable
+            onPress={showNextRecommendations}
+            disabled={recommendState === 'loading'}
+            accessibilityRole="button"
+            accessibilityLabel={
+              recommendations.length > 5 ? '换一批书源推荐' : '刷新书源推荐'
+            }
+            accessibilityState={{
+              disabled: recommendState === 'loading',
+              busy: recommendState === 'loading',
+            }}
+            style={({ pressed }) => [
+              styles.refreshButton,
+              pressed && styles.rowPressed,
+            ]}
+          >
+            <Icon name="refresh" size={18} color={theme.colors.accent} />
+          </Pressable>
+        </View>
+        {recommendState === 'loading' && (
+          <View
+            accessibilityLiveRegion="polite"
+            accessibilityLabel="正在获取推荐书目"
+            style={styles.recommendLoading}
+          >
+            <ActivityIndicator size="small" color={theme.colors.accent} />
+            <Text variant="caption" color="textSecondary">
+              正在获取推荐书目…
+            </Text>
+          </View>
+        )}
+        {recommendState === 'empty' && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="重新获取书源推荐"
+            onPress={loadRecommendations}
+            style={({ pressed }) => [
+              styles.emptyRetry,
+              { borderColor: theme.colors.border },
+              pressed && styles.rowPressed,
+            ]}
+          >
+            <Text variant="caption" color="textSecondary">
+              暂时无法获取推荐
+            </Text>
+            <Text style={{ color: theme.colors.accent, fontSize: 12.5 }}>
+              重新获取
+            </Text>
+          </Pressable>
+        )}
+        {recommendations.length > 0 && (
+          <View
+            style={[
+              styles.rankList,
+              { backgroundColor: theme.colors.surface },
+              theme.shadows.sm,
+            ]}
+          >
+            {visibleRecommendations.map((item, index) => {
+              const existing = allBooks.find(book =>
+                isSameOnlineBook(book, item.url),
+              );
+              const disabled = !existing && !!addingUrl;
+              return (
+                <Pressable
+                  key={item.url}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    existing
+                      ? `打开《${item.title}》详情`
+                      : `加入《${item.title}》到书架`
+                  }
+                  accessibilityState={{
+                    disabled,
+                    busy: addingUrl === item.url,
+                  }}
+                  disabled={disabled}
+                  onPress={() => addRecommendation(item)}
+                  style={({ pressed }) => [
+                    styles.rankRow,
+                    {
+                      borderBottomColor:
+                        index === visibleRecommendations.length - 1
+                          ? 'transparent'
+                          : theme.colors.border,
+                    },
+                    pressed && styles.rowPressed,
+                    disabled && styles.rowDisabled,
+                  ]}
+                >
+                  <Icon
+                    name={existing ? 'menu-book' : 'add-circle-outline'}
+                    size={19}
+                    color={theme.colors.accent}
+                  />
+                  <View style={styles.rankInfo}>
+                    <Text
+                      style={[styles.rankTitle, { color: theme.colors.text }]}
+                      numberOfLines={1}
+                    >
+                      {item.title}
+                    </Text>
+                    <Text variant="caption" color="textSecondary">
+                      {item.author ? `${item.author} · ` : ''}
+                      {item.sourceName}
+                    </Text>
+                  </View>
+                  <Text
+                    variant="caption"
+                    style={[
+                      styles.recommendAction,
+                      {
+                        color: existing
+                          ? theme.colors.textSecondary
+                          : theme.colors.accent,
+                      },
+                    ]}
+                  >
+                    {addingUrl === item.url
+                      ? '加入中…'
+                      : existing
+                      ? '已在书架'
+                      : '加入'}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+        {recommendations.length > 5 && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              showAllRecommendations
+                ? '收起书源推荐'
+                : `查看全部 ${recommendations.length} 本书源推荐`
+            }
+            accessibilityState={{ expanded: showAllRecommendations }}
+            onPress={() => setShowAllRecommendations(value => !value)}
+            style={({ pressed }) => [
+              styles.recommendMore,
+              pressed && styles.rowPressed,
+            ]}
+          >
+            <Text style={{ color: theme.colors.accent, fontSize: 12.5 }}>
+              {showAllRecommendations
+                ? '收起推荐'
+                : `查看全部 ${recommendations.length} 本`}
+            </Text>
+            <Icon
+              name={showAllRecommendations ? 'expand-less' : 'expand-more'}
+              size={18}
+              color={theme.colors.accent}
+            />
+          </Pressable>
+        )}
+      </View>
+
       {updates.length > 0 && (
         <DiscoverList
           title="追更更新"
@@ -290,10 +405,10 @@ export default function DiscoverScreen() {
         />
       )}
 
-      {recentlyAdded.length > 0 && (
+      {uniqueRecentlyAdded.length > 0 && (
         <DiscoverList
           title="最近加入"
-          books={recentlyAdded}
+          books={uniqueRecentlyAdded}
           theme={theme}
           onOpen={openDetail}
           detail={book =>
@@ -333,8 +448,10 @@ function DiscoverList({
         {books.map((book, index) => (
           <Pressable
             key={book.id}
+            accessibilityRole="button"
+            accessibilityLabel={`打开《${book.title}》，${detail(book)}`}
             onPress={() => onOpen(book.id)}
-            style={[
+            style={({ pressed }) => [
               styles.rankRow,
               {
                 borderBottomColor:
@@ -342,6 +459,7 @@ function DiscoverList({
                     ? 'transparent'
                     : theme.colors.border,
               },
+              pressed && styles.rowPressed,
             ]}
           >
             <View
@@ -396,10 +514,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   subtitle: { marginTop: 3 },
-  iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
+  refreshButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -416,6 +534,15 @@ const styles = StyleSheet.create({
     gap: 8,
     minHeight: 42,
   },
+  emptyRetry: {
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 48,
+    paddingHorizontal: 14,
+  },
   sectionTitle: {
     fontSize: 13,
     marginBottom: 12,
@@ -430,12 +557,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 12,
   },
-  rankNo: {
-    width: 16,
-    fontFamily: SERIF_FONT,
-    fontSize: 15,
-    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
-  },
+  rowPressed: { opacity: 0.72 },
+  rowDisabled: { opacity: 0.55 },
   updateDot: { borderRadius: 4, height: 8, width: 8 },
   rankInfo: { flex: 1 },
   rankTitle: {
@@ -443,5 +566,19 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginBottom: 3,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
+  },
+  recommendAction: {
+    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
+    minWidth: 52,
+    textAlign: 'right',
+  },
+  recommendMore: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: 3,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 14,
   },
 });

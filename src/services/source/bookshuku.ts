@@ -34,6 +34,7 @@ import {
   isBlockedText,
 } from './contentGuards';
 import { devInfo } from '../../utils/devLog';
+import { sanitizeBookDescription } from '../../utils/bookDescription';
 import { stripContentNoise } from './contentNoise';
 
 const HOST = 'wap.bookshuku.org';
@@ -847,7 +848,9 @@ export const bookshukuSource: BookSource = {
       title,
       author,
       cover,
-      description: description ? decodeEntities(description) : undefined,
+      description: description
+        ? sanitizeBookDescription(decodeEntities(description))
+        : undefined,
       status,
       catalogUrl: `${ORIGIN}/read/${id}.html`,
     };

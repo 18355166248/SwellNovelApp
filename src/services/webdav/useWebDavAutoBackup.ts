@@ -1,8 +1,8 @@
 /**
  * 前台阅读期间的 WebDAV 自动备份。
  *
- * iOS 不保证应用进入后台后的网络执行时间，因此在阅读器前台按阅读事件上传：
- * 左右翻页每 20 页一次、切章一次；原有 10 分钟检查保留为滚动模式和长章兜底。
+ * iOS 不保证应用进入后台后的网络执行时间，因此在阅读器前台按阅读事件检查：
+ * 左右翻页每 20 页、切章或定时器都会尝试，但只有连续阅读满 10 分钟才真正上传。
  */
 import React from 'react';
 import { AppState } from 'react-native';
@@ -28,7 +28,9 @@ export function useWebDavAutoBackup() {
   const configRef = React.useRef<WebDavConfig | null>(null);
   const readingStartedAtRef = React.useRef(Date.now());
   const uploadingRef = React.useRef(false);
-  const eventTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const lastPositionRef = React.useRef<ReadingPosition | null>(null);
   const pageTurnsRef = React.useRef(0);
 
@@ -42,7 +44,10 @@ export function useWebDavAutoBackup() {
       .then(config => {
         if (active && config) {
           // 旧版本保存的凭据没有该字段时按默认开启迁移；只有用户显式关闭才停用。
-          configRef.current = { ...config, autoBackup: config.autoBackup !== false };
+          configRef.current = {
+            ...config,
+            autoBackup: config.autoBackup !== false,
+          };
         }
       })
       .catch(() => {});
@@ -51,7 +56,7 @@ export function useWebDavAutoBackup() {
     };
   }, []);
 
-  const tryAutoBackup = React.useCallback(async (eventTriggered = false) => {
+  const tryAutoBackup = React.useCallback(async () => {
     const config = configRef.current;
     if (
       !hydrated ||
@@ -62,14 +67,12 @@ export function useWebDavAutoBackup() {
       return;
     }
     const now = Date.now();
-    if (!eventTriggered) {
-      // 定时兜底仍要求本次阅读及上次成功上传都已满 10 分钟；翻页/切章事件不受此限制。
-      const eligibleAt = Math.max(
-        readingStartedAtRef.current,
-        config.lastAutoBackupAt || 0,
-      );
-      if (now - eligibleAt < AUTO_BACKUP_INTERVAL_MS) return;
-    }
+    // 所有触发方式共用同一门槛，确保“阅读满 10 分钟后上传一次”的设置说明与真实流量一致。
+    const eligibleAt = Math.max(
+      readingStartedAtRef.current,
+      config.lastAutoBackupAt || 0,
+    );
+    if (now - eligibleAt < AUTO_BACKUP_INTERVAL_MS) return;
 
     uploadingRef.current = true;
     try {
@@ -93,7 +96,7 @@ export function useWebDavAutoBackup() {
     // 等阅读进度 atom 和本地持久化完成一轮提交，归档时才能拿到刚落定的位置。
     eventTimerRef.current = setTimeout(() => {
       eventTimerRef.current = null;
-      tryAutoBackup(true);
+      tryAutoBackup();
     }, EVENT_BACKUP_DEBOUNCE_MS);
   }, [tryAutoBackup]);
 

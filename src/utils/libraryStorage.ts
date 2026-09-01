@@ -176,7 +176,7 @@ export const saveBookChapters = async (bookId: string, chapters: Chapter[]) => {
 export const deleteBookChapters = async (bookId: string) => {
   const path = bookChaptersPath(bookId);
   if (await RNFS.exists(path)) {
-    await RNFS.unlink(path).catch(() => {});
+    await RNFS.unlink(path);
   }
 };
 
@@ -195,9 +195,14 @@ export const replaceLibraryFromBackup = async (
     ),
   );
   await saveLibraryMeta(meta);
+  // 元数据写入即为提交点；旧书正文只是孤立缓存，清理失败不能把已成功恢复误报为失败。
   await Promise.all(
     (previous?.books ?? [])
       .filter(book => !chapters[book.id])
-      .map(book => deleteBookChapters(book.id)),
+      .map(book =>
+        deleteBookChapters(book.id).catch(error => {
+          console.warn('[LibraryStorage] stale chapter cleanup failed', error);
+        }),
+      ),
   );
 };

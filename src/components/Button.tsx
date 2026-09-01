@@ -19,6 +19,8 @@ interface ButtonProps {
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
   textStyle?: TextStyle;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -30,6 +32,8 @@ export const Button: React.FC<ButtonProps> = ({
   loading = false,
   style,
   textStyle,
+  accessibilityLabel,
+  accessibilityHint,
 }) => {
   const { theme } = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
@@ -40,6 +44,7 @@ export const Button: React.FC<ButtonProps> = ({
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
+      minHeight: 44,
       paddingVertical: theme.spacing.md,
       paddingHorizontal: theme.spacing.lg,
     };
@@ -48,6 +53,7 @@ export const Button: React.FC<ButtonProps> = ({
       baseStyle.paddingVertical = theme.spacing.sm;
       baseStyle.paddingHorizontal = theme.spacing.md;
     } else if (size === 'large') {
+      baseStyle.minHeight = 52;
       baseStyle.paddingVertical = theme.spacing.lg;
       baseStyle.paddingHorizontal = theme.spacing.xl;
     }
@@ -95,16 +101,18 @@ export const Button: React.FC<ButtonProps> = ({
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel || title}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled: disabled || loading, busy: loading }}
       onPress={onPress}
       disabled={disabled || loading}
       // flex、宽度和外边距必须作用在横向布局的直接子节点；放到动画层会在 iOS 弹窗中被压成零宽。
       style={style}
-      android_ripple={{ color: theme.colors.primary }}>
+      android_ripple={{ color: theme.colors.primary }}
+    >
       <Animated.View
-        style={[
-          getButtonStyle(),
-          { transform: [{ scale }] },
-        ]}
+        style={[getButtonStyle(), { transform: [{ scale }] }]}
         onTouchStart={() => {
           if (disabled || loading) return;
           Animated.spring(scale, {
@@ -121,7 +129,8 @@ export const Button: React.FC<ButtonProps> = ({
             friction: 6,
             tension: 120,
           }).start();
-        }}>
+        }}
+      >
         {loading && (
           <ActivityIndicator
             size="small"

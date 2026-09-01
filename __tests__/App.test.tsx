@@ -20,6 +20,10 @@ jest.mock('../src/store/LibraryPersistence', () => ({
   LibraryPersistence: () => null,
 }));
 
+jest.mock('../src/components/LibraryReadyGate', () => ({
+  LibraryReadyGate: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 test('renders correctly', async () => {
   await ReactTestRenderer.act(() => {
     ReactTestRenderer.create(<App />);

@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -16,7 +15,7 @@ import { Icon, Text } from '../components';
 import { useTheme } from '../theme/ThemeContext';
 import { SERIF_FONT } from '../theme/fonts';
 import { RootStackParamList } from '../types/navigation';
-import { useAllBooks, chaptersAtom } from '../store';
+import { useAllBooks, useDeletedBooks, chaptersAtom } from '../store';
 import type { Book, Chapter } from '../store/types/book';
 import {
   clearAllChapterCache,
@@ -24,10 +23,8 @@ import {
   formatCacheBytes,
   summarizeChapterCache,
 } from '../utils/cacheManagement';
-import {
-  loadBookChapters,
-  saveBookChapters,
-} from '../utils/libraryStorage';
+import { loadBookChapters, saveBookChapters } from '../utils/libraryStorage';
+import { confirmAction } from '../utils/confirm';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -40,31 +37,49 @@ export default function CacheManagementScreen() {
   const { theme } = useTheme();
   const navigation = useNavigation<NavigationProp>();
   const books = useAllBooks();
+  const deletedBooks = useDeletedBooks();
   const setChaptersMap = useSetAtom(chaptersAtom);
   const onlineBooks = React.useMemo(
-    () => books.filter(book => !!book.source),
-    [books],
+    () => [...books, ...deletedBooks].filter(book => !!book.source),
+    [books, deletedBooks],
   );
   const [entries, setEntries] = React.useState<CacheEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState('');
+  const [loadFailedCount, setLoadFailedCount] = React.useState(0);
+  const [loadRevision, setLoadRevision] = React.useState(0);
 
   React.useEffect(() => {
     let active = true;
     setLoading(true);
+    setLoadFailedCount(0);
     Promise.all(
-      onlineBooks.map(async book => ({
-        book,
-        chapters: (await loadBookChapters(book.id)) ?? [],
-      })),
+      onlineBooks.map(async book => {
+        try {
+          return {
+            entry: {
+              book,
+              chapters: (await loadBookChapters(book.id)) ?? [],
+            } as CacheEntry,
+            failed: false,
+          };
+        } catch (error) {
+          console.warn('[CacheManagement] load failed', book.id, error);
+          return { entry: null, failed: true };
+        }
+      }),
     )
       .then(loaded => {
-        if (active) setEntries(loaded);
-      })
-      .catch(error => {
-        console.warn('[CacheManagement] load failed', error);
-        if (active) setMessage('部分缓存信息读取失败，请稍后重试');
+        if (!active) return;
+        const failedCount = loaded.filter(item => item.failed).length;
+        setEntries(loaded.flatMap(item => (item.entry ? [item.entry] : [])));
+        setLoadFailedCount(failedCount);
+        setMessage(
+          failedCount > 0
+            ? `${failedCount} 本缓存信息读取失败，其他书籍统计已保留`
+            : '',
+        );
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -72,7 +87,7 @@ export default function CacheManagementScreen() {
     return () => {
       active = false;
     };
-  }, [onlineBooks]);
+  }, [loadRevision, onlineBooks]);
 
   const summaries = React.useMemo(
     () => entries.map(entry => summarizeChapterCache(entry.chapters)),
@@ -93,9 +108,7 @@ export default function CacheManagementScreen() {
     try {
       // 先把每本章节文件安全落盘，再刷新内存和页面统计，避免界面显示已释放但重启后缓存仍回来。
       await Promise.all(
-        changes.map(change =>
-          saveBookChapters(change.bookId, change.chapters),
-        ),
+        changes.map(change => saveBookChapters(change.bookId, change.chapters)),
       );
       const byBook = Object.fromEntries(
         changes.map(change => [change.bookId, change.chapters]),
@@ -145,26 +158,20 @@ export default function CacheManagementScreen() {
   const clearAllForEntry = (entry: CacheEntry) => {
     const summary = summarizeChapterCache(entry.chapters);
     if (summary.bytes <= 0) return;
-    Alert.alert(
+    confirmAction(
       '清空缓存',
       `确定清空《${entry.book.title}》的 ${summary.cachedChapters} 章正文缓存？目录、进度、书签和摘抄都会保留。`,
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '清空',
-          style: 'destructive',
-          onPress: () =>
-            applyChanges(
-              [
-                {
-                  bookId: entry.book.id,
-                  chapters: clearAllChapterCache(entry.chapters),
-                },
-              ],
-              `已释放 ${formatCacheBytes(summary.bytes)}`,
-            ),
-        },
-      ],
+      () =>
+        applyChanges(
+          [
+            {
+              bookId: entry.book.id,
+              chapters: clearAllChapterCache(entry.chapters),
+            },
+          ],
+          `已释放 ${formatCacheBytes(summary.bytes)}`,
+        ),
+      '清空',
     );
   };
 
@@ -175,13 +182,16 @@ export default function CacheManagementScreen() {
     >
       <View style={styles.header}>
         <Pressable
+          accessibilityRole="button"
           accessibilityLabel="返回"
           onPress={() => navigation.goBack()}
           style={styles.backButton}
         >
           <Icon name="arrow-back" size={22} color={theme.colors.text} />
         </Pressable>
-        <Text style={[styles.title, { color: theme.colors.text }]}>缓存管理</Text>
+        <Text style={[styles.title, { color: theme.colors.text }]}>
+          缓存管理
+        </Text>
         <View style={styles.backButton} />
       </View>
 
@@ -219,6 +229,11 @@ export default function CacheManagementScreen() {
               </Text>
             </View>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="清理全部已读章节缓存"
+              accessibilityState={{
+                disabled: busy || totalCachedChapters === 0,
+              }}
               disabled={busy || totalCachedChapters === 0}
               onPress={() => clearReadForEntries(entries)}
               style={[
@@ -235,15 +250,27 @@ export default function CacheManagementScreen() {
             </Pressable>
           </View>
 
-          <Text
-            style={[styles.tip, { color: theme.colors.textSecondary }]}
-          >
+          <Text style={[styles.tip, { color: theme.colors.textSecondary }]}>
             清理已读会保留当前章之前最近 3 章；自动预取的新章节不会被删除。
           </Text>
           {message ? (
-            <Text style={[styles.message, { color: theme.colors.accent }]}>
-              {message}
-            </Text>
+            <View style={styles.messageRow}>
+              <Text style={[styles.message, { color: theme.colors.accent }]}>
+                {message}
+              </Text>
+              {loadFailedCount > 0 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="重新统计缓存"
+                  onPress={() => setLoadRevision(value => value + 1)}
+                  style={styles.retryButton}
+                >
+                  <Text style={{ color: theme.colors.accent, fontSize: 12 }}>
+                    重试
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
 
           {entries.length === 0 ? (
@@ -256,7 +283,7 @@ export default function CacheManagementScreen() {
               <Text
                 style={{ color: theme.colors.textSecondary, marginTop: 10 }}
               >
-                暂无在线书缓存
+                {loadFailedCount > 0 ? '缓存统计未完成' : '暂无在线书缓存'}
               </Text>
             </View>
           ) : (
@@ -287,20 +314,23 @@ export default function CacheManagementScreen() {
                           { color: theme.colors.textSecondary },
                         ]}
                       >
-                        已缓存 {summary.cachedChapters}/{entry.chapters.length} 章 · 约 {formatCacheBytes(summary.bytes)}
+                        已缓存 {summary.cachedChapters}/{entry.chapters.length}{' '}
+                        章 · 约 {formatCacheBytes(summary.bytes)}
                       </Text>
                     </View>
                     <Text
-                      style={[
-                        styles.progress,
-                        { color: theme.colors.accent },
-                      ]}
+                      style={[styles.progress, { color: theme.colors.accent }]}
                     >
                       {entry.book.progress}%
                     </Text>
                   </View>
                   <View style={styles.bookActions}>
                     <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`清理《${entry.book.title}》的已读章节缓存`}
+                      accessibilityState={{
+                        disabled: busy || summary.cachedChapters === 0,
+                      }}
                       disabled={busy || summary.cachedChapters === 0}
                       onPress={() => clearReadForEntries([entry])}
                       style={[
@@ -318,6 +348,11 @@ export default function CacheManagementScreen() {
                       </Text>
                     </Pressable>
                     <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`清空《${entry.book.title}》的章节缓存`}
+                      accessibilityState={{
+                        disabled: busy || summary.cachedChapters === 0,
+                      }}
                       disabled={busy || summary.cachedChapters === 0}
                       onPress={() => clearAllForEntry(entry)}
                       style={[
@@ -354,9 +389,9 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignItems: 'center',
-    height: 28,
+    height: 44,
     justifyContent: 'center',
-    width: 28,
+    width: 44,
   },
   title: {
     fontFamily: SERIF_FONT,
@@ -383,13 +418,20 @@ const styles = StyleSheet.create({
   summaryMeta: { fontSize: 11.5, marginTop: 4 },
   batchButton: {
     borderRadius: 9,
-    minHeight: 36,
+    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
   batchButtonText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   tip: { fontSize: 11.5, lineHeight: 18, marginTop: 12 },
-  message: { fontSize: 12, marginTop: 7 },
+  messageRow: { alignItems: 'center', flexDirection: 'row', marginTop: 7 },
+  message: { flex: 1, fontSize: 12 },
+  retryButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 52,
+  },
   empty: { alignItems: 'center', paddingVertical: 70 },
   bookCard: {
     borderRadius: 10,
@@ -408,7 +450,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     flex: 1,
-    height: 34,
+    minHeight: 44,
     justifyContent: 'center',
   },
 });

@@ -8,7 +8,6 @@
 
 import React from 'react';
 import {
-  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -24,6 +23,7 @@ import { SERIF_FONT } from '../theme/fonts';
 import { RootStackParamList } from '../types/navigation';
 import { useDeletedBooks, usePurgeBooks, useRestoreBook } from '../store';
 import type { Book } from '../store/types/book';
+import { confirmAction } from '../utils/confirm';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -60,6 +60,7 @@ export default function RecycleBinScreen() {
   const restoreBook = useRestoreBook();
   const purgeBooks = usePurgeBooks();
   const [message, setMessage] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
 
   const onRestore = (book: Book) => {
     restoreBook(book.id);
@@ -67,39 +68,44 @@ export default function RecycleBinScreen() {
   };
 
   const onPurge = (book: Book) => {
-    Alert.alert(
+    if (busy) return;
+    confirmAction(
       '彻底删除',
       `《${book.title}》的章节缓存、阅读进度、书签与摘抄都会被永久清除，无法恢复。`,
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '彻底删除',
-          style: 'destructive',
-          onPress: () => {
-            purgeBooks([book.id]);
-            setMessage(`已彻底删除《${book.title}》`);
-          },
-        },
-      ],
+      async () => {
+        setBusy(true);
+        try {
+          await purgeBooks([book.id]);
+          setMessage(`已彻底删除《${book.title}》`);
+        } catch (error) {
+          console.warn('[RecycleBin] purge failed', error);
+          setMessage('删除失败，书籍仍保留在回收站，请稍后重试');
+        } finally {
+          setBusy(false);
+        }
+      },
+      '彻底删除',
     );
   };
 
   const onEmpty = () => {
-    if (deletedBooks.length === 0) return;
-    Alert.alert(
+    if (deletedBooks.length === 0 || busy) return;
+    confirmAction(
       '清空回收站',
       `回收站里的 ${deletedBooks.length} 本书将被永久删除，章节缓存、阅读进度、书签与摘抄一并清除，无法恢复。`,
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '清空',
-          style: 'destructive',
-          onPress: () => {
-            purgeBooks(deletedBooks.map(book => book.id));
-            setMessage('回收站已清空');
-          },
-        },
-      ],
+      async () => {
+        setBusy(true);
+        try {
+          await purgeBooks(deletedBooks.map(book => book.id));
+          setMessage('回收站已清空');
+        } catch (error) {
+          console.warn('[RecycleBin] empty failed', error);
+          setMessage('清空失败，未删除的书籍仍保留在回收站');
+        } finally {
+          setBusy(false);
+        }
+      },
+      '清空',
     );
   };
 
@@ -110,6 +116,7 @@ export default function RecycleBinScreen() {
     >
       <View style={styles.header}>
         <Pressable
+          accessibilityRole="button"
           accessibilityLabel="返回"
           onPress={() => navigation.goBack()}
           style={styles.backButton}
@@ -137,18 +144,26 @@ export default function RecycleBinScreen() {
               {deletedBooks.length} 本
             </Text>
             <Text
-              style={[styles.summaryMeta, { color: theme.colors.textSecondary }]}
+              style={[
+                styles.summaryMeta,
+                { color: theme.colors.textSecondary },
+              ]}
             >
               还原后可继续阅读
             </Text>
           </View>
           <Pressable
-            disabled={deletedBooks.length === 0}
+            accessibilityRole="button"
+            accessibilityLabel="清空回收站"
+            accessibilityState={{
+              disabled: deletedBooks.length === 0 || busy,
+            }}
+            disabled={deletedBooks.length === 0 || busy}
             onPress={onEmpty}
             style={[
               styles.batchButton,
               { backgroundColor: theme.colors.danger },
-              deletedBooks.length === 0 && styles.batchButtonDisabled,
+              (deletedBooks.length === 0 || busy) && styles.batchButtonDisabled,
             ]}
           >
             <Text style={styles.batchButtonText}>清空回收站</Text>
@@ -211,6 +226,10 @@ export default function RecycleBinScreen() {
               </View>
               <View style={styles.bookActions}>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`还原《${book.title}》`}
+                  accessibilityState={{ disabled: busy }}
+                  disabled={busy}
                   onPress={() => onRestore(book)}
                   style={[
                     styles.bookAction,
@@ -227,6 +246,10 @@ export default function RecycleBinScreen() {
                   </Text>
                 </Pressable>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`彻底删除《${book.title}》`}
+                  accessibilityState={{ disabled: busy }}
+                  disabled={busy}
                   onPress={() => onPurge(book)}
                   style={[
                     styles.bookAction,
@@ -263,9 +286,9 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignItems: 'center',
-    height: 28,
+    height: 44,
     justifyContent: 'center',
-    width: 28,
+    width: 44,
   },
   title: {
     fontFamily: SERIF_FONT,
@@ -292,7 +315,7 @@ const styles = StyleSheet.create({
   summaryMeta: { fontSize: 11.5, marginTop: 4 },
   batchButton: {
     borderRadius: 9,
-    minHeight: 36,
+    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
@@ -319,7 +342,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     flex: 1,
-    height: 34,
+    minHeight: 44,
     justifyContent: 'center',
   },
 });

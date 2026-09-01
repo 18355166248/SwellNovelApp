@@ -20,10 +20,14 @@ const iconFontStyles = `@font-face {
   font-style: normal;
 }
 
-/* 阅读器左右翻页在 Web 端会获得焦点并显示浏览器 outline/scrollbar，预览时看起来像一条选中线。 */
-[data-testid="reader-page-list"],
-[data-testid="reader-page-list"] * {
+/* 滚动容器本身不画装饰线；内部可操作元素仍保留清晰的键盘焦点。 */
+[data-testid="reader-page-list"] {
   outline: none !important;
+}
+
+[data-testid="reader-page-list"] [role="button"]:focus-visible {
+  outline: 2px solid #c9a15e !important;
+  outline-offset: -3px;
 }
 
 [data-testid="reader-page-list"] {

@@ -7,8 +7,10 @@ import { appSettingsAtom } from '../store/atoms';
 interface ThemeContextType {
   theme: Theme;
   isDarkMode: boolean;
+  themeMode: 'light' | 'dark' | 'auto';
   toggleTheme: () => void;
   setTheme: (isDark: boolean) => void;
+  setThemeMode: (mode: 'light' | 'dark' | 'auto') => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -19,7 +21,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   const systemColorScheme = useColorScheme();
   const appSettings = useAtomValue(appSettingsAtom);
   const setAppSettings = useSetAtom(appSettingsAtom);
-  
+
   // 计算是否深色模式
   const isDarkMode = (() => {
     if (appSettings.theme === 'dark') return true;
@@ -31,7 +33,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   const toggleTheme = () => {
     const currentTheme = appSettings.theme;
     let nextTheme: 'light' | 'dark' | 'auto';
-    
+
     if (currentTheme === 'light') {
       nextTheme = 'dark';
     } else if (currentTheme === 'dark') {
@@ -39,7 +41,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     } else {
       nextTheme = 'light';
     }
-    
+
     setAppSettings({ ...appSettings, theme: nextTheme });
   };
 
@@ -50,10 +52,23 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     });
   };
 
+  const setThemeMode = (mode: 'light' | 'dark' | 'auto') => {
+    setAppSettings({ ...appSettings, theme: mode });
+  };
+
   const theme = isDarkMode ? darkTheme : lightTheme;
 
   return (
-    <ThemeContext.Provider value={{ theme, isDarkMode, toggleTheme, setTheme }}>
+    <ThemeContext.Provider
+      value={{
+        theme,
+        isDarkMode,
+        themeMode: appSettings.theme,
+        toggleTheme,
+        setTheme,
+        setThemeMode,
+      }}
+    >
       {children}
     </ThemeContext.Provider>
   );

@@ -37,7 +37,14 @@ app.use(
 // Cloudflare 通过 JA3/TLS 指纹拦截 Node.js http 模块的请求（即使 header
 // 完全伪装成手机端也返回 403 challenge）。curl 的 TLS 指纹被放行，因此用
 // 子进程调用 curl 来转发上游请求。
-const ALLOWED_HOSTS = [/(^|\.)bookshuku\.org$/i, /(^|\.)mingzw\.net$/i];
+const ALLOWED_HOSTS = [
+  /(^|\.)bookshuku\.org$/i,
+  /(^|\.)mingzw\.net$/i,
+  /(^|\.)xuanhuange\.info$/i,
+  // 搜索页只用固定引擎定位已登记书源，仍不是开放代理。
+  /^html\.duckduckgo\.com$/i,
+  /^www\.bing\.com$/i,
+];
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 ' +

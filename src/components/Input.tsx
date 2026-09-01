@@ -24,6 +24,7 @@ export const Input: React.FC<InputProps> = ({
   label,
   error,
   containerStyle,
+  accessibilityLabel,
   style,
   ...props
 }) => {
@@ -42,11 +43,13 @@ export const Input: React.FC<InputProps> = ({
     <View style={[styles.container, containerStyle]}>
       {label && (
         <Text
-          style={{ marginBottom: theme.spacing.xs, color: theme.colors.text }}>
+          style={{ marginBottom: theme.spacing.xs, color: theme.colors.text }}
+        >
           {label}
         </Text>
       )}
       <AnimatedTextInput
+        accessibilityLabel={accessibilityLabel || label}
         style={[
           styles.input,
           {
@@ -81,7 +84,9 @@ export const Input: React.FC<InputProps> = ({
       />
       {error && (
         <Text
-          style={{ marginTop: theme.spacing.xs }}>
+          accessibilityLiveRegion="polite"
+          style={{ color: theme.colors.error, marginTop: theme.spacing.xs }}
+        >
           {error}
         </Text>
       )}

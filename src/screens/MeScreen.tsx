@@ -1,5 +1,12 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, Switch, Platform, Pressable } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Switch,
+  Platform,
+  Pressable,
+} from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Button, Input, Text, Icon } from '../components';
 import { ProfileIdentityCard } from '../components/ProfileIdentityCard';
@@ -36,6 +43,8 @@ import {
   loadWebDavCredentials,
   saveWebDavCredentials,
 } from '../services/webdav/credentials';
+import { confirmAction } from '../utils/confirm';
+import { bookFinishedInYear, isBookFinished } from '../utils/bookCompletion';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -46,7 +55,7 @@ export default function MeScreen({
   settings?: boolean;
   webDavPage?: boolean;
 }) {
-  const { theme, isDarkMode, toggleTheme } = useTheme();
+  const { theme, themeMode, setThemeMode } = useTheme();
   const navigation = useNavigation<NavigationProp>();
   const books = useAllBooks();
   const deletedBooks = useDeletedBooks();
@@ -58,16 +67,14 @@ export default function MeScreen({
     setFullscreen(next);
   };
 
-  const finished = books.filter(b => b.progress >= 100).length;
+  const finished = books.filter(isBookFinished).length;
   const imported = books.filter(b => b.fileFormat === 'txt').length;
   const stats = useReadingStats();
   const setDailyReadingGoal = useSetDailyReadingGoal();
   const currentYear = new Date().getFullYear();
-  const finishedThisYear = books.filter(book => {
-    if (book.progress < 100) return false;
-    const completedAt = book.finishedAt ?? book.lastReadAt ?? book.updatedAt;
-    return new Date(completedAt).getFullYear() === currentYear;
-  }).length;
+  const finishedThisYear = books.filter(book =>
+    bookFinishedInYear(book, currentYear),
+  ).length;
   const weekChartMax = Math.max(
     stats.dailyGoalMinutes,
     ...stats.week.map(day => day.minutes),
@@ -82,10 +89,18 @@ export default function MeScreen({
   } = useLibraryBackup();
   const [backupBusy, setBackupBusy] = React.useState(false);
   const [cloudBusy, setCloudBusy] = React.useState(false);
-  const [webDav, setWebDav] = React.useState<WebDavConfig>({ endpoint: '', username: '', password: '', directory: 'qingdu-backups', autoBackup: true });
+  const [webDav, setWebDav] = React.useState<WebDavConfig>({
+    endpoint: '',
+    username: '',
+    password: '',
+    directory: 'qingdu-backups',
+    autoBackup: true,
+  });
   const [cloudFiles, setCloudFiles] = React.useState<WebDavBackupFile[]>([]);
   const [cloudFilesLoaded, setCloudFilesLoaded] = React.useState(false);
-  const [cloudFilesError, setCloudFilesError] = React.useState<string | null>(null);
+  const [cloudFilesError, setCloudFilesError] = React.useState<string | null>(
+    null,
+  );
   const [pendingRestore, setPendingRestore] = React.useState<{
     name: string;
     backup: RestoredLibraryBackup;
@@ -99,7 +114,9 @@ export default function MeScreen({
     title: string;
     message: string;
   } | null>(null);
-  const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   // 累计时长：不足 1 小时按分钟展示，超过则按「X.X 小时」。
   const totalLabel =
     stats.totalMinutes >= 60
@@ -119,7 +136,10 @@ export default function MeScreen({
 
   const webDavErrorMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : '请稍后重试';
-    if (Platform.OS === 'web' && message === '无法连接 WebDAV 服务，请检查网络和地址') {
+    if (
+      Platform.OS === 'web' &&
+      message === '无法连接 WebDAV 服务，请检查网络和地址'
+    ) {
       return '当前 WebDAV 服务未开放浏览器跨域访问。请在 iOS/Android 使用，或配置受控的 WebDAV 代理。';
     }
     return message;
@@ -144,7 +164,10 @@ export default function MeScreen({
           : `已包含 ${result.bookCount} 本书籍的数据。`;
       showMessage('备份已导出', message);
     } catch (error) {
-      showMessage('导出失败', error instanceof Error ? error.message : '请稍后重试');
+      showMessage(
+        '导出失败',
+        error instanceof Error ? error.message : '请稍后重试',
+      );
     } finally {
       setBackupBusy(false);
     }
@@ -156,7 +179,10 @@ export default function MeScreen({
       await restoreBackup(backup);
       showMessage('恢复完成', `已恢复 ${backup.meta.books.length} 本书籍。`);
     } catch (error) {
-      showMessage('恢复失败', error instanceof Error ? error.message : '请稍后重试');
+      showMessage(
+        '恢复失败',
+        error instanceof Error ? error.message : '请稍后重试',
+      );
     } finally {
       setBackupBusy(false);
     }
@@ -174,7 +200,10 @@ export default function MeScreen({
       setPendingRestore(selected);
     } catch (error) {
       setBackupBusy(false);
-      showMessage('无法读取备份', error instanceof Error ? error.message : '请检查备份文件');
+      showMessage(
+        '无法读取备份',
+        error instanceof Error ? error.message : '请检查备份文件',
+      );
     }
   };
 
@@ -225,7 +254,9 @@ export default function MeScreen({
         }
       })
       .catch(() => {});
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
     // 凭据只需在页面首次挂载时读取，避免输入配置时反复触发自动连接。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -234,14 +265,35 @@ export default function MeScreen({
     setCloudBusy(true);
     try {
       await clearWebDavCredentials();
-      setWebDav({ endpoint: '', username: '', password: '', directory: 'qingdu-backups', autoBackup: true });
+      setWebDav({
+        endpoint: '',
+        username: '',
+        password: '',
+        directory: 'qingdu-backups',
+        autoBackup: true,
+      });
       setCloudFiles([]);
       setCloudFilesLoaded(false);
       setCloudFilesError(null);
-      showMessage('已清除 WebDAV 凭据', '下次连接需要重新填写地址、用户名和密码。');
+      showMessage(
+        '已清除 WebDAV 凭据',
+        '下次连接需要重新填写地址、用户名和密码。',
+      );
     } finally {
       setCloudBusy(false);
     }
+  };
+
+  const confirmClearWebDavCredentials = () => {
+    // 凭据清除后无法自动恢复，必须先让用户确认影响范围。
+    confirmAction(
+      '清除 WebDAV 凭据',
+      '服务地址、用户名和密码会从本机移除；云端备份文件不会被删除。',
+      () => {
+        handleClearWebDavCredentials();
+      },
+      '清除',
+    );
   };
 
   const handleUploadWebDav = async () => {
@@ -249,6 +301,8 @@ export default function MeScreen({
     try {
       const backup = await createBackupArchive();
       await uploadWebDavBackup(webDav, backup.fileName, backup.archive);
+      // “立即备份”本身已经验证了配置可用；成功后同步保存，避免用户必须先点一次刷新才记住凭据。
+      await saveWebDavCredentials(webDav);
       await refreshCloudFiles();
       showMessage('已上传云端备份', `已备份 ${backup.bookCount} 本书籍。`);
     } catch (error) {
@@ -297,6 +351,17 @@ export default function MeScreen({
     }
   };
 
+  const confirmDeleteWebDav = (file: WebDavBackupFile) => {
+    // 云端文件删除不可撤销，避免图标误触直接破坏备份。
+    confirmAction(
+      '删除云端备份',
+      `确定删除“${file.name}”吗？此操作无法撤销。`,
+      () => {
+        handleDeleteWebDav(file);
+      },
+    );
+  };
+
   if (!settings) {
     return (
       <ScrollView
@@ -310,7 +375,13 @@ export default function MeScreen({
           immersive
           streak={stats.streak}
         />
-        <View style={[styles.readingCard, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
+        <View
+          style={[
+            styles.readingCard,
+            { backgroundColor: theme.colors.surface },
+            theme.shadows.sm,
+          ]}
+        >
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="查看完整阅读足迹"
@@ -318,21 +389,67 @@ export default function MeScreen({
             style={styles.readingCardHeader}
           >
             <View style={styles.readingCardHeading}>
-              <Text style={[styles.readingCardTitle, { color: theme.colors.text }]}>阅读足迹</Text>
-              <Text style={[styles.readingCardMeta, { color: theme.colors.textSecondary }]}>本周 {stats.weekTotalMinutes} 分钟 · 今年读完 {finishedThisYear} 本</Text>
+              <Text
+                style={[styles.readingCardTitle, { color: theme.colors.text }]}
+              >
+                阅读足迹
+              </Text>
+              <Text
+                style={[
+                  styles.readingCardMeta,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                本周 {stats.weekTotalMinutes} 分钟 · 今年读完 {finishedThisYear}{' '}
+                本
+              </Text>
             </View>
-            <Text style={[styles.readingStreak, { color: theme.colors.accent }]}>{stats.streak} 天连续</Text>
-            <Icon name="chevron-right" size={18} color={theme.colors.textSecondary} />
+            <Text
+              style={[styles.readingStreak, { color: theme.colors.accent }]}
+            >
+              {stats.streak} 天连续
+            </Text>
+            <Icon
+              name="chevron-right"
+              size={18}
+              color={theme.colors.textSecondary}
+            />
           </Pressable>
           <View style={styles.goalHeader}>
-            <Text style={[styles.goalLabel, { color: theme.colors.text }]}>今日 {stats.todayMinutes} / {stats.dailyGoalMinutes} 分钟</Text>
-            <Text style={[styles.goalPercent, { color: theme.colors.textSecondary }]}>{Math.round(stats.todayGoalProgress * 100)}%</Text>
+            <Text style={[styles.goalLabel, { color: theme.colors.text }]}>
+              今日 {stats.todayMinutes} / {stats.dailyGoalMinutes} 分钟
+            </Text>
+            <Text
+              style={[
+                styles.goalPercent,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              {Math.round(stats.todayGoalProgress * 100)}%
+            </Text>
           </View>
-          <View style={[styles.goalTrack, { backgroundColor: theme.colors.border }]}>
-            <View style={[styles.goalFill, { width: `${Math.round(stats.todayGoalProgress * 100)}%`, backgroundColor: theme.colors.accentDark }]} />
+          <View
+            style={[styles.goalTrack, { backgroundColor: theme.colors.border }]}
+          >
+            <View
+              style={[
+                styles.goalFill,
+                {
+                  width: `${Math.round(stats.todayGoalProgress * 100)}%`,
+                  backgroundColor: theme.colors.accentDark,
+                },
+              ]}
+            />
           </View>
           <View style={styles.goalPresets}>
-            <Text style={[styles.goalPresetLabel, { color: theme.colors.textSecondary }]}>每日目标</Text>
+            <Text
+              style={[
+                styles.goalPresetLabel,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              每日目标
+            </Text>
             {[15, 30, 60].map(minutes => {
               const active = stats.dailyGoalMinutes === minutes;
               return (
@@ -344,12 +461,23 @@ export default function MeScreen({
                   style={[
                     styles.goalPreset,
                     {
-                      borderColor: active ? theme.colors.accentDark : theme.colors.border,
-                      backgroundColor: active ? theme.colors.accentDark : 'transparent',
+                      borderColor: active
+                        ? theme.colors.accentDark
+                        : theme.colors.border,
+                      backgroundColor: active
+                        ? theme.colors.accentDark
+                        : 'transparent',
                     },
                   ]}
                 >
-                  <Text style={{ color: active ? '#fff' : theme.colors.textSecondary, fontSize: 11.5 }}>{minutes} 分钟</Text>
+                  <Text
+                    style={{
+                      color: active ? '#fff' : theme.colors.textSecondary,
+                      fontSize: 11.5,
+                    }}
+                  >
+                    {minutes} 分钟
+                  </Text>
                 </Pressable>
               );
             })}
@@ -363,22 +491,65 @@ export default function MeScreen({
                     style={[
                       styles.weekBar,
                       {
-                        height: Math.max(3, Math.round((day.minutes / weekChartMax) * 54)),
-                        backgroundColor: day.isToday ? theme.colors.accentDark : theme.colors.accent,
+                        height: Math.max(
+                          3,
+                          Math.round((day.minutes / weekChartMax) * 54),
+                        ),
+                        backgroundColor: day.isToday
+                          ? theme.colors.accentDark
+                          : theme.colors.accent,
                         opacity: day.minutes > 0 ? 1 : 0.22,
                       },
                     ]}
                   />
                 </View>
-                <Text style={[styles.weekLabel, { color: day.isToday ? theme.colors.text : theme.colors.textSecondary }]}>{day.label}</Text>
+                <Text
+                  style={[
+                    styles.weekLabel,
+                    {
+                      color: day.isToday
+                        ? theme.colors.text
+                        : theme.colors.textSecondary,
+                    },
+                  ]}
+                >
+                  {day.label}
+                </Text>
               </View>
             ))}
           </View>
         </View>
-        <Pressable style={[styles.settingsEntry, { backgroundColor: theme.colors.surface }, theme.shadows.sm]} onPress={() => navigation.navigate('Settings')}>
-          <View style={styles.settingIcon}><Icon name="settings" size={20} color={theme.colors.text} /></View>
-          <View style={styles.settingInfo}><Text style={[styles.settingTitle, { color: theme.colors.text }]}>设置</Text><Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>数据安全、外观与云端备份</Text></View>
-          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="打开设置"
+          style={[
+            styles.settingsEntry,
+            { backgroundColor: theme.colors.surface },
+            theme.shadows.sm,
+          ]}
+          onPress={() => navigation.navigate('Settings')}
+        >
+          <View style={styles.settingIcon}>
+            <Icon name="settings" size={20} color={theme.colors.text} />
+          </View>
+          <View style={styles.settingInfo}>
+            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+              设置
+            </Text>
+            <Text
+              style={[
+                styles.settingDesc,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              数据安全、外观与云端备份
+            </Text>
+          </View>
+          <Icon
+            name="chevron-right"
+            size={20}
+            color={theme.colors.textSecondary}
+          />
         </Pressable>
       </ScrollView>
     );
@@ -390,349 +561,742 @@ export default function MeScreen({
       style={[styles.root, { backgroundColor: theme.colors.background }]}
     >
       <ScrollView
-      style={[styles.container, { backgroundColor: theme.colors.background }]}
-      contentContainerStyle={styles.content}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.headerRow}>
-        <Pressable style={styles.backButton} onPress={() => navigation.goBack()}><Icon name="arrow-back" size={22} color={theme.colors.text} /></Pressable>
-        <Text style={[styles.title, { color: theme.colors.text }]}>{webDavPage ? 'WebDAV 云端备份' : '设置'}</Text>
-        <View style={styles.backButton} />
-      </View>
-
-      <View
-        style={[
-          styles.profile,
-          styles.hidden,
-          {
-            backgroundColor: theme.colors.surface,
-            borderColor: theme.colors.border,
-          },
-          theme.shadows.sm,
-        ]}
+        style={[styles.container, { backgroundColor: theme.colors.background }]}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <View
-          style={[
-            styles.avatar,
-            { backgroundColor: theme.colors.accentDark },
-          ]}
-        >
-          <Icon name="person-outline" size={26} color="#F3EAD6" />
-        </View>
-        <View style={styles.profileInfo}>
-          <Text style={[styles.profileName, { color: theme.colors.text }]}>
-            书友
-          </Text>
-          <Text
-            style={[styles.profileMeta, { color: theme.colors.textSecondary }]}
+        <View style={styles.headerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="返回"
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
           >
-            本地阅读 · 数据仅保存在当前设备
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.profileBadge,
-            { backgroundColor: theme.colors.background },
-          ]}
-        >
-          <View style={styles.profileBadgeDot} />
-          <Text
-            style={[styles.profileBadgeText, { color: theme.colors.accent }]}
-          >
-            读者
-          </Text>
-        </View>
-      </View>
-
-      <View style={[styles.stats, styles.hidden]}>
-        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
-          <Text style={[styles.statValue, { color: theme.colors.text }]}>
-            {books.length}
-          </Text>
-          <Text variant="caption" color="textSecondary">
-            书架
-          </Text>
-        </View>
-        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
-          <Text style={[styles.statValue, { color: theme.colors.text }]}>
-            {finished}
-          </Text>
-          <Text variant="caption" color="textSecondary">
-            已读完
-          </Text>
-        </View>
-        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
-          <Text style={[styles.statValue, { color: theme.colors.text }]}>
-            {imported}
-          </Text>
-          <Text variant="caption" color="textSecondary">
-            本地书
-          </Text>
-        </View>
-      </View>
-
-      <View style={[styles.stats, styles.hidden]}>
-        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
-          <Text style={[styles.statValue, { color: theme.colors.accent }]}>
-            {stats.streak}
-          </Text>
-          <Text variant="caption" color="textSecondary">
-            连续天数
-          </Text>
-        </View>
-        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
-          <Text style={[styles.statValue, { color: theme.colors.text }]}>
-            {stats.todayMinutes}m
-          </Text>
-          <Text variant="caption" color="textSecondary">
-            今日阅读
-          </Text>
-        </View>
-        <View style={[styles.stat, { backgroundColor: theme.colors.surface }]}>
-          <Text style={[styles.statValue, { color: theme.colors.text }]}>
-            {totalLabel}
-          </Text>
-          <Text variant="caption" color="textSecondary">
-            累计时长
-          </Text>
-        </View>
-      </View>
-
-      <View
-        style={[
-          styles.section,
-          webDavPage && styles.hidden,
-          { backgroundColor: theme.colors.surface },
-          theme.shadows.sm,
-        ]}
-      >
-        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>数据安全</Text>
-        <View style={styles.backupActions}>
-          <Button
-            title="导出备份"
-            variant="outline"
-            size="small"
-            disabled={!libraryHydrated || backupBusy}
-            loading={backupBusy}
-            onPress={() => { handleCreateBackup(); }}
-            style={styles.backupAction}
-          />
-          <Button
-            title="恢复备份"
-            variant="outline"
-            size="small"
-            disabled={!libraryHydrated || backupBusy}
-            onPress={() => { handleRestoreBackup(); }}
-            style={styles.backupAction}
-          />
-        </View>
-      </View>
-
-      <View style={[styles.section, { backgroundColor: theme.colors.surface }, theme.shadows.sm]}>
-        {!webDavPage ? <Pressable style={styles.cloudMenu} onPress={() => navigation.navigate('WebDavBackup')}>
-          <View style={styles.settingIcon}><Icon name="cloud" size={20} color={theme.colors.text} /></View>
-          <View style={styles.settingInfo}><Text style={[styles.settingTitle, { color: theme.colors.text }]}>WebDAV 云端备份</Text><Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>手动上传、恢复与管理云端备份</Text></View>
-          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
-        </Pressable> : <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>连接与备份</Text>}
-        {webDavPage ? <View style={styles.webDavForm}>
-          <Input label="服务地址" value={webDav.endpoint} onChangeText={endpoint => setWebDav(value => ({ ...value, endpoint }))} placeholder="https://dav.example.com/dav/" autoCapitalize="none" keyboardType="url" />
-          <Input label="用户名" value={webDav.username} onChangeText={username => setWebDav(value => ({ ...value, username }))} autoCapitalize="none" />
-          <Input label="密码" value={webDav.password} onChangeText={password => setWebDav(value => ({ ...value, password }))} secureTextEntry autoCapitalize="none" />
-          <Input label="云端目录" value={webDav.directory} onChangeText={directory => setWebDav(value => ({ ...value, directory }))} autoCapitalize="none" />
-          <View style={styles.autoBackupRow}>
-            <View style={styles.autoBackupInfo}>
-              <Text style={[styles.settingTitle, { color: theme.colors.text }]}>阅读时自动备份</Text>
-              <Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>前台连续阅读满 10 分钟后上传一次</Text>
-              {webDav.lastAutoBackupAt ? <Text variant="caption" color="textSecondary" style={styles.autoBackupTime}>上次自动备份：{new Date(webDav.lastAutoBackupAt).toLocaleString()}</Text> : null}
-            </View>
-            <Switch
-              value={!!webDav.autoBackup}
-              disabled={!webDav.endpoint.trim() || !webDav.username.trim() || !webDav.password}
-              onValueChange={async autoBackup => {
-                const next = { ...webDav, autoBackup };
-                setWebDav(next);
-                try {
-                  await saveWebDavCredentials(next);
-                  showMessage(autoBackup ? '已开启自动备份' : '已关闭自动备份', autoBackup ? '阅读满 10 分钟后会自动上传。' : '仍可随时手动备份。');
-                } catch (error) {
-                  setWebDav(webDav);
-                  showMessage('保存失败', webDavErrorMessage(error));
-                }
-              }}
-              trackColor={{ false: theme.colors.border, true: theme.colors.accentDark }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-          <View style={styles.backupActions}>
-            <Button title="刷新备份" variant="outline" size="small" loading={cloudBusy} disabled={cloudBusy} onPress={() => { connectAndRefreshWebDav(); }} style={styles.backupAction} />
-            <Button title="立即备份" size="small" loading={cloudBusy} disabled={!libraryHydrated || cloudBusy} onPress={() => { handleUploadWebDav(); }} style={styles.backupAction} />
-          </View>
-          <Pressable disabled={cloudBusy} onPress={() => { handleClearWebDavCredentials(); }} style={styles.clearCredentials}>
-            <Text style={{ color: theme.colors.danger, fontSize: 13 }}>清除已保存的 WebDAV 凭据</Text>
+            <Icon name="arrow-back" size={22} color={theme.colors.text} />
           </Pressable>
-          {cloudFilesError ? (
-            <Text style={[styles.cloudFilesStatus, { color: theme.colors.danger }]}>备份列表加载失败：{cloudFilesError}</Text>
-          ) : cloudFilesLoaded && cloudFiles.length === 0 ? (
-            <Text style={[styles.cloudFilesStatus, { color: theme.colors.textSecondary }]}>云端暂无备份</Text>
-          ) : null}
-          {cloudFiles.map(file => (
-            <View key={file.url} style={[styles.cloudFile, { borderTopColor: theme.colors.border }]}>
-              <Pressable disabled={cloudBusy} style={styles.cloudFileInfo} onPress={() => { handlePreviewWebDav(file); }}>
-                <Text numberOfLines={1} style={{ color: theme.colors.text }}>{file.name}</Text>
-                <Text variant="caption" color="textSecondary">{file.modifiedAt ? new Date(file.modifiedAt).toLocaleString() : '未知时间'} · {(file.size / 1024).toFixed(1)} KB</Text>
-              </Pressable>
-              <Pressable disabled={cloudBusy} onPress={() => { handlePreviewWebDav(file); }}><Icon name="visibility" size={20} color={theme.colors.textSecondary} /></Pressable>
-              <Pressable disabled={cloudBusy} style={styles.cloudRestore} onPress={() => { handleDownloadWebDav(file); }}><Icon name="download" size={20} color={theme.colors.accent} /></Pressable>
-              <Pressable disabled={cloudBusy} onPress={() => { handleDeleteWebDav(file); }} style={styles.cloudDelete}><Icon name="delete-outline" size={20} color={theme.colors.danger} /></Pressable>
-            </View>
-          ))}
-        </View> : null}
-      </View>
+          <Text style={[styles.title, { color: theme.colors.text }]}>
+            {webDavPage ? 'WebDAV 云端备份' : '设置'}
+          </Text>
+          <View style={styles.backButton} />
+        </View>
 
-      <View
-        style={[
-          styles.section,
-          webDavPage && styles.hidden,
-          { backgroundColor: theme.colors.surface },
-          theme.shadows.sm,
-        ]}
-      >
-        <Pressable
-          style={styles.cloudMenu}
-          onPress={() => navigation.navigate('CacheManagement')}
+        <View
+          style={[
+            styles.profile,
+            styles.hidden,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+            },
+            theme.shadows.sm,
+          ]}
         >
-          <View style={styles.settingIcon}>
-            <Icon name="storage" size={20} color={theme.colors.text} />
+          <View
+            style={[
+              styles.avatar,
+              { backgroundColor: theme.colors.accentDark },
+            ]}
+          >
+            <Icon name="person-outline" size={26} color="#F3EAD6" />
           </View>
-          <View style={styles.settingInfo}>
-            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>缓存管理</Text>
-            <Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>查看占用、清理已读章节与单本缓存</Text>
-          </View>
-          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
-        </Pressable>
-        <Pressable
-          style={styles.cloudMenu}
-          onPress={() => navigation.navigate('RecycleBin')}
-        >
-          <View style={styles.settingIcon}>
-            <Icon name="delete-outline" size={20} color={theme.colors.text} />
-          </View>
-          <View style={styles.settingInfo}>
-            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>回收站</Text>
-            <Text style={[styles.settingDesc, { color: theme.colors.textSecondary }]}>
-              {deletedBooks.length > 0
-                ? `${deletedBooks.length} 本可还原，阅读进度都还在`
-                : '从书架删除的书会先放到这里'}
+          <View style={styles.profileInfo}>
+            <Text style={[styles.profileName, { color: theme.colors.text }]}>
+              书友
+            </Text>
+            <Text
+              style={[
+                styles.profileMeta,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              本地阅读 · 数据仅保存在当前设备
             </Text>
           </View>
-          <Icon name="chevron-right" size={20} color={theme.colors.textSecondary} />
-        </Pressable>
-      </View>
+          <View
+            style={[
+              styles.profileBadge,
+              { backgroundColor: theme.colors.background },
+            ]}
+          >
+            <View style={styles.profileBadgeDot} />
+            <Text
+              style={[styles.profileBadgeText, { color: theme.colors.accent }]}
+            >
+              读者
+            </Text>
+          </View>
+        </View>
 
-      <View
-        style={[
-          styles.section,
-          webDavPage && styles.hidden,
-          { backgroundColor: theme.colors.surface },
-          theme.shadows.sm,
-        ]}
-      >
-        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-          外观设置
-        </Text>
-        <SettingRow
-          icon="dark-mode"
-          title="深色模式"
-          desc="应用整体主题"
-          borderColor={theme.colors.border}
-          textColor={theme.colors.text}
-          subColor={theme.colors.textSecondary}
-          right={
-            <Switch
-              value={isDarkMode}
-              onValueChange={toggleTheme}
-              trackColor={{
-                false: theme.colors.border,
-                true: theme.colors.accentDark,
+        <View style={[styles.stats, styles.hidden]}>
+          <View
+            style={[styles.stat, { backgroundColor: theme.colors.surface }]}
+          >
+            <Text style={[styles.statValue, { color: theme.colors.text }]}>
+              {books.length}
+            </Text>
+            <Text variant="caption" color="textSecondary">
+              书架
+            </Text>
+          </View>
+          <View
+            style={[styles.stat, { backgroundColor: theme.colors.surface }]}
+          >
+            <Text style={[styles.statValue, { color: theme.colors.text }]}>
+              {finished}
+            </Text>
+            <Text variant="caption" color="textSecondary">
+              已读完
+            </Text>
+          </View>
+          <View
+            style={[styles.stat, { backgroundColor: theme.colors.surface }]}
+          >
+            <Text style={[styles.statValue, { color: theme.colors.text }]}>
+              {imported}
+            </Text>
+            <Text variant="caption" color="textSecondary">
+              本地书
+            </Text>
+          </View>
+        </View>
+
+        <View style={[styles.stats, styles.hidden]}>
+          <View
+            style={[styles.stat, { backgroundColor: theme.colors.surface }]}
+          >
+            <Text style={[styles.statValue, { color: theme.colors.accent }]}>
+              {stats.streak}
+            </Text>
+            <Text variant="caption" color="textSecondary">
+              连续天数
+            </Text>
+          </View>
+          <View
+            style={[styles.stat, { backgroundColor: theme.colors.surface }]}
+          >
+            <Text style={[styles.statValue, { color: theme.colors.text }]}>
+              {stats.todayMinutes}m
+            </Text>
+            <Text variant="caption" color="textSecondary">
+              今日阅读
+            </Text>
+          </View>
+          <View
+            style={[styles.stat, { backgroundColor: theme.colors.surface }]}
+          >
+            <Text style={[styles.statValue, { color: theme.colors.text }]}>
+              {totalLabel}
+            </Text>
+            <Text variant="caption" color="textSecondary">
+              累计时长
+            </Text>
+          </View>
+        </View>
+
+        <View
+          style={[
+            styles.section,
+            webDavPage && styles.hidden,
+            { backgroundColor: theme.colors.surface },
+            theme.shadows.sm,
+          ]}
+        >
+          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+            数据安全
+          </Text>
+          <View style={styles.backupActions}>
+            <Button
+              title="导出备份"
+              variant="outline"
+              size="small"
+              disabled={!libraryHydrated || backupBusy}
+              loading={backupBusy}
+              onPress={() => {
+                handleCreateBackup();
               }}
-              thumbColor="#FFFFFF"
+              style={styles.backupAction}
             />
-          }
-        />
-        {Platform.OS === 'web' && isFullscreenSupported && (
+            <Button
+              title="恢复备份"
+              variant="outline"
+              size="small"
+              disabled={!libraryHydrated || backupBusy}
+              onPress={() => {
+                handleRestoreBackup();
+              }}
+              style={styles.backupAction}
+            />
+          </View>
+        </View>
+
+        <View
+          style={[
+            styles.section,
+            { backgroundColor: theme.colors.surface },
+            theme.shadows.sm,
+          ]}
+        >
+          {!webDavPage ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="打开 WebDAV 云端备份"
+              style={styles.cloudMenu}
+              onPress={() => navigation.navigate('WebDavBackup')}
+            >
+              <View style={styles.settingIcon}>
+                <Icon name="cloud" size={20} color={theme.colors.text} />
+              </View>
+              <View style={styles.settingInfo}>
+                <Text
+                  style={[styles.settingTitle, { color: theme.colors.text }]}
+                >
+                  WebDAV 云端备份
+                </Text>
+                <Text
+                  style={[
+                    styles.settingDesc,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  手动上传、恢复与管理云端备份
+                </Text>
+              </View>
+              <Icon
+                name="chevron-right"
+                size={20}
+                color={theme.colors.textSecondary}
+              />
+            </Pressable>
+          ) : (
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+              连接与备份
+            </Text>
+          )}
+          {webDavPage ? (
+            <View style={styles.webDavForm}>
+              <Input
+                label="服务地址"
+                value={webDav.endpoint}
+                onChangeText={endpoint =>
+                  setWebDav(value => ({ ...value, endpoint }))
+                }
+                placeholder="https://dav.example.com/dav/"
+                autoCapitalize="none"
+                keyboardType="url"
+              />
+              <Input
+                label="用户名"
+                value={webDav.username}
+                onChangeText={username =>
+                  setWebDav(value => ({ ...value, username }))
+                }
+                autoCapitalize="none"
+              />
+              <Input
+                label="密码"
+                value={webDav.password}
+                onChangeText={password =>
+                  setWebDav(value => ({ ...value, password }))
+                }
+                secureTextEntry
+                autoCapitalize="none"
+              />
+              <Input
+                label="云端目录"
+                value={webDav.directory}
+                onChangeText={directory =>
+                  setWebDav(value => ({ ...value, directory }))
+                }
+                autoCapitalize="none"
+              />
+              <View style={styles.autoBackupRow}>
+                <View style={styles.autoBackupInfo}>
+                  <Text
+                    style={[styles.settingTitle, { color: theme.colors.text }]}
+                  >
+                    阅读时自动备份
+                  </Text>
+                  <Text
+                    style={[
+                      styles.settingDesc,
+                      { color: theme.colors.textSecondary },
+                    ]}
+                  >
+                    前台连续阅读满 10 分钟后上传一次
+                  </Text>
+                  {webDav.lastAutoBackupAt ? (
+                    <Text
+                      variant="caption"
+                      color="textSecondary"
+                      style={styles.autoBackupTime}
+                    >
+                      上次自动备份：
+                      {new Date(webDav.lastAutoBackupAt).toLocaleString()}
+                    </Text>
+                  ) : null}
+                </View>
+                <Switch
+                  value={!!webDav.autoBackup}
+                  disabled={
+                    !webDav.endpoint.trim() ||
+                    !webDav.username.trim() ||
+                    !webDav.password
+                  }
+                  onValueChange={async autoBackup => {
+                    const next = { ...webDav, autoBackup };
+                    setWebDav(next);
+                    try {
+                      await saveWebDavCredentials(next);
+                      showMessage(
+                        autoBackup ? '已开启自动备份' : '已关闭自动备份',
+                        autoBackup
+                          ? '阅读满 10 分钟后会自动上传。'
+                          : '仍可随时手动备份。',
+                      );
+                    } catch (error) {
+                      setWebDav(webDav);
+                      showMessage('保存失败', webDavErrorMessage(error));
+                    }
+                  }}
+                  trackColor={{
+                    false: theme.colors.border,
+                    true: theme.colors.accentDark,
+                  }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+              <View style={styles.backupActions}>
+                <Button
+                  title="刷新备份"
+                  variant="outline"
+                  size="small"
+                  loading={cloudBusy}
+                  disabled={cloudBusy}
+                  onPress={() => {
+                    connectAndRefreshWebDav();
+                  }}
+                  style={styles.backupAction}
+                />
+                <Button
+                  title="立即备份"
+                  size="small"
+                  loading={cloudBusy}
+                  disabled={!libraryHydrated || cloudBusy}
+                  onPress={() => {
+                    handleUploadWebDav();
+                  }}
+                  style={styles.backupAction}
+                />
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="清除已保存的 WebDAV 凭据"
+                accessibilityState={{ disabled: cloudBusy }}
+                disabled={cloudBusy}
+                onPress={confirmClearWebDavCredentials}
+                style={styles.clearCredentials}
+              >
+                <Text style={{ color: theme.colors.danger, fontSize: 13 }}>
+                  清除已保存的 WebDAV 凭据
+                </Text>
+              </Pressable>
+              {cloudFilesError ? (
+                <Text
+                  style={[
+                    styles.cloudFilesStatus,
+                    { color: theme.colors.danger },
+                  ]}
+                >
+                  备份列表加载失败：{cloudFilesError}
+                </Text>
+              ) : cloudFilesLoaded && cloudFiles.length === 0 ? (
+                <Text
+                  style={[
+                    styles.cloudFilesStatus,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  云端暂无备份
+                </Text>
+              ) : null}
+              {cloudFiles.map(file => (
+                <View
+                  key={file.url}
+                  style={[
+                    styles.cloudFile,
+                    { borderTopColor: theme.colors.border },
+                  ]}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`预览备份 ${file.name}`}
+                    accessibilityState={{ disabled: cloudBusy }}
+                    disabled={cloudBusy}
+                    style={styles.cloudFileInfo}
+                    onPress={() => {
+                      handlePreviewWebDav(file);
+                    }}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={{ color: theme.colors.text }}
+                    >
+                      {file.name}
+                    </Text>
+                    <Text variant="caption" color="textSecondary">
+                      {file.modifiedAt
+                        ? new Date(file.modifiedAt).toLocaleString()
+                        : '未知时间'}{' '}
+                      · {(file.size / 1024).toFixed(1)} KB
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`预览备份 ${file.name}`}
+                    accessibilityState={{ disabled: cloudBusy }}
+                    disabled={cloudBusy}
+                    style={styles.cloudFileAction}
+                    onPress={() => {
+                      handlePreviewWebDav(file);
+                    }}
+                  >
+                    <Icon
+                      name="visibility"
+                      size={20}
+                      color={theme.colors.textSecondary}
+                    />
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`恢复备份 ${file.name}`}
+                    accessibilityState={{ disabled: cloudBusy }}
+                    disabled={cloudBusy}
+                    style={styles.cloudFileAction}
+                    onPress={() => {
+                      handleDownloadWebDav(file);
+                    }}
+                  >
+                    <Icon
+                      name="download"
+                      size={20}
+                      color={theme.colors.accent}
+                    />
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`删除备份 ${file.name}`}
+                    accessibilityState={{ disabled: cloudBusy }}
+                    disabled={cloudBusy}
+                    onPress={() => {
+                      confirmDeleteWebDav(file);
+                    }}
+                    style={styles.cloudFileAction}
+                  >
+                    <Icon
+                      name="delete-outline"
+                      size={20}
+                      color={theme.colors.danger}
+                    />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <View
+          style={[
+            styles.section,
+            webDavPage && styles.hidden,
+            { backgroundColor: theme.colors.surface },
+            theme.shadows.sm,
+          ]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="打开缓存管理"
+            style={styles.cloudMenu}
+            onPress={() => navigation.navigate('CacheManagement')}
+          >
+            <View style={styles.settingIcon}>
+              <Icon name="storage" size={20} color={theme.colors.text} />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                缓存管理
+              </Text>
+              <Text
+                style={[
+                  styles.settingDesc,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                查看占用、清理已读章节与单本缓存
+              </Text>
+            </View>
+            <Icon
+              name="chevron-right"
+              size={20}
+              color={theme.colors.textSecondary}
+            />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="打开回收站"
+            style={styles.cloudMenu}
+            onPress={() => navigation.navigate('RecycleBin')}
+          >
+            <View style={styles.settingIcon}>
+              <Icon name="delete-outline" size={20} color={theme.colors.text} />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+                回收站
+              </Text>
+              <Text
+                style={[
+                  styles.settingDesc,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                {deletedBooks.length > 0
+                  ? `${deletedBooks.length} 本可还原，阅读进度都还在`
+                  : '从书架删除的书会先放到这里'}
+              </Text>
+            </View>
+            <Icon
+              name="chevron-right"
+              size={20}
+              color={theme.colors.textSecondary}
+            />
+          </Pressable>
+        </View>
+
+        <View
+          style={[
+            styles.section,
+            webDavPage && styles.hidden,
+            { backgroundColor: theme.colors.surface },
+            theme.shadows.sm,
+          ]}
+        >
+          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+            外观设置
+          </Text>
+          <View
+            style={[
+              styles.themeSetting,
+              { borderBottomColor: theme.colors.border },
+            ]}
+          >
+            <View style={styles.themeSettingHeader}>
+              <View style={styles.settingIcon}>
+                <Icon name="dark-mode" size={18} color={theme.colors.text} />
+              </View>
+              <View style={styles.settingInfo}>
+                <Text
+                  style={[styles.settingTitle, { color: theme.colors.text }]}
+                >
+                  显示模式
+                </Text>
+                <Text
+                  style={[
+                    styles.settingDesc,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  跟随系统，或固定浅色/深色
+                </Text>
+              </View>
+            </View>
+            <View
+              accessibilityRole="radiogroup"
+              style={[
+                styles.themeModes,
+                { backgroundColor: theme.colors.background },
+              ]}
+            >
+              {(
+                [
+                  ['auto', '跟随系统'],
+                  ['light', '浅色'],
+                  ['dark', '深色'],
+                ] as const
+              ).map(([mode, label]) => {
+                const selected = themeMode === mode;
+                return (
+                  <Pressable
+                    key={mode}
+                    accessibilityRole="radio"
+                    accessibilityLabel={label}
+                    accessibilityState={{ checked: selected }}
+                    onPress={() => setThemeMode(mode)}
+                    style={[
+                      styles.themeMode,
+                      selected && { backgroundColor: theme.colors.accentDark },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.themeModeText,
+                        {
+                          color: selected ? '#fff' : theme.colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+          {Platform.OS === 'web' && isFullscreenSupported && (
+            <SettingRow
+              icon="fullscreen"
+              title="全屏阅读"
+              desc={
+                Platform.OS === 'web'
+                  ? '隐藏浏览器边栏，沉浸阅读（记住设置）'
+                  : '隐藏状态栏，沉浸阅读（记住设置）'
+              }
+              borderColor="transparent"
+              textColor={theme.colors.text}
+              subColor={theme.colors.textSecondary}
+              right={
+                <Switch
+                  value={!!readerSettings.fullscreen}
+                  onValueChange={onToggleFullscreen}
+                  trackColor={{
+                    false: theme.colors.border,
+                    true: theme.colors.accentDark,
+                  }}
+                  thumbColor="#FFFFFF"
+                />
+              }
+            />
+          )}
+        </View>
+
+        <View
+          style={[
+            styles.section,
+            webDavPage && styles.hidden,
+            { backgroundColor: theme.colors.surface },
+            theme.shadows.sm,
+          ]}
+        >
+          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+            关于
+          </Text>
           <SettingRow
-            icon="fullscreen"
-            title="全屏阅读"
-            desc={
-              Platform.OS === 'web'
-                ? '隐藏浏览器边栏，沉浸阅读（记住设置）'
-                : '隐藏状态栏，沉浸阅读（记住设置）'
-            }
+            icon="info-outline"
+            title="版本"
+            desc={APP_VERSION}
             borderColor="transparent"
             textColor={theme.colors.text}
             subColor={theme.colors.textSecondary}
-            right={
-              <Switch
-                value={!!readerSettings.fullscreen}
-                onValueChange={onToggleFullscreen}
-                trackColor={{
-                  false: theme.colors.border,
-                  true: theme.colors.accentDark,
-                }}
-                thumbColor="#FFFFFF"
-              />
-            }
           />
-        )}
-      </View>
-
-      <View
-        style={[
-          styles.section,
-          webDavPage && styles.hidden,
-          { backgroundColor: theme.colors.surface },
-          theme.shadows.sm,
-        ]}
-      >
-        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-          关于
-        </Text>
-        <SettingRow
-          icon="info-outline"
-          title="版本"
-          desc={APP_VERSION}
-          borderColor="transparent"
-          textColor={theme.colors.text}
-          subColor={theme.colors.textSecondary}
-        />
-      </View>
+        </View>
       </ScrollView>
 
       {previewBackup ? (
         <View style={styles.restoreBackdrop}>
-          <View style={[styles.previewDialog, { backgroundColor: theme.colors.surface }, theme.shadows.md]}>
-            <Text style={[styles.restoreTitle, { color: theme.colors.text }]}>备份内容</Text>
-            <Text numberOfLines={1} style={[styles.previewFileName, { color: theme.colors.textSecondary }]}>{previewBackup.name}</Text>
-            <Text style={[styles.previewSummary, { color: theme.colors.textSecondary }]}>共 {previewBackup.backup.meta.books.length} 本书 · 点击书名查看章节</Text>
-            <ScrollView style={styles.previewList} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+          <View
+            style={[
+              styles.previewDialog,
+              { backgroundColor: theme.colors.surface },
+              theme.shadows.md,
+            ]}
+          >
+            <Text style={[styles.restoreTitle, { color: theme.colors.text }]}>
+              备份内容
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.previewFileName,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              {previewBackup.name}
+            </Text>
+            <Text
+              style={[
+                styles.previewSummary,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              共 {previewBackup.backup.meta.books.length} 本书 ·
+              点击书名查看章节
+            </Text>
+            <ScrollView
+              style={styles.previewList}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+            >
               {previewBackup.backup.meta.books.map(book => {
                 const chapters = previewBackup.backup.chapters[book.id] ?? [];
                 const expanded = previewBookId === book.id;
                 return (
-                  <View key={book.id} style={[styles.previewBook, { borderBottomColor: theme.colors.border }]}>
-                    <Pressable style={styles.previewBookHeader} onPress={() => setPreviewBookId(expanded ? null : book.id)}>
+                  <View
+                    key={book.id}
+                    style={[
+                      styles.previewBook,
+                      { borderBottomColor: theme.colors.border },
+                    ]}
+                  >
+                    <Pressable
+                      style={styles.previewBookHeader}
+                      onPress={() =>
+                        setPreviewBookId(expanded ? null : book.id)
+                      }
+                    >
                       <View style={styles.previewBookInfo}>
-                        <Text numberOfLines={1} style={[styles.previewBookTitle, { color: theme.colors.text }]}>{book.title}</Text>
-                        <Text variant="caption" color="textSecondary">{book.author || '未知作者'} · {chapters.length} 章</Text>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.previewBookTitle,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          {book.title}
+                        </Text>
+                        <Text variant="caption" color="textSecondary">
+                          {book.author || '未知作者'} · {chapters.length} 章
+                        </Text>
                       </View>
-                      <Icon name={expanded ? 'expand-less' : 'expand-more'} size={22} color={theme.colors.textSecondary} />
+                      <Icon
+                        name={expanded ? 'expand-less' : 'expand-more'}
+                        size={22}
+                        color={theme.colors.textSecondary}
+                      />
                     </Pressable>
                     {expanded ? (
                       <View style={styles.previewChapters}>
-                        {chapters.length > 0 ? chapters.map((chapter, index) => (
-                          <Text key={chapter.id} numberOfLines={1} style={[styles.previewChapter, { color: theme.colors.textSecondary }]}>{index + 1}. {chapter.title}</Text>
-                        )) : (
-                          <Text style={[styles.previewChapter, { color: theme.colors.textSecondary }]}>此备份未包含章节数据</Text>
+                        {chapters.length > 0 ? (
+                          chapters.map((chapter, index) => (
+                            <Text
+                              key={chapter.id}
+                              numberOfLines={1}
+                              style={[
+                                styles.previewChapter,
+                                { color: theme.colors.textSecondary },
+                              ]}
+                            >
+                              {index + 1}. {chapter.title}
+                            </Text>
+                          ))
+                        ) : (
+                          <Text
+                            style={[
+                              styles.previewChapter,
+                              { color: theme.colors.textSecondary },
+                            ]}
+                          >
+                            此备份未包含章节数据
+                          </Text>
                         )}
                       </View>
                     ) : null}
@@ -741,7 +1305,13 @@ export default function MeScreen({
               })}
             </ScrollView>
             <View style={styles.restoreActions}>
-              <Button title="关闭" variant="outline" size="small" onPress={() => setPreviewBackup(null)} style={styles.restoreAction} />
+              <Button
+                title="关闭"
+                variant="outline"
+                size="small"
+                onPress={() => setPreviewBackup(null)}
+                style={styles.restoreAction}
+              />
               <Button
                 title="恢复此备份"
                 size="small"
@@ -765,8 +1335,15 @@ export default function MeScreen({
               theme.shadows.md,
             ]}
           >
-            <Text style={[styles.restoreTitle, { color: theme.colors.text }]}>恢复备份</Text>
-            <Text style={[styles.restoreMessage, { color: theme.colors.textSecondary }]}>
+            <Text style={[styles.restoreTitle, { color: theme.colors.text }]}>
+              恢复备份
+            </Text>
+            <Text
+              style={[
+                styles.restoreMessage,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
               将用 {pendingRestore.name} 替换当前书库。此操作不可撤销。
             </Text>
             <View style={styles.restoreActions}>
@@ -797,9 +1374,22 @@ export default function MeScreen({
           style={styles.feedbackWrap}
           onPress={() => setFeedback(null)}
         >
-          <View style={[styles.feedback, { backgroundColor: theme.colors.surface }, theme.shadows.md]}>
-            <Text style={[styles.feedbackTitle, { color: theme.colors.text }]}>{feedback.title}</Text>
-            <Text style={[styles.feedbackMessage, { color: theme.colors.textSecondary }]}>
+          <View
+            style={[
+              styles.feedback,
+              { backgroundColor: theme.colors.surface },
+              theme.shadows.md,
+            ]}
+          >
+            <Text style={[styles.feedbackTitle, { color: theme.colors.text }]}>
+              {feedback.title}
+            </Text>
+            <Text
+              style={[
+                styles.feedbackMessage,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
               {feedback.message}
             </Text>
           </View>
@@ -1004,7 +1594,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
-  backButton: { alignItems: 'center', height: 28, justifyContent: 'center', width: 28 },
+  backButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
   backupActions: {
     flexDirection: 'row',
     gap: 10,
@@ -1042,21 +1637,49 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingTop: 10,
   },
-  cloudFileInfo: { flex: 1, marginRight: 12 },
-  cloudRestore: { marginLeft: 14 },
-  previewDialog: { borderRadius: 8, maxHeight: '78%', maxWidth: 400, padding: 20, width: '100%' },
+  cloudFileInfo: {
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    marginRight: 4,
+  },
+  cloudFileAction: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 44,
+  },
+  previewDialog: {
+    borderRadius: 8,
+    maxHeight: '78%',
+    maxWidth: 400,
+    padding: 20,
+    width: '100%',
+  },
   previewFileName: { fontSize: 12, marginTop: 6 },
   previewSummary: { fontSize: 13, marginTop: 8 },
   previewList: { flexShrink: 1, marginTop: 12 },
   previewBook: { borderBottomWidth: 1, paddingVertical: 8 },
-  previewBookHeader: { alignItems: 'center', flexDirection: 'row', minHeight: 42 },
+  previewBookHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    minHeight: 42,
+  },
   previewBookInfo: { flex: 1, marginRight: 8 },
   previewBookTitle: { fontSize: 14, fontWeight: '600' },
   previewChapters: { paddingBottom: 6, paddingLeft: 10, paddingRight: 24 },
   previewChapter: { fontSize: 12, lineHeight: 20 },
-  cloudDelete: { marginLeft: 14 },
-  clearCredentials: { alignItems: 'center', paddingTop: 6, paddingBottom: 8 },
-  cloudFilesStatus: { fontSize: 13, lineHeight: 19, paddingVertical: 12, textAlign: 'center' },
+  clearCredentials: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  cloudFilesStatus: {
+    fontSize: 13,
+    lineHeight: 19,
+    paddingVertical: 12,
+    textAlign: 'center',
+  },
   restoreBackdrop: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -1096,6 +1719,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 1,
   },
+  themeSetting: { borderBottomWidth: 1, paddingBottom: 14 },
+  themeSettingHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    minHeight: 58,
+    paddingHorizontal: 15,
+  },
+  themeModes: {
+    alignSelf: 'stretch',
+    borderRadius: 10,
+    flexDirection: 'row',
+    marginHorizontal: 15,
+    padding: 3,
+  },
+  themeMode: {
+    alignItems: 'center',
+    borderRadius: 8,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingHorizontal: 8,
+  },
+  themeModeText: { fontSize: 12, fontWeight: '600' },
   settingIcon: {
     width: 34,
     height: 34,

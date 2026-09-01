@@ -21,6 +21,7 @@ import {
 import { decodeEntities, matchOne, stripTags, toAbsolute } from './html';
 import { isInvalidOnlineChapterContent } from './contentQuality';
 import { stripContentNoise } from './contentNoise';
+import { sanitizeBookDescription } from '../../utils/bookDescription';
 
 const HOST = 'www.mingzw.net';
 // www 节点在部分国内云服务器上会被解析到不可达地址；繁体站保留同一书库与目录结构，
@@ -220,7 +221,7 @@ export const mingzwSource: BookSource = {
       author: decodeEntities(author),
       cover,
       description: description
-        ? decodeEntities(stripTags(description)).trim()
+        ? sanitizeBookDescription(decodeEntities(stripTags(description)).trim())
         : undefined,
       status,
       // 当前站点的完整目录入口是 mzwchapter；详情页只展示最新章节。

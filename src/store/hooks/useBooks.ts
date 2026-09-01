@@ -129,11 +129,28 @@ export const usePurgeBooks = () => {
   const setHistory = useSetAtom(readingHistoryAtom);
   const setBookmarks = useSetAtom(bookmarksAtom);
 
-  return (bookIds: string[]) => {
+  return async (bookIds: string[]) => {
     if (bookIds.length === 0) return;
-    const targets = new Set(bookIds);
+    const results = await Promise.all(
+      bookIds.map(async bookId => {
+        try {
+          await deleteBookChapters(bookId);
+          return bookId;
+        } catch (error) {
+          console.warn('[usePurgeBooks] delete chapters failed', bookId, error);
+          return null;
+        }
+      }),
+    );
+    const targets = new Set(
+      results.filter((bookId): bookId is string => !!bookId),
+    );
+    if (targets.size === 0) {
+      throw new Error('章节文件删除失败');
+    }
+    // 批量删除允许部分成功：正文已清掉的书同步移出回收站，失败项继续保留并交给用户重试。
     setBooks(prev => prev.filter(book => !targets.has(book.id)));
-    const dropTargets = <T,>(prev: Record<string, T>): Record<string, T> => {
+    const dropTargets = <T>(prev: Record<string, T>): Record<string, T> => {
       const next = { ...prev };
       targets.forEach(bookId => delete next[bookId]);
       return next;
@@ -141,11 +158,9 @@ export const usePurgeBooks = () => {
     setChapters(dropTargets);
     setHistory(dropTargets);
     setBookmarks(dropTargets);
-    bookIds.forEach(bookId => {
-      deleteBookChapters(bookId).catch(error => {
-        console.warn('[usePurgeBooks] delete chapters failed', error);
-      });
-    });
+    if (targets.size !== bookIds.length) {
+      throw new Error('部分章节文件删除失败');
+    }
   };
 };
 
@@ -189,7 +204,9 @@ export const useUpdateReadingProgress = () => {
               lastReadAt: Date.now(),
               // 首次完成后固定时间；重读导致进度变化时仍保留原完成记录。
               finishedAt:
-                progress >= 100 ? book.finishedAt ?? Date.now() : book.finishedAt,
+                progress >= 100
+                  ? book.finishedAt ?? Date.now()
+                  : book.finishedAt,
             }
           : book,
       ),
