@@ -2,6 +2,29 @@ export type BoundaryTurn = 'prev' | 'next';
 export type ChapterNavigationIntent = BoundaryTurn | 'direct';
 export type ChapterLanding = 'first' | 'last';
 
+/** Web 在章节首尾不会产生越界 scrollOffset，需按触点位移识别向外滑动。 */
+export function getBoundarySwipe({
+  deltaX,
+  deltaY,
+  startPageIndex,
+  pagesLength,
+}: {
+  deltaX: number;
+  deltaY: number;
+  startPageIndex: number;
+  pagesLength: number;
+}): -1 | 1 | null {
+  if (
+    pagesLength < 1 ||
+    Math.abs(deltaX) < 40 ||
+    Math.abs(deltaX) < Math.abs(deltaY) * 1.5
+  )
+    return null;
+  if (startPageIndex === 0 && deltaX > 0) return -1;
+  if (startPageIndex === pagesLength - 1 && deltaX < 0) return 1;
+  return null;
+}
+
 export type BoundaryTurnInput = {
   offsetX: number;
   pageIndex: number;
@@ -68,7 +91,8 @@ export function getBoundaryTurn({
 
   if (
     pageIndex === 0 &&
-    (offsetX < -threshold || releaseVelocityX < -velocityThreshold) &&
+    (offsetX < -threshold ||
+      (offsetX <= 1 && releaseVelocityX < -velocityThreshold)) &&
     chapterIndex > 0
   ) {
     return 'prev';
@@ -79,7 +103,8 @@ export function getBoundaryTurn({
   if (
     pageIndex === lastPageIndex &&
     (offsetX > lastPageOffset + threshold ||
-      releaseVelocityX > velocityThreshold) &&
+      (offsetX >= lastPageOffset - 1 &&
+        releaseVelocityX > velocityThreshold)) &&
     chapterIndex < totalChapters - 1
   ) {
     return 'next';
@@ -97,11 +122,9 @@ export function isStaleScrollSync(
 
 export function getChapterLanding(
   intent: ChapterNavigationIntent = 'direct',
-  targetContentAvailable = true,
 ): ChapterLanding {
-  // 返回上一章只有在正文已经就绪时才落末页；远程章先落首页，避免加载完成后
-  // 又做一次从首页到末页的远距离虚拟列表跳转。
-  return intent === 'prev' && targetContentAvailable ? 'last' : 'first';
+  // 落点由阅读方向决定；远程章保留落点意图，等正文就绪后再定位。
+  return intent === 'prev' ? 'last' : 'first';
 }
 
 /**

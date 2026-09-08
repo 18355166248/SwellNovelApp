@@ -44,6 +44,11 @@ export function useReaderGuards() {
 
   const markUserWebScroll = React.useCallback(() => {
     if (Platform.OS !== 'web') return;
+    // 旧程序滚动的计时器不能在新手势中途推进 epoch，吞掉这次落页同步。
+    if (webProgrammaticScrollTimerRef.current) {
+      clearTimeout(webProgrammaticScrollTimerRef.current);
+      webProgrammaticScrollTimerRef.current = undefined;
+    }
     webProgrammaticScrollRef.current = false;
     webScrollEpochRef.current += 1;
   }, []);

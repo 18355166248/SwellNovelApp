@@ -95,6 +95,9 @@ import {
   ReaderPageData,
 } from '../utils/paginate';
 import { getCharWidthMeasurer } from '../utils/charWidth';
+import { animateReaderPage } from '../utils/readerPageAnimation';
+import { getReaderKeyTurn } from '../utils/readerKeyboard';
+import { useWebReaderGestures } from './reader/useWebReaderGestures';
 import { startReadingSession } from '../utils/readingSession';
 import {
   formatReaderChapterLabel,
@@ -689,6 +692,11 @@ export default function ReaderScreen() {
   // state 用于渲染页码，ref 用于连续手势的同步判定；惯性被下一次拖动打断时，
   // 不能等 React 提交后才知道用户实际已经在哪一页。
   const currentPageIndexRef = React.useRef(0);
+  const programmaticPageTargetRef = React.useRef<number | null>(null);
+  const activePageSessionRef = React.useRef<string | null>(null);
+  const cancelPageAnimationRef = React.useRef<(() => void) | null>(null);
+  const chapterPageLoadInFlightRef = React.useRef(false);
+  const suppressPagePressUntilRef = React.useRef(0);
   const pageRenderGateRef = React.useRef<{
     sessionKey: string;
     expectedItemKey: string;
@@ -699,34 +707,8 @@ export default function ReaderScreen() {
   const pagePreparationEpochRef = React.useRef(0);
   const pageMomentumReleasedAtRef = React.useRef<number | null>(null);
   const pageViewabilityConfigRef = React.useRef({
-    itemVisiblePercentThreshold: 1,
+    itemVisiblePercentThreshold: 95,
   });
-  const onPageViewableItemsChangedRef = React.useRef(
-    ({
-      viewableItems,
-    }: {
-      viewableItems: Array<{ item?: ReaderPageData; isViewable?: boolean }>;
-    }) => {
-      const gate = pageRenderGateRef.current;
-      if (!gate) return;
-      const targetVisible = viewableItems.some(
-        token =>
-          token.isViewable !== false &&
-          token.item?.key === gate.expectedItemKey,
-      );
-      if (!targetVisible) return;
-      if (pageReadyFrameRef.current != null) {
-        cancelAnimationFrame(pageReadyFrameRef.current);
-      }
-      // Viewability 回调说明目标 cell 已进入布局；再等一帧，让原生文字完成绘制后
-      // 才移除 Loading 并开放滚动，避免手势跑在首屏渲染前面。
-      pageReadyFrameRef.current = requestAnimationFrame(() => {
-        if (pageRenderGateRef.current?.sessionKey !== gate.sessionKey) return;
-        pageReadyFrameRef.current = undefined;
-        setReadyPageSessionKey(gate.sessionKey);
-      });
-    },
-  );
   const pendingLandRef = React.useRef<'last' | null>(null);
   // 换章/重排版后需要把横向容器定位到的目标页；setPageIndex 只更新页码，
   // 不会滚动容器，需在新内容布局完成后由 rAF 轮询补一次定位。
@@ -792,6 +774,9 @@ export default function ReaderScreen() {
   React.useEffect(
     () => () => {
       if (transitionRef.current) clearTimeout(transitionRef.current);
+      cancelPageAnimationRef.current?.();
+      activePageSessionRef.current = null;
+      contentRequestTrackerRef.current?.reset();
       if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
       if (pageReadyFrameRef.current != null) {
         cancelAnimationFrame(pageReadyFrameRef.current);
@@ -1173,6 +1158,8 @@ export default function ReaderScreen() {
   }, [chapter?.id, pages]);
 
   const chapterChangedForPageLayout = prevChapterIdRef.current !== chapter?.id;
+  const chapterContentReady =
+    !isOnline || hasUsableChapterContent(chapter, book?.source?.name);
   // 换章使用预定的首/末页落点；同章因横竖屏、字号等重新分页时，则按当前
   // 逻辑字符偏移寻找新页。门禁必须等待这个真实落点，不能固定等第 1 页，
   // 否则列表定位到后续页后永远收不到“第 1 页可见”，Loading 会无法解除。
@@ -1183,7 +1170,11 @@ export default function ReaderScreen() {
     chapter?.id || 'chapter'
   }|${chapterContentFingerprint}|${chapterTextLength}|${
     pages.length
-  }|${viewportWidth}|${viewportHeight}`;
+  }|${viewportWidth}|${viewportHeight}|${bodyFont}|${display.fontSize}|${
+    pageMetrics.lineHeight
+  }|${pageMetrics.paraGap}|${pageMetrics.firstBodyHeight}|${settings.pageMode}`;
+  activePageSessionRef.current =
+    status === 'ready' && chapterContentReady ? pageSessionKey : null;
   const expectedRenderedPageKey = pages[pageRenderTargetIndex]?.key;
   pageRenderGateRef.current =
     status === 'ready' &&
@@ -1193,11 +1184,50 @@ export default function ReaderScreen() {
       ? { sessionKey: pageSessionKey, expectedItemKey: expectedRenderedPageKey }
       : null;
   const pageInteractionReady =
-    settings.pageMode !== 'page' ||
-    pages.length === 0 ||
-    readyPageSessionKey === pageSessionKey;
+    status === 'ready' &&
+    chapterContentReady &&
+    (settings.pageMode !== 'page' ||
+      pages.length === 0 ||
+      readyPageSessionKey === pageSessionKey);
+
+  const onPageViewableItemsChanged = React.useMemo(
+    () =>
+      ({ viewableItems }: {
+        viewableItems: Array<{ item?: ReaderPageData; isViewable?: boolean }>;
+      }) => {
+        const gate = pageRenderGateRef.current;
+        // 同章重排版也会复用页 key；必须拒绝已卸载列表迟到的可见性回调。
+        if (!gate || activePageSessionRef.current !== pageSessionKey) return;
+        if (!viewableItems.some(token =>
+          token.isViewable !== false && token.item?.key === gate.expectedItemKey,
+        )) return;
+        if (pageReadyFrameRef.current != null) {
+          cancelAnimationFrame(pageReadyFrameRef.current);
+        }
+        pageReadyFrameRef.current = requestAnimationFrame(() => {
+          if (
+            activePageSessionRef.current !== pageSessionKey ||
+            pageRenderGateRef.current?.sessionKey !== gate.sessionKey
+          ) return;
+          pageReadyFrameRef.current = undefined;
+          setReadyPageSessionKey(gate.sessionKey);
+        });
+      },
+    [pageSessionKey],
+  );
+
+  React.useLayoutEffect(() => {
+    cancelPageAnimationRef.current?.();
+    cancelPageAnimationRef.current = null;
+    programmaticPageTargetRef.current = null;
+    return () => {
+      cancelPageAnimationRef.current?.();
+    };
+  }, [pageSessionKey, status]);
 
   React.useEffect(() => {
+    // 在线章的空占位页不能消费返回末页或续读的意图。
+    if (!chapterContentReady || status !== 'ready') return;
     const chapterChanged = prevChapterIdRef.current !== chapter?.id;
     prevChapterIdRef.current = chapter?.id;
 
@@ -1272,10 +1302,12 @@ export default function ReaderScreen() {
     pendingScrollPageRef.current = remapped;
   }, [
     chapter?.id,
+    chapterContentReady,
     chapterTextLength,
     invalidateWebScrollSync,
     pages,
     settings.pageMode,
+    status,
   ]);
 
   const scrollChapterFraction =
@@ -1305,7 +1337,7 @@ export default function ReaderScreen() {
 
   // 翻页/滚动落定后，把当前页内偏移与书籍进度持久化，重开时精确续读。
   React.useEffect(() => {
-    if (!readingEngaged || drawerOpen || status !== 'ready' || !chapter) {
+    if (!readingEngaged || drawerOpen || !pageInteractionReady || !chapter) {
       return;
     }
     updateProgressRef.current(
@@ -1320,6 +1352,7 @@ export default function ReaderScreen() {
     chapter?.id,
     drawerOpen,
     pageIndex,
+    pageInteractionReady,
     pageProgressPct,
     readingEngaged,
     scrollPosition,
@@ -1580,8 +1613,13 @@ export default function ReaderScreen() {
         book?.source?.name,
       );
       if (idx !== chapterIndex) chapterSwitchTargetRef.current = idx;
-      pendingLandRef.current =
-        getChapterLanding(intent, targetReady) === 'last' ? 'last' : null;
+      // 失败重试延续原来的阅读方向，不能把尚未消费的“返回末页”清成首页。
+      if (idx !== chapterIndex || status !== 'error') {
+        pendingLandRef.current =
+          getChapterLanding(intent) === 'last' ? 'last' : null;
+      }
+      activePageSessionRef.current = null;
+      cancelPageAnimationRef.current?.();
       lockChapterTurn();
       invalidateWebScrollSync();
       closeReadingChrome();
@@ -1630,7 +1668,11 @@ export default function ReaderScreen() {
   );
 
   const loadCurrentChapterNextPage = React.useCallback(() => {
-    if (!chapter?.nextPageUrl || status === 'loading') return false;
+    if (!chapter?.nextPageUrl) return false;
+    if (status === 'loading' || chapterPageLoadInFlightRef.current) return true;
+    chapterPageLoadInFlightRef.current = true;
+    activePageSessionRef.current = null;
+    cancelPageAnimationRef.current?.();
     const tracker = contentRequestTrackerRef.current!;
     const requestToken = tracker.start();
     const resumePosition = chapterTextLength;
@@ -1663,6 +1705,9 @@ export default function ReaderScreen() {
           error: error instanceof Error ? error.message : String(error),
         });
         if (tracker.isLatest(requestToken)) setStatus('error');
+      })
+      .finally(() => {
+        chapterPageLoadInFlightRef.current = false;
       });
     return true;
   }, [
@@ -1681,28 +1726,39 @@ export default function ReaderScreen() {
   const scrollToPage = React.useCallback(
     (index: number, smooth: boolean) => {
       const offset = index * viewportWidth;
+      cancelPageAnimationRef.current?.();
+      cancelPageAnimationRef.current = null;
       // react-native-web 上 FlatList 的 scrollToIndex/scrollToOffset 会静默不滚动，
       // 需要定位真正横向 overflow 的 DOM 节点，scroll-snap 会把落点吸附到整页。
       if (Platform.OS === 'web') {
         const node = findReaderPageScrollNode();
         // RNW 会把 ScrollView DOM 节点的 scrollTo 覆写成 {x,y,animated} 签名，
         // 直接传 DOM 标准的 {left,behavior} 会被忽略，键盘/点击翻页因此不生效。
-        // Web 程序翻页必须即时定位：浏览器 smooth scroll + scroll-snap 的结束时机
-        // 不稳定，迟到的滚动事件会把页码同步回旧的末页。
         if (node) {
-          markWebProgrammaticScroll(260);
           const nativeScrollTo = HTMLElement.prototype.scrollTo as unknown as (
             this: Element,
             options: { left: number; behavior: ScrollBehavior },
           ) => void;
-          nativeScrollTo.call(node, {
-            left: offset,
-            behavior: 'auto',
-          });
-          requestAnimationFrame(() => {
-            if (Math.abs(node.scrollLeft - offset) > 1) {
-              nativeScrollTo.call(node, { left: offset, behavior: 'auto' });
-            }
+          const writeOffset = (left: number) =>
+            nativeScrollTo.call(node, { left, behavior: 'auto' });
+          const animate =
+            smooth &&
+            !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+          // 自己控制动画与结束落点，避免浏览器 smooth-scroll 与强制吸附竞争。
+          // 关闭吸附必须同步生效，不能等待 React 的下一次样式提交。
+          node.style.scrollSnapType = 'none';
+          setSnapEnabled(false);
+          markWebProgrammaticScroll(400);
+          cancelPageAnimationRef.current = animateReaderPage({
+            from: node.scrollLeft,
+            to: offset,
+            duration: animate ? 180 : 0,
+            update: writeOffset,
+            complete: () => {
+              cancelPageAnimationRef.current = null;
+              markWebProgrammaticScroll(80);
+              setSnapEnabled(true);
+            },
           });
         }
       } else {
@@ -1716,9 +1772,13 @@ export default function ReaderScreen() {
     (delta: number) => {
       // 新章节首屏尚未完成原生挂载时，不响应边缘点击、键盘或连续翻页；Loading
       // 消失后再统一开放，避免把用户送到未渲染的虚拟 cell。
-      if (!pageInteractionReady) return;
+      if (
+        !pageInteractionReady ||
+        activePageSessionRef.current !== pageSessionKey
+      ) return;
+      pagePreparationEpochRef.current += 1;
       closeReadingChrome();
-      const target = pageIndex + delta;
+      const target = currentPageIndexRef.current + delta;
       if (target < 0) {
         if (chapterIndex > 0) {
           goToChapter(chapterIndex - 1, 'prev');
@@ -1732,10 +1792,11 @@ export default function ReaderScreen() {
         }
         return;
       }
-      scrollToPage(target, true);
+      programmaticPageTargetRef.current = target;
       currentOffsetRef.current = pages[target]?.startOffset ?? 0;
       currentPageIndexRef.current = target;
       setPageIndex(target);
+      scrollToPage(target, true);
     },
     [
       chapterIndex,
@@ -1743,7 +1804,7 @@ export default function ReaderScreen() {
       goToChapter,
       loadCurrentChapterNextPage,
       pageInteractionReady,
-      pageIndex,
+      pageSessionKey,
       pages,
       scrollToPage,
       total,
@@ -1766,7 +1827,7 @@ export default function ReaderScreen() {
         const target = findPageByOffset(pages, position);
         currentOffsetRef.current = position;
         if (Platform.OS === 'web') setSnapEnabled(target <= 0);
-        pendingScrollPageRef.current = target > 0 ? target : null;
+        pendingScrollPageRef.current = target;
         currentPageIndexRef.current = target;
         setPageIndex(target);
       } else if (settings.pageMode === 'scroll') {
@@ -1946,21 +2007,25 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     if (Platform.OS !== 'web' || settings.pageMode !== 'page') return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
-        e.preventDefault();
-        goToPageRef.current(-1);
-      } else if (
-        e.key === 'ArrowRight' ||
-        e.key === 'PageDown' ||
-        e.key === ' '
-      ) {
-        e.preventDefault();
-        goToPageRef.current(1);
-      }
+      const target = e.target instanceof Element ? e.target : null;
+      const editing =
+        !!target?.closest(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]',
+        ) ||
+        (!!target?.closest('button, [role="button"]') &&
+          !target?.closest('[data-testid="reader-page-list"]'));
+      const delta = getReaderKeyTurn(
+        e,
+        editing || drawerOpen || settingsOpen || backgroundOpen || !!excerptDraft,
+      );
+      if (delta == null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      goToPageRef.current(delta);
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [settings.pageMode]);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [settings.pageMode, drawerOpen, settingsOpen, backgroundOpen, excerptDraft]);
 
   // 安卓硬件返回键：优先关闭已打开的浮层（背景工作台 / 设置面板 / 目录抽屉 / 工具栏），
   // 都关闭后才交回导航栈退出阅读页，符合安卓返回习惯。
@@ -2004,6 +2069,7 @@ export default function ReaderScreen() {
 
   const handlePagedReaderPress = React.useCallback(
     (event: any) => {
+      if (Date.now() < suppressPagePressUntilRef.current) return;
       // 带长按摘抄的 Text 会成为独立响应节点，轻触正文时必须主动复用页级点击路由；
       // 同时停止冒泡，避免 Text 与外层 Pressable 各切换一次，最终看起来像工具栏没有响应。
       event?.stopPropagation?.();
@@ -2063,6 +2129,7 @@ export default function ReaderScreen() {
           ]}
         >
           <Pressable
+            testID={`reader-page-${index}`}
             accessibilityRole="button"
             accessibilityLabel="阅读正文，点击左侧或右侧翻页，点击中间显示工具栏"
             onPress={handlePagedReaderPress}
@@ -2111,6 +2178,7 @@ export default function ReaderScreen() {
               item.blocks.map((block, i) => (
                 <Text
                   key={block.startOffset}
+                  testID="reader-page-text"
                   // 正文长按用于摘抄，但普通轻触仍应只交给页级点击区处理；
                   // 关闭 iOS 的文字按压高亮，避免轻触正文时误以为已触发划线/摘抄。
                   suppressHighlighting
@@ -2189,6 +2257,10 @@ export default function ReaderScreen() {
 
   const handlePageMomentumEnd = React.useCallback(
     (event: { nativeEvent: { contentOffset: { x: number } } }) => {
+      if (
+        activePageSessionRef.current !== pageSessionKey ||
+        !pageInteractionReady
+      ) return;
       const releasedAt = pageMomentumReleasedAtRef.current;
       pageMomentumReleasedAtRef.current = null;
       if (releasedAt != null && Date.now() - releasedAt > 800) {
@@ -2199,16 +2271,23 @@ export default function ReaderScreen() {
       }
       const raw = Math.round(event.nativeEvent.contentOffset.x / viewportWidth);
       const next = Math.max(0, Math.min(pages.length - 1, raw));
+      // 连点翻页期间前一个动画可能迟到；只有当前目标的落定事件能提交页码。
+      if (
+        programmaticPageTargetRef.current != null &&
+        programmaticPageTargetRef.current !== next
+      ) return;
+      programmaticPageTargetRef.current = null;
       currentOffsetRef.current = pages[next]?.startOffset ?? 0;
       if (currentPageIndexRef.current === next) return;
       currentPageIndexRef.current = next;
       setPageIndex(next);
     },
-    [chapter?.id, pages, viewportWidth],
+    [chapter?.id, pageInteractionReady, pageSessionKey, pages, viewportWidth],
   );
 
   const syncPageByScrollOffset = React.useCallback(
     (offsetX: number) => {
+      if (activePageSessionRef.current !== pageSessionKey) return;
       const raw = Math.round(offsetX / viewportWidth);
       const next = Math.max(0, Math.min(pages.length - 1, raw));
       if (currentPageIndexRef.current === next) return;
@@ -2216,11 +2295,15 @@ export default function ReaderScreen() {
       currentPageIndexRef.current = next;
       setPageIndex(next);
     },
-    [pages, viewportWidth],
+    [pageSessionKey, pages, viewportWidth],
   );
 
   const tryTurnChapterFromGesture = React.useCallback(
     (offsetX: number, releaseVelocityX = 0) => {
+      if (
+        activePageSessionRef.current !== pageSessionKey ||
+        !pageInteractionReady
+      ) return false;
       const gesture = chapterTurnGestureRef.current;
       if (!canHandleBoundaryTurnGesture(gesture, chapter?.id)) return false;
 
@@ -2232,7 +2315,7 @@ export default function ReaderScreen() {
         pagesLength: pages.length,
         viewportWidth,
         chapterIndex,
-        totalChapters: total,
+        totalChapters: chapter?.nextPageUrl ? total + 1 : total,
         locked: chapterTurnLockRef.current,
         threshold: CHAPTER_TURN_THRESHOLD,
         releaseVelocityX,
@@ -2254,19 +2337,44 @@ export default function ReaderScreen() {
     },
     [
       chapter?.id,
+      chapter?.nextPageUrl,
       chapterIndex,
       chapterTurnLockRef,
       goToChapter,
       loadCurrentChapterNextPage,
       lockChapterTurn,
       pages.length,
+      pageSessionKey,
+      pageInteractionReady,
       total,
       viewportWidth,
     ],
   );
 
+  useWebReaderGestures({
+    sessionKey: pageSessionKey,
+    enabled:
+      settings.pageMode === 'page' && pageInteractionReady &&
+      !drawerOpen && !settingsOpen && !backgroundOpen && !excerptDraft,
+    pagesLength: pages.length,
+    currentPageIndexRef,
+    suppressPressUntilRef: suppressPagePressUntilRef,
+    onTurn: goToPage,
+    onUserScroll: () => {
+      cancelPageAnimationRef.current?.();
+      cancelPageAnimationRef.current = null;
+      programmaticPageTargetRef.current = null;
+      pagePreparationEpochRef.current += 1;
+      markUserWebScroll();
+      setSnapEnabled(true);
+      const node = findReaderPageScrollNode();
+      if (node) syncPageByScrollOffset(node.scrollLeft);
+    },
+  });
+
   const handlePageScroll = React.useCallback(
     (event: { nativeEvent: { contentOffset: { x: number } } }) => {
+      if (activePageSessionRef.current !== pageSessionKey) return;
       const x = event.nativeEvent.contentOffset.x;
       if (Platform.OS === 'web') {
         if (webProgrammaticScrollRef.current) return;
@@ -2290,6 +2398,7 @@ export default function ReaderScreen() {
       tryTurnChapterFromGesture(x);
     },
     [
+      pageSessionKey,
       syncPageByScrollOffset,
       tryTurnChapterFromGesture,
       webProgrammaticScrollRef,
@@ -2444,8 +2553,16 @@ export default function ReaderScreen() {
               getItemLayout={getPageLayout}
               initialScrollIndex={pageRenderTargetIndex}
               viewabilityConfig={pageViewabilityConfigRef.current}
-              onViewableItemsChanged={onPageViewableItemsChangedRef.current}
+              onViewableItemsChanged={onPageViewableItemsChanged}
               onScrollBeginDrag={event => {
+                if (
+                  activePageSessionRef.current !== pageSessionKey ||
+                  !pageInteractionReady
+                ) return;
+                cancelPageAnimationRef.current?.();
+                cancelPageAnimationRef.current = null;
+                programmaticPageTargetRef.current = null;
+                setSnapEnabled(true);
                 // 用户交互优先级最高：终止尚未完成的相邻章节分片预分页。
                 pagePreparationEpochRef.current += 1;
                 pageMomentumReleasedAtRef.current = null;
@@ -2467,6 +2584,7 @@ export default function ReaderScreen() {
                 setToolbarVisible(false);
               }}
               onScrollEndDrag={event => {
+                if (activePageSessionRef.current !== pageSessionKey) return;
                 let turnedChapter = false;
                 if (Platform.OS !== 'web') {
                   const nativeVelocity = event.nativeEvent.velocity?.x ?? 0;

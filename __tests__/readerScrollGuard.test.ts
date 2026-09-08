@@ -1,5 +1,6 @@
 import {
   canHandleBoundaryTurnGesture,
+  getBoundarySwipe,
   getChapterLanding,
   getChapterLandingPage,
   getBoundaryTurn,
@@ -8,6 +9,22 @@ import {
 } from '../src/utils/readerScrollGuard';
 
 describe('readerScrollGuard', () => {
+  it('recognizes outward web swipes only when they start at a chapter boundary', () => {
+    const input = {
+      deltaX: -80,
+      deltaY: 10,
+      startPageIndex: 2,
+      pagesLength: 3,
+    };
+    expect(getBoundarySwipe(input)).toBe(1);
+    expect(getBoundarySwipe({ ...input, deltaX: 80, startPageIndex: 0 })).toBe(
+      -1,
+    );
+    expect(getBoundarySwipe({ ...input, startPageIndex: 1 })).toBeNull();
+    expect(getBoundarySwipe({ ...input, deltaY: 90 })).toBeNull();
+    expect(getBoundarySwipe({ ...input, deltaX: -12 })).toBeNull();
+    expect(getBoundarySwipe({ ...input, pagesLength: 0 })).toBeNull();
+  });
   it('allows one next-chapter boundary turn at the last page', () => {
     expect(
       getBoundaryTurn({
@@ -209,10 +226,37 @@ describe('readerScrollGuard', () => {
 
   it('lands on the previous chapter last page only for backward boundary navigation', () => {
     expect(getChapterLanding('prev')).toBe('last');
-    expect(getChapterLanding('prev', true)).toBe('last');
-    expect(getChapterLanding('prev', false)).toBe('first');
     expect(getChapterLanding('next')).toBe('first');
     expect(getChapterLanding('direct')).toBe('first');
+  });
+
+  it('does not cross chapters when a boundary drag has moved back into the chapter', () => {
+    expect(
+      getBoundaryTurn({
+        offsetX: 320,
+        pageIndex: 2,
+        pagesLength: 3,
+        viewportWidth: 320,
+        chapterIndex: 4,
+        totalChapters: 10,
+        locked: false,
+        releaseVelocityX: 0.4,
+        velocityThreshold: 0.18,
+      }),
+    ).toBeNull();
+    expect(
+      getBoundaryTurn({
+        offsetX: 320,
+        pageIndex: 0,
+        pagesLength: 3,
+        viewportWidth: 320,
+        chapterIndex: 4,
+        totalChapters: 10,
+        locked: false,
+        releaseVelocityX: -0.4,
+        velocityThreshold: 0.18,
+      }),
+    ).toBeNull();
   });
 
   it('calculates the target page before the new chapter list mounts', () => {
