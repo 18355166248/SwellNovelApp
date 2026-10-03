@@ -13,17 +13,28 @@ import {
   selectedBookIdAtom,
 } from '../atoms';
 import { Book, Chapter } from '../types/book';
-import { addOnlineBook } from '../../utils/addOnlineBook';
+import {
+  addOnlineBook,
+  isSameOnlineBook,
+  normalizeOnlineCatalog,
+  onlineBookImportKey,
+  recognizedBookImportId,
+  type OnlineBookResult,
+} from '../../utils/addOnlineBook';
 import { getSourceById } from '../../services/source/registry';
 import type { ParsedChapterContent } from '../../services/source/types';
 import {
   isInvalidOnlineChapterContent,
   isOnlineChapterCacheUsable,
+  isCompleteOnlineChapterCacheUsable,
   BROWSER_CONTENT_VERSION,
   ONLINE_CONTENT_VERSION,
 } from '../../services/source/contentQuality';
 import { isBlockedText } from '../../services/source/contentGuards';
-import { collectChapterPages } from '../../services/source/chapterPages';
+import {
+  collectChapterPages,
+  MAX_CHAPTER_PAGES,
+} from '../../services/source/chapterPages';
 import { loadBookChapters, saveBookChapters } from '../../utils/libraryStorage';
 import { calculateReadingProgress } from '../../utils/readingProgressPercent';
 import {
@@ -35,6 +46,7 @@ import {
   migrateReaderSelection,
   progressAfterCatalogRepair,
   repairCatalogPreservingIdentity,
+  normalizedChapterIdentity,
 } from '../../utils/catalogRepair';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
@@ -59,6 +71,7 @@ const BAD_CHAPTER_TITLES = new Set([
   '👏💦约爱社区',
 ]);
 const ENSURE_CHAPTER_TIMEOUT_MS = 45000;
+const BOOK_IMPORT_TIMEOUT_MS = 45000;
 const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // 阅读器后台预取与用户主动切章可能同时命中同一章。按章节合并在途请求，
 // 避免重复占用书源连接；前台切章会直接等待已经开始的预取结果。
@@ -207,101 +220,244 @@ function withTimeout<T>(
   });
 }
 
-/**
- * 添加在线书籍：解析 URL → 入库 → 持久化目录。返回入库的 Book。
- * 已存在同 id 的书则直接复用（避免重复添加，保留已缓存正文）。
- */
+type LibraryStore = ReturnType<typeof useStore>;
+const bookImportRequests = new WeakMap<
+  LibraryStore,
+  Map<string, Promise<Book>>
+>();
+const bookImportQueues = new WeakMap<LibraryStore, Promise<void>>();
+
+function runBookImport(
+  store: LibraryStore,
+  key: string,
+  importBook: () => Promise<Book>,
+): Promise<Book> {
+  let requests = bookImportRequests.get(store);
+  if (!requests) {
+    requests = new Map();
+    bookImportRequests.set(store, requests);
+  }
+  const existing = requests.get(key);
+  if (existing) return existing;
+  // 同书请求共用解析和保存结果；不同书的网络请求可并发，只有发布入库事务需要串行。
+  const request = importBook();
+  requests.set(key, request);
+  const tail = request.then(
+    () => undefined,
+    () => undefined,
+  );
+  tail.then(() => {
+    if (requests.get(key) === request) requests.delete(key);
+  });
+  return request;
+}
+
+function commitBookImport(
+  store: LibraryStore,
+  incoming: OnlineBookResult,
+  fromBrowser = false,
+): Promise<Book> {
+  // 两个入口等待落盘时仍只能有一个发布者，避免都读到“尚未入库”的旧状态。
+  const request = (bookImportQueues.get(store) ?? Promise.resolve()).then(() =>
+    saveImportedBook(store, incoming, fromBrowser),
+  );
+  const tail = request.then(
+    () => undefined,
+    () => undefined,
+  );
+  bookImportQueues.set(store, tail);
+  tail.then(() => {
+    if (bookImportQueues.get(store) === tail) bookImportQueues.delete(store);
+  });
+  return request;
+}
+
+async function saveImportedBook(
+  store: LibraryStore,
+  incoming: OnlineBookResult,
+  fromBrowser = false,
+): Promise<Book> {
+  const incomingBook = incoming.book;
+  // 去重包含回收站与另一入口的历史 id；重新添加表示还原，用户状态继续沿用原书。
+  const existing = store
+    .get(booksAtom)
+    .find(book => isSameOnlineBook(book, incomingBook.source!.bookUrl));
+  const bookId = existing?.id ?? incomingBook.id;
+  let previous = store.get(chaptersAtom)[bookId];
+  if (existing && !previous) {
+    const loaded = (await loadBookChapters(bookId)) ?? [];
+    previous = store.get(chaptersAtom)[bookId] ?? loaded;
+  }
+  previous = previous ?? [];
+  const metas = incoming.chapters.map(chapter => ({
+    title: chapter.title,
+    url: chapter.sourceUrl!,
+  }));
+  const preserveCatalog =
+    metas.length < previous.length &&
+    !isBadBookshukuCatalog(existing?.source?.name, previous);
+  // 临时只识别到第一页时保留完整旧目录；残缺 bookshuku 目录则仍允许可信修复。
+  if (
+    !preserveCatalog &&
+    existing &&
+    !isSafeBookshukuCatalogReplacement(
+      existing.source?.name,
+      previous,
+      incoming.chapters,
+    )
+  ) {
+    throw new Error('书源返回的目录仍不完整，已保留本地目录和阅读数据');
+  }
+  const selectedMetas = preserveCatalog
+    ? previous.map(chapter => ({
+        title: chapter.title,
+        url: chapter.sourceUrl!,
+      }))
+    : metas;
+  const repair = (current: Chapter[]) =>
+    repairCatalogPreservingIdentity(bookId, current, selectedMetas, cached =>
+      isCachedOnlineChapterUsable(
+        cached,
+        existing?.source?.name ?? incomingBook.source?.name,
+      ),
+    );
+  let repaired = repair(previous);
+  const pendingCache = cacheTimers.get(bookId);
+  if (pendingCache) {
+    clearTimeout(pendingCache);
+    cacheTimers.delete(bookId);
+  }
+  // 目录保存成功才显示入库成功；磁盘/浏览器存储失败交给入口提示重试，避免空壳书。
+  try {
+    await saveBookChapters(bookId, repaired.chapters);
+  } catch (error) {
+    // 导入失败时原书没有变化；此前待写的阅读缓存仍需重试，不能随导入一起丢掉。
+    if (pendingCache)
+      scheduleCache(bookId, store.get(chaptersAtom)[bookId] ?? previous);
+    throw error;
+  }
+  const currentChapters = store.get(chaptersAtom)[bookId];
+  if (currentChapters && currentChapters !== previous) {
+    // 落盘时阅读器仍可能缓存正文；发布前重新合并最新缓存，不能用导入前快照覆盖它。
+    previous = currentChapters;
+    repaired = repair(previous);
+    scheduleCache(bookId, repaired.chapters);
+  }
+  const latestBook =
+    store.get(booksAtom).find(book => book.id === bookId) ?? existing;
+  const history = store.get(readingHistoryAtom)[bookId];
+  const references = migrateCatalogReferences(
+    bookId,
+    latestBook?.currentChapterId,
+    history,
+    store.get(bookmarksAtom)[bookId] ?? [],
+    repaired.chapters,
+    repaired.chapterIdMap,
+  );
+  const book: Book = {
+    ...incomingBook,
+    ...latestBook,
+    id: bookId,
+    title: incomingBook.title || latestBook?.title || '未命名书籍',
+    author: incomingBook.author || latestBook?.author || '佚名',
+    cover: incomingBook.cover || latestBook?.cover,
+    description: incomingBook.description || latestBook?.description,
+    // 注册书源已能直接读取正文，浏览器再次识别时保留此能力。
+    source:
+      fromBrowser && latestBook?.source && getSourceById(latestBook.source.name)
+        ? latestBook.source
+        : incomingBook.source,
+    totalChapters: repaired.chapters.length,
+    currentChapterId: references.currentChapterId,
+    progress: latestBook
+      ? progressAfterCatalogRepair(
+          latestBook,
+          previous,
+          repaired.chapters,
+          history,
+          repaired.chapterIdMap,
+        )
+      : 0,
+    updatedAt: Date.now(),
+    deletedAt: undefined,
+  };
+  const readerTargetsBook = store.get(selectedBookIdAtom) === bookId;
+  const selection = migrateReaderSelection(
+    previous,
+    repaired.chapters,
+    readerTargetsBook ? store.get(currentChapterIndexAtom) : null,
+    references.currentChapterId,
+    repaired.chapterIdMap,
+  );
+  store.set(chaptersAtom, prev => ({ ...prev, [bookId]: repaired.chapters }));
+  if (readerTargetsBook) {
+    store.set(currentChapterIndexAtom, selection.chapterIndex);
+    store.set(currentChapterContentAtom, selection.chapterContent);
+  }
+  if (references.history) {
+    store.set(readingHistoryAtom, prev => ({
+      ...prev,
+      [bookId]: references.history!,
+    }));
+  }
+  store.set(bookmarksAtom, prev => ({
+    ...prev,
+    [bookId]: references.bookmarks,
+  }));
+  store.set(booksAtom, prev =>
+    latestBook
+      ? prev.map(item => (item.id === bookId ? book : item))
+      : [...prev, book],
+  );
+  return book;
+}
+
+/** 添加在线书并保存目录；重复添加保留续读、正文、书签与追更状态。 */
 export const useAddOnlineBook = () => {
   const store = useStore();
-
-  return async (url: string): Promise<Book> => {
-    const { book, chapters } = await addOnlineBook(url);
-
-    const existing = store.get(booksAtom).find(b => b.id === book.id);
-    if (existing) {
-      const currentChapters = store.get(chaptersAtom)[book.id] ?? [];
-      const contentBySource = new Map(
-        currentChapters
-          .filter(
-            c =>
-              c.sourceUrl &&
-              isCachedOnlineChapterUsable(c, existing.source?.name),
-          )
-          .map(c => [c.sourceUrl!, c]),
-      );
-      const mergedChapters = chapters.map(c => {
-        const cached = c.sourceUrl
-          ? contentBySource.get(c.sourceUrl)
-          : undefined;
-        return cached
-          ? {
-              ...c,
-              content: cached.content,
-              wordCount: cached.wordCount,
-              contentVersion: cached.contentVersion,
-              nextPageUrl: cached.nextPageUrl,
-              contentComplete: cached.contentComplete,
-            }
-          : c;
-      });
-
-      // 同一本网络书重新添加时刷新目录：书源结构修复或站点更新后，避免继续复用旧的错误目录。
-      store.set(booksAtom, prev =>
-        prev.map(b =>
-          b.id === book.id
-            ? {
-                ...b,
-                title: book.title,
-                author: book.author,
-                cover: book.cover,
-                description: book.description,
-                totalChapters: mergedChapters.length,
-                source: book.source,
-                updatedAt: Date.now(),
-                // 同 id 的书可能正躺在回收站；用户再次添加即视为还原，
-                // 否则后续跳详情页时会被 activeBooksAtom 过滤掉。
-                deletedAt: undefined,
-              }
-            : b,
+  return (url: string): Promise<Book> =>
+    runBookImport(store, onlineBookImportKey(url), async () =>
+      // 代理、WebView 与镜像兜底会累加等待；只限制解析阶段，超时后迟到结果不能再发布入库。
+      // 保存阶段不与超时竞赛，避免磁盘已提交却被界面误报失败。
+      commitBookImport(
+        store,
+        await withTimeout(
+          addOnlineBook(url),
+          BOOK_IMPORT_TIMEOUT_MS,
+          '书源响应超时',
         ),
-      );
-      store.set(chaptersAtom, prev => ({ ...prev, [book.id]: mergedChapters }));
-      saveBookChapters(book.id, mergedChapters).catch(error => {
-        console.warn('[useAddOnlineBook] refresh catalog failed', error);
-      });
-      return { ...existing, ...book, totalChapters: mergedChapters.length };
-    }
-
-    store.set(booksAtom, prev => [...prev, book]);
-    store.set(chaptersAtom, prev => ({ ...prev, [book.id]: chapters }));
-    // 目录（标题 + sourceUrl，无正文）立即落盘，重启后无需重新解析。
-    saveBookChapters(book.id, chapters).catch(error => {
-      console.warn('[useAddOnlineBook] save catalog failed', error);
-    });
-    return book;
-  };
+      ),
+    );
 };
 
 /**
  * 把内置浏览器识别到的页面加入书架（章节仅存标题+URL，正文留待后续在浏览器会话内抓取）。
- * 稳定 id：来源主机 + 详情页 URL 里的数字（取不到则退回 URL 本身），同页重复识别可复用。
- * 已存在同 id 的书直接复用，避免重复入库。
+ * 搜索与浏览器识别共用书源身份，旧版 browser id 也会被 URL 身份匹配并保留。
  */
 export const useAddRecognizedBook = () => {
   const store = useStore();
 
-  return async (data: RecognizedBook): Promise<Book> => {
-    const idFromUrl =
-      (data.url.match(/(\d{2,})/g) || []).join('_') ||
-      data.url.replace(/[^a-z0-9]+/gi, '').slice(-16) ||
-      String(Date.now());
-    const bookId = `browser:${data.host}:${idFromUrl}`;
+  return (data: RecognizedBook): Promise<Book> =>
+    runBookImport(store, onlineBookImportKey(data.url), async () => {
+      if (!data.ok || !data.isDetail)
+        throw new Error('未识别到书籍目录，请重新识别后重试');
+      const metas = normalizeOnlineCatalog(data.chapters);
+      const bookId = recognizedBookImportId(data.url, data.host);
 
-    const existing = store.get(booksAtom).find(b => b.id === bookId);
-    if (existing) {
-      // 同一详情页可能先导入第一页、后识别到完整分页目录；此时必须覆盖旧目录，
-      // 否则用户点击“加入书架”后仍只能看到旧的 40 章。
-      const chapters: Chapter[] = data.chapters.map((c, i) => ({
+      const now = Date.now();
+      const book: Book = {
+        id: bookId,
+        title: data.title?.trim() || '',
+        author: data.author?.trim() || '',
+        cover: data.cover || undefined,
+        addedAt: now,
+        updatedAt: now,
+        progress: 0,
+        totalChapters: metas.length,
+        // 浏览器识别源：host 作为来源名（无注册 BookSource），bookUrl 存详情页。
+        source: { name: data.host, bookUrl: data.url },
+      };
+      const chapters: Chapter[] = metas.map((c, i) => ({
         id: `${bookId}-${i}`,
         bookId,
         title: c.title,
@@ -309,55 +465,9 @@ export const useAddRecognizedBook = () => {
         order: i,
         sourceUrl: c.url,
       }));
-      const updated: Book = {
-        ...existing,
-        title: data.title?.trim() || existing.title,
-        author: data.author?.trim() || existing.author,
-        cover: data.cover || existing.cover,
-        totalChapters: chapters.length,
-        updatedAt: Date.now(),
-        // 浏览器再次识别同一本书也应恢复到书架，不能只刷新目录却保留回收站标记。
-        deletedAt: undefined,
-      };
-      store.set(booksAtom, prev =>
-        prev.map(book => (book.id === bookId ? updated : book)),
-      );
-      store.set(chaptersAtom, prev => ({ ...prev, [bookId]: chapters }));
-      saveBookChapters(bookId, chapters).catch(error => {
-        console.warn('[useAddRecognizedBook] refresh catalog failed', error);
-      });
-      return updated;
-    }
 
-    const now = Date.now();
-    const book: Book = {
-      id: bookId,
-      title: data.title?.trim() || '未命名书籍',
-      author: data.author?.trim() || '佚名',
-      cover: data.cover || undefined,
-      addedAt: now,
-      updatedAt: now,
-      progress: 0,
-      totalChapters: data.chapters.length,
-      // 浏览器识别源：host 作为来源名（无注册 BookSource），bookUrl 存详情页。
-      source: { name: data.host, bookUrl: data.url },
-    };
-    const chapters: Chapter[] = data.chapters.map((c, i) => ({
-      id: `${bookId}-${i}`,
-      bookId,
-      title: c.title,
-      content: '',
-      order: i,
-      sourceUrl: c.url,
-    }));
-
-    store.set(booksAtom, prev => [...prev, book]);
-    store.set(chaptersAtom, prev => ({ ...prev, [book.id]: chapters }));
-    saveBookChapters(book.id, chapters).catch(error => {
-      console.warn('[useAddRecognizedBook] save catalog failed', error);
+      return commitBookImport(store, { book, chapters }, true);
     });
-    return book;
-  };
 };
 
 /**
@@ -831,11 +941,13 @@ export const useCacheWholeBook = () => {
     const book = store.get(booksAtom).find(b => b.id === bookId);
     const source = book?.source ? getSourceById(book.source.name) : null;
     const initial = store.get(chaptersAtom)[bookId];
-    if (!source || !initial) return { done: 0, total: 0 };
+    if (!source)
+      throw new Error('网页导入书籍会在阅读时自动缓存，请回原网页更新目录');
+    if (!initial?.length) throw new Error('章节目录尚未就绪，请稍后重试');
 
     const total = initial.length;
     let done = initial.filter(c =>
-      isCachedOnlineChapterUsable(c, source.id),
+      isCompleteOnlineChapterCacheUsable(c, source.id),
     ).length;
     onProgress?.({ done, total });
 
@@ -845,9 +957,8 @@ export const useCacheWholeBook = () => {
     const flush = async () => {
       const list = store.get(chaptersAtom)[bookId];
       if (list) {
-        await saveBookChapters(bookId, list).catch(error => {
-          console.warn('[useCacheWholeBook] save failed', error);
-        });
+        // 下载完成并不等于离线保存成功，存储失败必须由详情页提示重试。
+        await saveBookChapters(bookId, list);
       }
       sinceFlush = 0;
     };
@@ -858,7 +969,11 @@ export const useCacheWholeBook = () => {
         return { done, total, cancelled: true };
       }
       const ch = store.get(chaptersAtom)[bookId]?.[i];
-      if (!ch || !ch.sourceUrl || isCachedOnlineChapterUsable(ch, source.id)) {
+      if (
+        !ch ||
+        !ch.sourceUrl ||
+        isCompleteOnlineChapterCacheUsable(ch, source.id)
+      ) {
         continue;
       }
       try {
@@ -877,16 +992,20 @@ export const useCacheWholeBook = () => {
         let nextPageUrl = parsed.nextPageUrl;
         let contentComplete = parsed.complete ?? !nextPageUrl;
         let allPartsTrustedShort = !!parsed.trustedShort;
+        const visited = new Set([normalizedChapterIdentity(ch.sourceUrl)]);
         while (nextPageUrl && !signal?.aborted) {
+          const identity = normalizedChapterIdentity(nextPageUrl);
+          // 站点错误的下一页可能指回首页或成环，不能无限抓取并把重复正文标成完整。
+          if (visited.has(identity) || visited.size >= MAX_CHAPTER_PAGES) {
+            throw new Error('章节分页异常，未写入完整缓存');
+          }
+          visited.add(identity);
           // 整本缓存需要完整章节；这里沿用分页元数据顺序抓取，阅读器按需加载不受影响。
           parsed = unpackChapterContent(
             await source.parseChapterContent(nextPageUrl, { priority: 'low' }),
           );
-          if (
-            isInvalidOnlineChapterContent(parsed.content, {
-              trustedShort: parsed.trustedShort,
-            })
-          ) {
+          // 尾页可能只有几十字；整章首页已过字数校验，子页只拦空白和广告/拦截文本。
+          if (!parsed.content.trim() || isBlockedText(parsed.content)) {
             throw new Error('书源返回分页正文不完整，未写入章节缓存');
           }
           fullContent = `${fullContent}\n${parsed.content}`;
@@ -911,6 +1030,9 @@ export const useCacheWholeBook = () => {
           nextPageUrl,
           contentComplete,
         };
+        if (!isCompleteOnlineChapterCacheUsable(filled, source.id)) {
+          throw new Error('章节尚未完整，未计入离线缓存');
+        }
         store.set(chaptersAtom, prev => {
           const list = prev[bookId];
           if (!list) return prev;
@@ -928,7 +1050,8 @@ export const useCacheWholeBook = () => {
       }
     }
 
-    if (sinceFlush > 0) await flush();
+    // 上次可能已下载到内存却落盘失败；再次点击缓存全本仍应重试保存，不能仅凭内存报成功。
+    if (sinceFlush > 0 || done === total) await flush();
     return { done, total };
   };
 };

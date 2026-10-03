@@ -44,4 +44,15 @@ describe('calculateReadingProgress', () => {
       }),
     ).toBe(100);
   });
+
+  it('keeps an incomplete source chapter below 100 until all subpages are loaded', () => {
+    expect(
+      calculateReadingProgress({
+        chapterIndex: 0,
+        totalChapters: 1,
+        chapterFraction: 1,
+        hasRemainingPages: true,
+      }),
+    ).toBe(99);
+  });
 });

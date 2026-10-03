@@ -52,6 +52,24 @@ const BOOK_CHAPTERS_DIR = `${DOC}/book-chapters`;
 const bookChaptersPath = (bookId: string) =>
   `${BOOK_CHAPTERS_DIR}/${encodeURIComponent(bookId)}.json`;
 
+const pendingFileWrites = new Map<string, Promise<void>>();
+
+function queueFileWrite(
+  path: string,
+  write: () => Promise<void>,
+): Promise<void> {
+  // 预取、目录更新和后台保存可同时写同一文件；串行提交，防止旧快照后完成覆盖新进度。
+  // 不同书籍仍可并行，失败也不能阻塞后续重试。
+  const previous = pendingFileWrites.get(path);
+  const pending = previous ? previous.catch(() => {}).then(write) : write();
+  pendingFileWrites.set(path, pending);
+  const clear = () => {
+    if (pendingFileWrites.get(path) === pending) pendingFileWrites.delete(path);
+  };
+  pending.then(clear, clear);
+  return pending;
+}
+
 // v1 早期默认值是上下滚动。没有明确设置版本时迁移到新的默认左右翻页，之后用户选择会正常持久化。
 const normalizeReaderSettings = (
   readerSettings: ReaderSettings | undefined,
@@ -83,14 +101,9 @@ const metaToSnapshot = (meta: Partial<LibraryMeta>): LibrarySnapshot => ({
 
 // 把整库章节 Map 拆写成按书分文件（用于迁移旧的单文件正文）。
 const migrateChaptersMap = async (map: Record<string, Chapter[]>) => {
-  await RNFS.mkdir(BOOK_CHAPTERS_DIR).catch(() => {});
   await Promise.all(
     Object.entries(map).map(([bookId, chapters]) =>
-      RNFS.writeFile(
-        bookChaptersPath(bookId),
-        JSON.stringify(chapters),
-        'utf8',
-      ),
+      saveBookChapters(bookId, chapters),
     ),
   );
 };
@@ -150,7 +163,10 @@ export const loadLibrarySnapshot =
   };
 
 export const saveLibraryMeta = async (meta: LibraryMeta) => {
-  await RNFS.writeFile(META_PATH, JSON.stringify(meta), 'utf8');
+  const serialized = JSON.stringify(meta);
+  await queueFileWrite(META_PATH, () =>
+    RNFS.writeFile(META_PATH, serialized, 'utf8'),
+  );
 };
 
 /** 懒加载单本书的章节；无正文文件时返回 null。 */
@@ -165,19 +181,19 @@ export const loadBookChapters = async (
 };
 
 export const saveBookChapters = async (bookId: string, chapters: Chapter[]) => {
-  await RNFS.mkdir(BOOK_CHAPTERS_DIR).catch(() => {});
-  await RNFS.writeFile(
-    bookChaptersPath(bookId),
-    JSON.stringify(chapters),
-    'utf8',
-  );
+  const path = bookChaptersPath(bookId);
+  const serialized = JSON.stringify(chapters);
+  await queueFileWrite(path, async () => {
+    await RNFS.mkdir(BOOK_CHAPTERS_DIR);
+    await RNFS.writeFile(path, serialized, 'utf8');
+  });
 };
 
 export const deleteBookChapters = async (bookId: string) => {
   const path = bookChaptersPath(bookId);
-  if (await RNFS.exists(path)) {
-    await RNFS.unlink(path);
-  }
+  await queueFileWrite(path, async () => {
+    if (await RNFS.exists(path)) await RNFS.unlink(path);
+  });
 };
 
 /**

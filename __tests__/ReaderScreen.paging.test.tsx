@@ -1,6 +1,11 @@
 import React from 'react';
 import Renderer, { act } from 'react-test-renderer';
-import { FlatList } from 'react-native';
+import {
+  AppState,
+  FlatList,
+  ScrollView,
+  type AppStateStatus,
+} from 'react-native';
 import { createStore, Provider } from 'jotai';
 import ReaderScreen from '../src/screens/ReaderScreen';
 import {
@@ -91,6 +96,7 @@ describe('ReaderScreen paging interactions', () => {
     initial = 0,
     online = false,
     chapterList = [makeChapter(0), makeChapter(1)],
+    options: { pageMode?: 'page' | 'scroll'; position?: number } = {},
   ) => {
     store = createStore();
     store.set(booksAtom, [
@@ -115,6 +121,22 @@ describe('ReaderScreen paging interactions', () => {
     store.set(chaptersAtom, { 'paging-test': chapterList });
     store.set(currentChapterIndexAtom, initial);
     store.set(currentChapterContentAtom, chapterList[initial].content);
+    if (options.pageMode) {
+      store.set(readerSettingsAtom, value => ({
+        ...value,
+        pageMode: options.pageMode!,
+      }));
+    }
+    if (options.position != null) {
+      store.set(readingHistoryAtom, {
+        'paging-test': {
+          bookId: 'paging-test',
+          chapterId: chapterList[initial].id,
+          position: options.position,
+          updatedAt: 1,
+        },
+      });
+    }
     await act(() => {
       tree = Renderer.create(
         <Provider store={store}>
@@ -122,7 +144,7 @@ describe('ReaderScreen paging interactions', () => {
         </Provider>,
       );
     });
-    await visible();
+    if (options.pageMode !== 'scroll') await visible();
   };
 
   beforeEach(() => {
@@ -283,5 +305,173 @@ describe('ReaderScreen paging interactions', () => {
     expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
       position,
     );
+  });
+
+  it('does not finish a short final chapter while its source has another subpage', async () => {
+    await mount(0, false, [
+      {
+        ...makeChapter(0, '这一页只是本章的一部分。'),
+        nextPageUrl: 'https://example.test/chapter/1-2',
+      },
+    ]);
+    expect(store.get(booksAtom)[0].progress).toBeLessThan(100);
+    expect(store.get(booksAtom)[0].finishedAt).toBeUndefined();
+  });
+
+  it('retries the missing source subpage and resumes at the appended text', async () => {
+    const warning = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const partial = {
+      ...makeChapter(0),
+      nextPageUrl: 'https://example.test/chapter/1-2',
+    };
+    let finish!: (chapter: Chapter) => void;
+    mockLoadNextPage
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finish = resolve;
+          }),
+      );
+    try {
+      await mount(0, false, [partial]);
+      const props = list().props;
+      const lastOffset = props.getItemLayout(
+        null,
+        props.data.length - 1,
+      ).offset;
+      await act(() =>
+        props.onScrollBeginDrag({
+          nativeEvent: { contentOffset: { x: lastOffset } },
+        }),
+      );
+      await act(() =>
+        props.onScroll({
+          nativeEvent: { contentOffset: { x: lastOffset + 30 } },
+        }),
+      );
+      expect(mockLoadNextPage).toHaveBeenCalledTimes(1);
+      const retry = tree.root.findAllByProps({
+        accessibilityLabel: '重新加载当前章节',
+      })[0];
+      await act(() => retry.props.onPress());
+      expect(mockLoadNextPage).toHaveBeenCalledTimes(2);
+      const complete = makeChapter(0, `${body}\n追加内容。`.repeat(3));
+      await act(() => {
+        store.set(chaptersAtom, { 'paging-test': [complete] });
+        finish(complete);
+      });
+      await visible();
+      expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+        Array.from(body.replace(/\n/g, '')).length,
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('keeps the scroll resume anchor through first-frame zero offsets and changed measurements', async () => {
+    await mount(0, false, undefined, { pageMode: 'scroll', position: 1200 });
+    const scroll = () => tree.root.findByType(ScrollView);
+    await act(() =>
+      scroll().props.onScroll({ nativeEvent: { contentOffset: { y: 0 } } }),
+    );
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(1200);
+    await act(() => {
+      scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      scroll().props.onContentSizeChange(300, 5000);
+    });
+    const beforeLayoutChange = scroll().props;
+    await act(() => {
+      beforeLayoutChange.onScroll({ nativeEvent: { contentOffset: { y: 0 } } });
+      beforeLayoutChange.onContentSizeChange(300, 5100);
+    });
+    await act(() => jest.advanceTimersByTime(150));
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(1200);
+    await act(() =>
+      scroll().props.onScroll({ nativeEvent: { contentOffset: { y: 2200 } } }),
+    );
+    await act(() => jest.advanceTimersByTime(150));
+    expect(
+      store.get(readingHistoryAtom)['paging-test'].position,
+    ).toBeGreaterThan(1200);
+  });
+
+  it('rejects an old scroll container and its throttled callback after changing chapters', async () => {
+    await mount(0, false, undefined, { pageMode: 'scroll' });
+    const scroll = () => tree.root.findByType(ScrollView);
+    await act(() => {
+      scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      scroll().props.onContentSizeChange(300, 5000);
+    });
+    await act(() => jest.advanceTimersByTime(20));
+    const oldProps = scroll().props;
+    await act(() =>
+      oldProps.onScroll({ nativeEvent: { contentOffset: { y: 4000 } } }),
+    );
+    await act(() => {
+      store.set(currentChapterIndexAtom, 1);
+      store.set(currentChapterContentAtom, body);
+    });
+    await act(() => {
+      oldProps.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      oldProps.onContentSizeChange(300, 100);
+      oldProps.onScroll({ nativeEvent: { contentOffset: { y: 4400 } } });
+      oldProps.onMomentumScrollEnd();
+      jest.advanceTimersByTime(150);
+    });
+    expect(store.get(readingHistoryAtom)['paging-test']).toMatchObject({
+      chapterId: 'paging-chapter-1',
+      position: 0,
+    });
+    expect(store.get(booksAtom)[0].progress).toBe(50);
+  });
+
+  it('saves the latest scroll offset synchronously when leaving before the throttle expires', async () => {
+    await mount(0, false, undefined, { pageMode: 'scroll' });
+    const scroll = () => tree.root.findByType(ScrollView);
+    await act(() => {
+      scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      scroll().props.onContentSizeChange(300, 5000);
+    });
+    await act(() => jest.advanceTimersByTime(20));
+    await act(() =>
+      scroll().props.onScroll({ nativeEvent: { contentOffset: { y: 2200 } } }),
+    );
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(0);
+    await act(() => tree.unmount());
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+      Math.round(Array.from(body.replace(/\n/g, '')).length / 2),
+    );
+  });
+
+  it('saves the pending scroll offset when iOS becomes inactive', async () => {
+    const listeners: Array<(state: AppStateStatus) => void> = [];
+    const spy = jest
+      .spyOn(AppState, 'addEventListener')
+      .mockImplementation((_, callback) => {
+        listeners.push(callback);
+        return { remove: jest.fn() };
+      });
+    try {
+      await mount(0, false, undefined, { pageMode: 'scroll' });
+      const scroll = () => tree.root.findByType(ScrollView);
+      await act(() => {
+        scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+        scroll().props.onContentSizeChange(300, 5000);
+      });
+      await act(() => jest.advanceTimersByTime(20));
+      await act(() =>
+        scroll().props.onScroll({
+          nativeEvent: { contentOffset: { y: 2200 } },
+        }),
+      );
+      await act(() => listeners.forEach(listener => listener('inactive')));
+      expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+        Math.round(Array.from(body.replace(/\n/g, '')).length / 2),
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

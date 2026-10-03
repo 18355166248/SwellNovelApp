@@ -250,10 +250,29 @@ export const mingzwSource: BookSource = {
     const pages =
       segUrls.length > 0 ? segUrls : [`/mclist/${info.sourceBookId}.html`];
 
+    const pageHtml = new Array<string>(pages.length);
+    let nextPageIndex = 0;
+    let failed = false;
+    // 长篇目录常有二十多个分段，串行抓取会让“加入书架”长时间停住。
+    // 最多三路并发并按原分段顺序合并；任一分段失败就整体失败，不发布残缺目录。
+    await Promise.all(
+      Array.from({ length: Math.min(3, pages.length) }, async () => {
+        while (!failed && nextPageIndex < pages.length) {
+          const index = nextPageIndex++;
+          try {
+            pageHtml[index] = await fetchMingzwHtml(
+              toAbsolute(origin, pages[index]),
+            );
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
+        }
+      }),
+    );
     const chapters: ParsedChapter[] = [];
     const seen = new Set<string>();
-    for (const seg of pages) {
-      const html = await fetchMingzwHtml(toAbsolute(origin, seg));
+    for (const html of pageHtml) {
       const re =
         /<a[^>]+href=["']([^"']*\/(?:miread|mzwread)\/(?:[^"'/]*_)?\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
       let m: RegExpExecArray | null;

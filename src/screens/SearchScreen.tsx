@@ -42,6 +42,7 @@ export default function SearchScreen() {
     'idle' | 'loading' | 'error' | 'empty' | 'done'
   >('idle');
   const [onlineError, setOnlineError] = React.useState('');
+  const [addingError, setAddingError] = React.useState('');
   const [addingUrl, setAddingUrl] = React.useState<string | null>(null);
   const requestCoordinatorRef = React.useRef<ReturnType<
     typeof createSearchRequestCoordinator
@@ -65,6 +66,7 @@ export default function SearchScreen() {
     setOnlineState('idle');
     setOnlineResults([]);
     setOnlineError('');
+    setAddingError('');
   }, [requestCoordinator]);
 
   const handleQueryChange = React.useCallback(
@@ -84,8 +86,16 @@ export default function SearchScreen() {
       setOnlineState('loading');
       setOnlineResults([]);
       setOnlineError('');
+      setAddingError('');
       try {
-        const results = await searchNovels(keyword);
+        const results = await searchNovels(keyword, {
+          // 输入变化或开始添加后停止旧搜索的后续兜底和分批回传，迟到结果不改新 UI。
+          isCancelled: () => !requestCoordinator.isLatest(requestToken),
+          onResults: results => {
+            if (requestCoordinator.isLatest(requestToken))
+              setOnlineResults(results);
+          },
+        });
         if (!requestCoordinator.isLatest(requestToken)) return;
         setOnlineResults(results);
         setOnlineState(results.length ? 'done' : 'empty');
@@ -118,6 +128,7 @@ export default function SearchScreen() {
       const existing = allBooks.find(book => isSameOnlineBook(book, url));
       if (existing) {
         if (requestCoordinator.finishAdding(requestToken)) {
+          setOnlineState('done');
           navigation.navigate('BookDetail', { bookId: existing.id });
         }
         return;
@@ -130,6 +141,7 @@ export default function SearchScreen() {
       try {
         const book = await addOnlineBook(url);
         if (!requestCoordinator.isLatest(requestToken)) return;
+        setOnlineState('done');
         navigation.navigate('BookDetail', { bookId: book.id });
       } catch (error) {
         if (!requestCoordinator.isLatest(requestToken)) return;
@@ -184,6 +196,9 @@ export default function SearchScreen() {
     async (result: NovelSearchResult) => {
       const requestToken = requestCoordinator.startAdding(result.url);
       if (requestToken === null) return;
+      // 点击已回传结果会结束本轮搜索，添加失败时保留当前列表，让用户重试或换源。
+      setOnlineState('done');
+      setAddingError('');
       const existing = allBooks.find(book =>
         isSameOnlineBook(book, result.url),
       );
@@ -200,12 +215,11 @@ export default function SearchScreen() {
         navigation.navigate('BookDetail', { bookId: book.id });
       } catch (error) {
         if (!requestCoordinator.isLatest(requestToken)) return;
-        setOnlineError(
+        setAddingError(
           error instanceof Error && error.message
             ? `添加失败：${error.message}`
             : '添加失败，请检查网络后重试',
         );
-        setOnlineState('error');
       } finally {
         if (requestCoordinator.finishAdding(requestToken)) {
           setAddingUrl(null);
@@ -261,6 +275,20 @@ export default function SearchScreen() {
               autoCorrect={false}
               returnKeyType="search"
             />
+            {hasQuery ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="清空搜索内容"
+                onPress={() => handleQueryChange('')}
+                style={styles.clearQueryButton}
+              >
+                <Icon
+                  name="close"
+                  size={18}
+                  color={theme.colors.textSecondary}
+                />
+              </Pressable>
+            ) : null}
           </View>
           <Pressable
             accessibilityRole="button"
@@ -434,7 +462,7 @@ export default function SearchScreen() {
           <View style={styles.section}>
             <View style={styles.sectionHeading}>
               <Text variant="label">搜索结果</Text>
-              {onlineState === 'done' ? (
+              {onlineResults.length > 0 ? (
                 <Text variant="caption" color="textSecondary">
                   {onlineResults.length} 本
                 </Text>
@@ -448,7 +476,9 @@ export default function SearchScreen() {
             {onlineState === 'loading' && (
               <View accessibilityLiveRegion="polite">
                 <Text variant="caption" color="textSecondary">
-                  正在搜索「{query.trim()}」…
+                  {onlineResults.length
+                    ? `已找到 ${onlineResults.length} 本，正在继续搜索…`
+                    : `正在搜索「${query.trim()}」…`}
                 </Text>
               </View>
             )}
@@ -460,6 +490,22 @@ export default function SearchScreen() {
                 >
                   {onlineError || '搜索失败，请检查网络后重试'}
                 </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="重新搜索小说"
+                  onPress={() => commitSearch(query)}
+                  style={styles.fallbackLink}
+                >
+                  <Icon name="refresh" size={15} color={theme.colors.accent} />
+                  <Text
+                    style={[
+                      styles.fallbackText,
+                      { color: theme.colors.accent },
+                    ]}
+                  >
+                    重试搜索
+                  </Text>
+                </Pressable>
                 {Platform.OS === 'web' ? (
                   <Text
                     style={[
@@ -496,7 +542,7 @@ export default function SearchScreen() {
             {onlineState === 'empty' && (
               <View>
                 <Text variant="caption" color="textSecondary">
-                  没有找到匹配书籍。
+                  当前书源没有找到匹配书籍，可试试完整书名或作者名。
                 </Text>
                 {Platform.OS === 'web' ? (
                   <Text
@@ -531,6 +577,16 @@ export default function SearchScreen() {
                 )}
               </View>
             )}
+            {addingError ? (
+              <View accessibilityLiveRegion="polite" style={styles.addingError}>
+                <Text
+                  variant="caption"
+                  style={[styles.errorText, { color: theme.colors.danger }]}
+                >
+                  {addingError}，可重试或选择其他书源。
+                </Text>
+              </View>
+            ) : null}
             {onlineResults.length > 0 && (
               <View
                 style={[
@@ -549,9 +605,11 @@ export default function SearchScreen() {
                     <Pressable
                       key={result.url}
                       accessibilityRole="button"
-                      accessibilityLabel={`${result.title}，来源 ${
-                        result.sourceName
-                      }，${existing ? '已在书架，打开详情' : '加入书架'}`}
+                      accessibilityLabel={`${result.title}${
+                        result.author ? `，作者 ${result.author}` : ''
+                      }，来源 ${result.sourceName}，${
+                        existing ? '已在书架，打开详情' : '加入书架'
+                      }`}
                       accessibilityState={{
                         disabled: resultDisabled,
                         busy: addingThisResult,
@@ -575,7 +633,7 @@ export default function SearchScreen() {
                       />
                       <View style={{ flex: 1 }}>
                         <Text
-                          numberOfLines={1}
+                          numberOfLines={2}
                           style={{ fontSize: 13.5, color: theme.colors.text }}
                         >
                           {result.title}
@@ -585,6 +643,7 @@ export default function SearchScreen() {
                           color="textSecondary"
                           style={{ marginTop: 2 }}
                         >
+                          {result.author ? `${result.author} · ` : ''}
                           {result.sourceName}
                         </Text>
                       </View>
@@ -599,11 +658,11 @@ export default function SearchScreen() {
                           已在书架
                         </Text>
                       ) : (
-                        <Icon
-                          name="add"
-                          size={20}
-                          color={theme.colors.textSecondary}
-                        />
+                        <Text
+                          style={{ color: theme.colors.accent, fontSize: 11.5 }}
+                        >
+                          加入书架
+                        </Text>
                       )}
                     </Pressable>
                   );
@@ -644,6 +703,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
   },
   searchInput: { flex: 1, fontSize: 14, padding: 0 },
+  clearQueryButton: {
+    minWidth: 32,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   searchBtn: {
     alignItems: 'center',
     borderRadius: 12,
@@ -705,6 +770,7 @@ const styles = StyleSheet.create({
   },
   emptyHint: { lineHeight: 19 },
   errorText: { lineHeight: 18 },
+  addingError: { marginBottom: 12 },
   disabledControl: { opacity: 0.55 },
   resultList: { borderRadius: 10, overflow: 'hidden' },
   resultRow: {

@@ -44,7 +44,7 @@ export function breakLines(
       lineStart = offset;
     };
 
-    for (const char of Array.from(paragraph)) {
+    for (const char of paragraph) {
       const charWidth = measure(char);
       const hasContent = isFirst
         ? lineText.length > INDENT.length
@@ -65,8 +65,8 @@ export function breakLines(
 }
 
 /**
- * 后台预断行的协作式版本。按段落小批次执行并主动让出事件循环，使阅读手势能
- * 及时推进取消标记；结果与一次性 breakLines 保持完全相同的逻辑偏移。
+ * 后台预断行按段落及字符数双重分片；整章只有一个长段落时也能及时响应手势取消。
+ * 分片保留正在断行的上下文，不能给每个字符片段重新缩进或重算逻辑偏移。
  */
 export async function breakLinesCooperatively({
   paragraphs,
@@ -74,6 +74,7 @@ export async function breakLinesCooperatively({
   measure,
   shouldCancel,
   chunkSize = 12,
+  characterChunkSize = 2048,
   yieldControl = () => new Promise<void>(resolve => setTimeout(resolve, 0)),
 }: {
   paragraphs: string[];
@@ -81,24 +82,56 @@ export async function breakLinesCooperatively({
   measure: MeasureChar;
   shouldCancel: () => boolean;
   chunkSize?: number;
+  characterChunkSize?: number;
   yieldControl?: () => Promise<void>;
 }): Promise<ReaderLine[] | null> {
   const lines: ReaderLine[] = [];
-  let logicalOffset = 0;
+  let offset = 0;
   const safeChunkSize = Math.max(1, Math.floor(chunkSize));
+  const safeCharacterChunkSize = Math.max(1, Math.floor(characterChunkSize));
+  const safeMax = Math.max(1, maxWidth);
+  let charactersSinceYield = 0;
 
-  for (let start = 0; start < paragraphs.length; start += safeChunkSize) {
+  for (let index = 0; index < paragraphs.length; index += 1) {
     if (shouldCancel()) return null;
-    const chunk = paragraphs.slice(start, start + safeChunkSize);
-    const chunkLines = breakLines(chunk, maxWidth, measure);
-    chunkLines.forEach(line =>
-      lines.push({ ...line, charOffset: line.charOffset + logicalOffset }),
-    );
-    logicalOffset += chunk.reduce(
-      (sum, paragraph) => sum + Array.from(paragraph).length,
-      0,
-    );
-    await yieldControl();
+    let isFirst = true;
+    let lineText = INDENT;
+    let lineWidth = measure('　') * 2;
+    let lineStart = offset;
+    const pushLine = () => {
+      lines.push({
+        text: lineText,
+        charOffset: lineStart,
+        isParagraphStart: isFirst,
+      });
+      isFirst = false;
+      lineText = '';
+      lineWidth = 0;
+      lineStart = offset;
+    };
+    // for-of 逐码点消费，不为十万字单段先创建整段字符数组。
+    for (const char of paragraphs[index]) {
+      const charWidth = measure(char);
+      const hasContent = isFirst
+        ? lineText.length > INDENT.length
+        : lineText.length > 0;
+      if (hasContent && lineWidth + charWidth > safeMax) pushLine();
+      lineText += char;
+      lineWidth += charWidth;
+      offset += 1;
+      charactersSinceYield += 1;
+      if (charactersSinceYield >= safeCharacterChunkSize) {
+        await yieldControl();
+        if (shouldCancel()) return null;
+        charactersSinceYield = 0;
+      }
+    }
+    if (lineText.length > 0) pushLine();
+    if ((index + 1) % safeChunkSize === 0 || index === paragraphs.length - 1) {
+      await yieldControl();
+      if (shouldCancel()) return null;
+      charactersSinceYield = 0;
+    }
   }
 
   return shouldCancel() ? null : lines;

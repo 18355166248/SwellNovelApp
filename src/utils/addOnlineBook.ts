@@ -4,10 +4,62 @@
 
 import { Book, Chapter } from '../store/types/book';
 import { resolveSource } from '../services/source/registry';
+import type { ParsedChapter } from '../services/source/types';
+import { normalizedChapterIdentity } from './catalogRepair';
 
 export interface OnlineBookResult {
   book: Book;
   chapters: Chapter[];
+}
+
+/** 搜索详情页与浏览器目录页共用站内书号，入库请求也用同一身份合并。 */
+export function onlineBookImportKey(url: string): string {
+  const trimmed = url.trim();
+  const source = resolveSource(trimmed);
+  const sourceBookId = source?.extractId(trimmed);
+  return source && sourceBookId
+    ? `${source.id}:${sourceBookId}`
+    : normalizedChapterIdentity(trimmed) ?? trimmed;
+}
+
+/** 未注册站点也按完整 URL 生成稳定 id，不能只取路径数字（不同书可能共用年份）。 */
+export function recognizedBookImportId(url: string, host: string): string {
+  const identity = onlineBookImportKey(url);
+  if (!identity.startsWith('url:') && !identity.startsWith('raw:'))
+    return identity;
+  let first = 17;
+  let second = 5381;
+  for (let index = 0; index < identity.length; index++) {
+    const character = identity.charCodeAt(index);
+    first = (first * 31 + character) % 2147483647;
+    second = (second * 37 + character) % 2147483629;
+  }
+  return `browser:${host}:${first.toString(16)}-${second.toString(16)}`;
+}
+
+/** 目录分页会重复带上最新章链接；以来源身份去重，避免入库后同一章出现两次。 */
+export function normalizeOnlineCatalog(
+  metas: ParsedChapter[],
+): ParsedChapter[] {
+  const seen = new Set<string>();
+  const chapters = metas.filter(meta => {
+    try {
+      if (!/^https?:$/.test(new URL(meta.url).protocol)) return false;
+    } catch {
+      return false;
+    }
+    const identity = normalizedChapterIdentity(meta.url)!;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+  if (!chapters.length) {
+    throw new Error('未获取到可阅读的章节目录，请刷新书籍页面后重试');
+  }
+  return chapters.map((meta, index) => ({
+    ...meta,
+    title: meta.title.trim() || `第${index + 1}章`,
+  }));
 }
 
 /**
@@ -20,20 +72,20 @@ export interface OnlineBookResult {
 export function isSameOnlineBook(book: Book, url: string): boolean {
   const bookUrl = book.source?.bookUrl;
   if (!bookUrl) return false;
-  if (bookUrl === url) return true;
-  const source = resolveSource(url);
-  if (!source || !source.matchUrl(bookUrl)) return false;
-  const id = source.extractId(url);
-  return !!id && id === source.extractId(bookUrl);
+  return onlineBookImportKey(bookUrl) === onlineBookImportKey(url);
 }
 
 export async function addOnlineBook(url: string): Promise<OnlineBookResult> {
   const trimmed = url.trim();
   const source = resolveSource(trimmed);
-  if (!source) throw new Error('暂不支持该网站，请粘贴 bookshuku.org 的书籍链接');
+  if (!source)
+    throw new Error('暂不支持该网站，请在内置浏览器打开书籍目录后加入书架');
 
   const info = await source.parseBookInfo(trimmed);
-  const metas = await source.parseCatalog(info);
+  if (!info.title.trim() || !info.sourceBookId.trim()) {
+    throw new Error('未获取到有效书籍信息，请确认链接并稍后重试');
+  }
+  const metas = normalizeOnlineCatalog(await source.parseCatalog(info));
 
   // 稳定 id：同一本书重复添加可复用已缓存目录/正文，避免重复入库。
   const bookId = `${source.id}:${info.sourceBookId}`;

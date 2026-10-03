@@ -8,6 +8,7 @@
 import { fetchHtml } from '../http/fetchHtml';
 import { decodeEntities, stripTags, toAbsolute } from '../source/html';
 import { resolveSource } from '../source/registry';
+import { normalizeSearchText } from '../search/searchMatching';
 
 export interface SourceRecommendation {
   url: string;
@@ -105,18 +106,30 @@ export async function fetchSourceRecommendations(): Promise<
  */
 export async function searchSourceCatalogs(
   keyword: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<SourceRecommendation[]> {
-  const normalized = keyword.trim().toLocaleLowerCase();
+  const normalized = normalizeSearchText(keyword);
   if (!normalized) return [];
-  const groups = await Promise.all([
-    fetchOne(BOOKSHUKU_LIST_URL, parseBookshukuRecommendations),
-    fetchOne(MINGZW_HOME_URL, parseMingzwRecommendations),
+  const groups = await Promise.allSettled([
+    fetchHtml(BOOKSHUKU_LIST_URL, options.timeoutMs, {
+      preferLocalProxy: true,
+    }).then(parseBookshukuRecommendations),
+    fetchHtml(MINGZW_HOME_URL, options.timeoutMs, {
+      preferLocalProxy: true,
+    }).then(parseMingzwRecommendations),
   ]);
-  return unique(groups.flat())
+  // 搜索必须区分“没有匹配”和“所有站点都不可用”；单站失败则仍保留另一站结果。
+  if (groups.every(group => group.status === 'rejected')) {
+    throw new Error('书源列表暂时不可用');
+  }
+  return unique(
+    groups.flatMap(group => (group.status === 'fulfilled' ? group.value : [])),
+  )
     .filter(
       item =>
         resolveSource(item.url) &&
-        item.title.toLocaleLowerCase().includes(normalized),
+        (normalizeSearchText(item.title).includes(normalized) ||
+          normalizeSearchText(item.author ?? '').includes(normalized)),
     )
     .slice(0, 15);
 }

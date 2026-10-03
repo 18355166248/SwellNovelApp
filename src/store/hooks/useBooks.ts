@@ -232,15 +232,13 @@ export const useUpdateReadingProgress = () => {
 export const useSetChapters = () => {
   const setChapters = useSetAtom(chaptersAtom);
 
-  return (bookId: string, chapters: Chapter[]) => {
+  return async (bookId: string, chapters: Chapter[]) => {
+    // 先落盘再发布，存储空间不足时由导入入口提示失败，避免书架出现重启后打不开的书。
+    await saveBookChapters(bookId, chapters);
     setChapters(prev => ({
       ...prev,
       [bookId]: chapters,
     }));
-    // 章节按书分文件直接落盘：只在导入/替换时写一次，避免翻页时重复序列化正文。
-    saveBookChapters(bookId, chapters).catch(error => {
-      console.warn('[useSetChapters] save chapters failed', error);
-    });
   };
 };
 

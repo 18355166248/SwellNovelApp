@@ -24,6 +24,53 @@ const LONG_ARTICLE =
 describe('mingzwSource', () => {
   beforeEach(() => mockFetchHtml.mockReset());
 
+  it('目录分段最多三路并发，乱序返回仍按章节顺序合并', async () => {
+    let active = 0;
+    let peak = 0;
+    const pending: Array<() => void> = [];
+    mockFetchHtml.mockImplementation(async url => {
+      if (url.includes('/mzwchapter/')) {
+        return [0, 100, 200, 300, 400]
+          .map(
+            start =>
+              `<a href="/mclist/17482_${start}_${start + 100}.html">目录</a>`,
+          )
+          .reverse()
+          .join('');
+      }
+      const start = Number(url.match(/17482_(\d+)_/)?.[1]);
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise<void>(resolve => {
+        pending.push(resolve);
+      });
+      active--;
+      return `<a href="/mzwread/17482_${start + 1}.html">第${
+        start + 1
+      }章 正文</a>`;
+    });
+    const parsing = mingzwSource.parseCatalog({
+      sourceBookId: '17482',
+      title: '测试',
+      author: '测试作者',
+      catalogUrl: 'https://tw.mingzw.net/mzwchapter/17482.html',
+    });
+    // 先让后三路乱序完成，再释放后续分段，避免测试依赖真实计时器。
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(pending).toHaveLength(3);
+    pending[2]();
+    pending[1]();
+    pending[0]();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    pending[4]();
+    pending[3]();
+    const chapters = await parsing;
+    expect(peak).toBe(3);
+    expect(chapters.map(item => item.title)).toEqual(
+      [1, 101, 201, 301, 401].map(number => `第${number}章 正文`),
+    );
+  });
+
   it('兼容当前 mzwbook/mzwchapter/mzwread 路由并保留真实章节标题', async () => {
     mockFetchHtml.mockImplementation(async url => {
       if (url.endsWith('/mzwbook/17482.html')) return BOOK_PAGE;

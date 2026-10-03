@@ -114,6 +114,38 @@ describe('breakLinesCooperatively', () => {
 
     expect(lines).toBeNull();
   });
+
+  it('超长单段也在字符预算内让出，并可在第一片后取消', async () => {
+    let cancelled = false;
+    const measure = jest.fn(fixed10);
+    const lines = await breakLinesCooperatively({
+      paragraphs: ['长'.repeat(100000)],
+      maxWidth: 50,
+      measure,
+      shouldCancel: () => cancelled,
+      characterChunkSize: 512,
+      yieldControl: async () => {
+        cancelled = true;
+      },
+    });
+    expect(lines).toBeNull();
+    // 包含一次缩进测量，不能先同步测完十万字符后才响应取消。
+    expect(measure).toHaveBeenCalledTimes(513);
+  });
+
+  it('在段落中间多次分片仍保留 Unicode 偏移、缩进和断行', async () => {
+    const paragraphs = ['甲😀乙𠮷丙丁戊己庚辛'.repeat(20), '下一段'];
+    expect(
+      await breakLinesCooperatively({
+        paragraphs,
+        maxWidth: 50,
+        measure: fixed10,
+        shouldCancel: () => false,
+        characterChunkSize: 7,
+        yieldControl: async () => {},
+      }),
+    ).toEqual(breakLines(paragraphs, 50, fixed10));
+  });
 });
 
 function makeLine(

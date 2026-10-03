@@ -38,3 +38,39 @@ describe('书源推荐解析', () => {
     ]);
   });
 });
+
+jest.mock('../src/services/http/fetchHtml', () => ({ fetchHtml: jest.fn() }));
+import { fetchHtml } from '../src/services/http/fetchHtml';
+import { searchSourceCatalogs } from '../src/services/discover/sourceRecommendations';
+const mockCatalogFetch = fetchHtml as jest.MockedFunction<typeof fetchHtml>;
+
+describe('书源列表搜索', () => {
+  beforeEach(() => mockCatalogFetch.mockReset());
+
+  it('按作者匹配，单个站点失败仍保留有效书目', async () => {
+    mockCatalogFetch.mockImplementation(async url => {
+      if (url.includes('bookshuku'))
+        return '<a href="http://wap.bookshuku.org/bookinfo/132737.html">夜无疆 / 辰东</a>';
+      throw new Error('offline');
+    });
+    await expect(
+      searchSourceCatalogs('辰 东', { timeoutMs: 5000 }),
+    ).resolves.toEqual([
+      {
+        url: 'http://wap.bookshuku.org/bookinfo/132737.html',
+        title: '夜无疆',
+        author: '辰东',
+        sourceName: 'TXT图书下载网',
+      },
+    ]);
+  });
+
+  it('所有站点都失败时抛错，成功列表无匹配时返回空', async () => {
+    mockCatalogFetch.mockRejectedValue(new Error('offline'));
+    await expect(searchSourceCatalogs('未知书名')).rejects.toThrow(
+      '书源列表暂时不可用',
+    );
+    mockCatalogFetch.mockResolvedValue('<html></html>');
+    await expect(searchSourceCatalogs('未知书名')).resolves.toEqual([]);
+  });
+});

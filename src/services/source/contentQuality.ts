@@ -52,3 +52,15 @@ export function isOnlineChapterCacheUsable(
     })
   );
 }
+
+/** 阅读器可以先显示已缓存子页，离线与全本缓存必须确认整章已取完。 */
+export function isCompleteOnlineChapterCacheUsable(
+  chapter: Chapter | undefined,
+  sourceName?: string,
+): boolean {
+  return (
+    isOnlineChapterCacheUsable(chapter, sourceName) &&
+    chapter?.contentComplete !== false &&
+    !chapter?.nextPageUrl
+  );
+}

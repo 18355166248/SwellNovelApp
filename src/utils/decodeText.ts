@@ -6,8 +6,8 @@
  * 顺序判定，尽量零依赖、零崩溃。
  *
  * 注意：Web(Chrome/Safari) 的 TextDecoder 原生支持 gb18030；React Native
- * 的 Hermes 若不支持 gb18030，会在 try/catch 里回退到非严格 UTF-8（不崩，但仍可能乱码），
- * 需要时再引入 gb18030 polyfill。
+ * 的 Hermes 可能没有 TextDecoder，因此 UTF-8 / UTF-16 同时保留字节解码路径。
+ * 不支持的 GBK 不静默生成乱码书，交给导入入口提示转为 UTF-8。
  */
 
 function tryDecode(
@@ -15,12 +15,71 @@ function tryDecode(
   encoding: string,
   fatal: boolean,
 ): string | null {
-  if (typeof TextDecoder === 'undefined') return null;
+  if (typeof TextDecoder === 'undefined')
+    return decodeUnicode(bytes, encoding, fatal);
   try {
     return new TextDecoder(encoding, { fatal }).decode(bytes);
   } catch {
-    return null;
+    return decodeUnicode(bytes, encoding, fatal);
   }
+}
+
+function decodeUnicode(
+  bytes: Uint8Array,
+  encoding: string,
+  fatal: boolean,
+): string | null {
+  const output: string[] = [];
+  if (encoding === 'utf-16le' || encoding === 'utf-16be') {
+    const little = encoding === 'utf-16le';
+    for (let i = 0; i + 1 < bytes.length; i += 2) {
+      const unit = little
+        ? bytes[i] | (bytes[i + 1] << 8)
+        : (bytes[i] << 8) | bytes[i + 1];
+      if (i === 0 && unit === 0xfeff) continue;
+      output.push(String.fromCharCode(unit));
+    }
+    if (bytes.length % 2) output.push('\ufffd');
+    return output.join('');
+  }
+  if (encoding !== 'utf-8') return null;
+  // Hermes 缺少 TextDecoder 时仍按 Unicode 标准检查续字节、过长编码和代理区。
+  // 逐码点输出，避免长篇 TXT 使用展开参数造成调用栈溢出。
+  for (let i = 0; i < bytes.length; ) {
+    const first = bytes[i];
+    const length =
+      first < 0x80
+        ? 1
+        : first >= 0xc2 && first <= 0xdf
+        ? 2
+        : first >= 0xe0 && first <= 0xef
+        ? 3
+        : first >= 0xf0 && first <= 0xf4
+        ? 4
+        : 0;
+    let point = length === 1 ? first : first & (0x7f >> length);
+    let valid = length > 0 && i + length <= bytes.length;
+    for (let j = 1; valid && j < length; j++) {
+      const next = bytes[i + j];
+      valid = next >= 0x80 && next <= 0xbf;
+      point = point * 64 + (next & 0x3f);
+    }
+    valid =
+      valid &&
+      !(length === 3 && point < 0x800) &&
+      !(length === 4 && point < 0x10000) &&
+      point <= 0x10ffff &&
+      !(point >= 0xd800 && point <= 0xdfff);
+    if (!valid) {
+      if (fatal) return null;
+      output.push('\ufffd');
+      i++;
+    } else {
+      output.push(String.fromCodePoint(point));
+      i += length;
+    }
+  }
+  return output.join('');
 }
 
 export function decodeBytes(bytes: Uint8Array): string {
@@ -48,8 +107,8 @@ export function decodeBytes(bytes: Uint8Array): string {
   const asGb = tryDecode(bytes, 'gb18030', false);
   if (asGb != null) return asGb;
 
-  // 4) 兜底：非严格 UTF-8，尽量不崩。
-  return tryDecode(bytes, 'utf-8', false) ?? '';
+  // 错误编码不能作为“导入成功”写入书架，明确提示用户转换编码。
+  throw new Error('当前设备无法识别 TXT 编码，请将文件转换为 UTF-8 后重试');
 }
 
 /** base64 → 字节数组（原生端 RNFS 读出的是 base64，需先还原字节再解码）。 */

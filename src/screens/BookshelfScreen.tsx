@@ -181,6 +181,7 @@ export default function BookshelfScreen() {
     active: false,
     message: '',
   });
+  const importInFlightRef = React.useRef(false);
   const [followChecking, setFollowChecking] = React.useState(false);
   const [followMessage, setFollowMessage] = React.useState('');
   const automaticCheckStartedRef = React.useRef(false);
@@ -196,12 +197,15 @@ export default function BookshelfScreen() {
   }, []);
 
   const handleImportTxt = React.useCallback(async () => {
-    if (importState.active) return;
+    // 连点可早于 loading 的 React 提交，先同步加锁，防止弹出两个文件选择器并重复入库。
+    if (importInFlightRef.current) return;
+    importInFlightRef.current = true;
     try {
       setImportState({ active: true, message: '正在打开文件选择器...' });
       await waitForNextPaint();
       const picked = await pickTxtFile();
       if (!picked) return;
+      if (!picked.content.trim()) throw new Error('TXT 文件没有可阅读的正文');
 
       // 大 TXT 的读取和章节切分都在 JS 线程，先刷新 loading，避免用户看到页面长时间无响应。
       setImportState({ active: true, message: '正在解析本地 TXT...' });
@@ -218,12 +222,14 @@ export default function BookshelfScreen() {
         progress: 0,
       };
       const chapters = parseTxtChapters(bookId, picked.content);
+      newBook.totalChapters = chapters.length;
 
       setImportState({ active: true, message: '正在整理章节...' });
       await waitForNextPaint();
 
+      // 正文保存成功后才显示入库成功，失败时不留下只有书名的空书架条目。
+      await setChapters(bookId, chapters);
       addBook(newBook);
-      setChapters(bookId, chapters);
       navigation.navigate('BookDetail', { bookId });
     } catch (error) {
       Alert.alert(
@@ -231,9 +237,10 @@ export default function BookshelfScreen() {
         error instanceof Error ? error.message : '请确认文件格式后重试',
       );
     } finally {
+      importInFlightRef.current = false;
       setImportState({ active: false, message: '' });
     }
-  }, [addBook, importState.active, navigation, setChapters]);
+  }, [addBook, navigation, setChapters]);
 
   const unfinishedCount = books.filter(b => b.progress < 100).length;
   const followedCount = books.filter(b => b.following).length;
@@ -246,10 +253,19 @@ export default function BookshelfScreen() {
   );
   const shown = React.useMemo(() => {
     const keyword = shelfQuery.trim().toLowerCase();
-    return applyFilter(books, filter).filter(book => {
-      if (!keyword) return true;
-      return `${book.title} ${book.author}`.toLowerCase().includes(keyword);
-    });
+    return (
+      applyFilter(books, filter)
+        .filter(book => {
+          if (!keyword) return true;
+          return `${book.title} ${book.author}`.toLowerCase().includes(keyword);
+        })
+        // 新加的书和最近读的书优先露出；追更检查仅改 updatedAt，不应打乱续读顺序。
+        .sort(
+          (a, b) =>
+            Math.max(b.addedAt, b.lastReadAt || 0) -
+            Math.max(a.addedAt, a.lastReadAt || 0),
+        )
+    );
   }, [books, filter, shelfQuery]);
   const hasActiveShelfFilters =
     filter !== '全部' || shelfQuery.trim().length > 0;
