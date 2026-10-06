@@ -5,6 +5,8 @@
  * 指标都由它派生，避免维护多份易失同步的冗余字段。日期用本地时区的
  * 'YYYY-MM-DD' 作键。
  */
+import { readerGrowthMinutes } from '../../utils/readerLevel';
+
 export interface ReadingStats {
   secondsByDate: Record<string, number>;
   dailyGoalMinutes?: number;
@@ -27,6 +29,7 @@ export function dateKey(d: Date = new Date()): string {
 export interface ReadingStatsSummary {
   todayMinutes: number; // 今日阅读分钟
   totalMinutes: number; // 累计阅读分钟
+  growthMinutes: number; // 每日封顶后的阅历，不替代真实累计阅读时间
   activeDays: number; // 有阅读记录的天数
   streak: number; // 截至今天（或昨天）的连续阅读天数
   dailyGoalMinutes: number;
@@ -81,6 +84,7 @@ export function summarizeReadingStats(
   return {
     todayMinutes,
     totalMinutes: Math.round(totalSeconds / 60),
+    growthMinutes: readerGrowthMinutes(byDate),
     activeDays: keys.length,
     streak,
     dailyGoalMinutes,

@@ -20,7 +20,12 @@ import {
   AppState,
   KeyboardAvoidingView,
 } from 'react-native';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import {
+  useNavigation,
+  useRoute,
+  useIsFocused,
+  RouteProp,
+} from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Brightness from '../native/Brightness';
 import * as Orientation from '../native/Orientation';
@@ -495,10 +500,7 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     addReadingTimeRef.current = addReadingTime;
   });
-  React.useEffect(() => {
-    if (!readingEngaged) return;
-    return startReadingSession(ms => addReadingTimeRef.current(ms));
-  }, [readingEngaged]);
+  const readerFocused = useIsFocused();
 
   const bookmarks = useBookmarks(bookId);
   const toggleBookmark = useToggleBookmark();
@@ -1166,6 +1168,18 @@ export default function ReaderScreen() {
   const chapterChangedForPageLayout = prevChapterIdRef.current !== chapter?.id;
   const chapterContentReady =
     !isOnline || hasUsableChapterContent(chapter, book?.source?.name);
+  // 只结算真正可读且可见的正文，目录、错误/加载页和被其他页面覆盖的阅读器不累计阅历。
+  const readingTimeEligible =
+    readerFocused &&
+    readingEngaged &&
+    !drawerOpen &&
+    status === 'ready' &&
+    chapterContentReady &&
+    chapterTextLength > 0;
+  React.useEffect(() => {
+    if (!readingTimeEligible) return;
+    return startReadingSession(ms => addReadingTimeRef.current(ms));
+  }, [readingTimeEligible]);
   // 滚动容器在换章、改字号后也会重建；旧测量与迟到滚动不能改写新会话的续读位置。
   activeScrollSessionRef.current =
     settings.pageMode === 'scroll' && status === 'ready' && chapterContentReady

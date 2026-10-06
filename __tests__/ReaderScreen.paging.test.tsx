@@ -20,6 +20,7 @@ import {
 } from '../src/store/atoms';
 import { ONLINE_CONTENT_VERSION } from '../src/services/source/contentQuality';
 import type { Chapter } from '../src/store/types/book';
+import { startReadingSession } from '../src/utils/readingSession';
 
 jest.setTimeout(15000);
 jest.mock('../src/utils/devLog', () => ({ devInfo: jest.fn() }));
@@ -31,9 +32,14 @@ const mockNavigation = {
 };
 const mockEnsureChapter = jest.fn();
 const mockLoadNextPage = jest.fn();
+let mockReaderFocused = true;
+jest.mock('../src/utils/readingSession', () => ({
+  startReadingSession: jest.fn(() => jest.fn()),
+}));
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => mockNavigation,
   useRoute: () => ({ params: { bookId: 'paging-test' } }),
+  useIsFocused: () => mockReaderFocused,
 }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -150,6 +156,8 @@ describe('ReaderScreen paging interactions', () => {
 
   beforeEach(() => {
     jest.useFakeTimers();
+    mockReaderFocused = true;
+    (startReadingSession as jest.Mock).mockClear();
     mockEnsureChapter
       .mockReset()
       .mockImplementation(() => new Promise(() => {}));
@@ -160,6 +168,42 @@ describe('ReaderScreen paging interactions', () => {
   afterEach(async () => {
     if (tree) await act(() => tree.unmount());
     jest.useRealTimers();
+  });
+
+  it('pauses reading time in the directory and when another screen covers the reader', async () => {
+    await mount();
+    const session = startReadingSession as jest.Mock;
+    expect(session).toHaveBeenCalledTimes(1);
+    const stop = session.mock.results[0].value;
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '目录' })[0]
+        .props.onPress(),
+    );
+    expect(stop).toHaveBeenCalledTimes(1);
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '关闭章节目录' })[0]
+        .props.onPress(),
+    );
+    expect(session).toHaveBeenCalledTimes(2);
+    const resumedStop = session.mock.results[1].value;
+    const count = session.mock.calls.length;
+    mockReaderFocused = false;
+    await act(() =>
+      tree.update(
+        <Provider store={store}>
+          <ReaderScreen />
+        </Provider>,
+      ),
+    );
+    expect(session).toHaveBeenCalledTimes(count);
+    expect(resumedStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start reading time for an uncached chapter while loading', async () => {
+    await mount(0, true, [makeChapter(0, '')], { pageMode: 'scroll' });
+    expect(startReadingSession).not.toHaveBeenCalled();
   });
 
   it('advances three times within one React batch and rejects old animation endpoints', async () => {

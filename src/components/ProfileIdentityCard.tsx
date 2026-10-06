@@ -27,7 +27,11 @@ import {
   useSetProfileAvatar,
   useSetProfileFrame,
 } from '../store';
-import { resolveReaderLevel } from '../utils/readerLevel';
+import {
+  DAILY_READER_GROWTH_LIMIT,
+  READER_LEVELS,
+  resolveReaderLevel,
+} from '../utils/readerLevel';
 import { Icon } from './Icon';
 import { Text } from './Text';
 
@@ -60,7 +64,8 @@ export function ProfileIdentityCard({
   const [customizer, setCustomizer] = React.useState<CustomizerTab | null>(
     null,
   );
-  const level = resolveReaderLevel(stats.totalMinutes);
+  const [levelDetails, setLevelDetails] = React.useState(false);
+  const level = resolveReaderLevel(stats.growthMinutes);
   const immersiveTopInset = immersive ? insets.top : 0;
 
   const avatar =
@@ -70,8 +75,8 @@ export function ProfileIdentityCard({
     PROFILE_FRAMES.find(item => item.id === appearance.frameId) ??
     PROFILE_FRAMES[0];
   const progressLabel = level.next
-    ? `${stats.totalMinutes} / ${level.next.thresholdMinutes} 阅历`
-    : `${stats.totalMinutes} 阅历 · 已满级`;
+    ? `${stats.growthMinutes} / ${level.next.thresholdMinutes} 阅历`
+    : `${stats.growthMinutes} 阅历 · 已满级`;
 
   return (
     <>
@@ -134,16 +139,21 @@ export function ProfileIdentityCard({
                 <Text style={styles.profileName}>书友</Text>
                 <Icon name="chevron-right" size={20} color={CARD_MUTED} />
               </Pressable>
-              <View style={styles.levelBadge}>
+              <Pressable
+                style={styles.levelBadge}
+                accessibilityRole="button"
+                accessibilityLabel={`当前书友等级 Lv.${level.current.level} ${level.current.title}，查看升级规则`}
+                onPress={() => setLevelDetails(true)}
+              >
                 <Text style={styles.levelBadgeText}>
                   Lv.{level.current.level} {level.current.title}
                 </Text>
-              </View>
+              </Pressable>
               <View style={styles.progressHeader}>
                 <Text style={styles.experienceText}>{progressLabel}</Text>
                 {level.next ? (
                   <Text style={styles.remainingText}>
-                    还差 {level.remainingMinutes} 分钟
+                    还差 {level.remainingMinutes} 阅历
                   </Text>
                 ) : null}
               </View>
@@ -180,6 +190,90 @@ export function ProfileIdentityCard({
           </View>
         </ImageBackground>
       </View>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={levelDetails}
+        onRequestClose={() => setLevelDetails(false)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable
+            style={styles.modalBackdrop}
+            accessibilityLabel="关闭等级说明"
+            onPress={() => setLevelDetails(false)}
+          />
+          <View
+            style={[
+              styles.sheet,
+              styles.levelSheet,
+              {
+                backgroundColor: theme.colors.surface,
+                paddingBottom: Math.max(18, insets.bottom + 8),
+              },
+            ]}
+          >
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
+                书友成长
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="关闭等级说明"
+                hitSlop={10}
+                onPress={() => setLevelDetails(false)}
+              >
+                <Icon
+                  name="close"
+                  size={21}
+                  color={theme.colors.textSecondary}
+                />
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.levelScroll}
+              contentContainerStyle={styles.levelRules}
+            >
+              <Text
+                style={[
+                  styles.levelRuleText,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                每阅读 1 分钟获得 1 点阅历，每天最多 {DAILY_READER_GROWTH_LIMIT}{' '}
+                点。超过上限仍记录真实阅读时间。目录、加载、错误页面和后台不计时。
+              </Text>
+              <Text
+                style={[
+                  styles.levelRuleText,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                历史阅读记录按新规则重算等级，阅读时长不会清零，已选用的装扮保留。点击等级徽章可随时查看进度。
+              </Text>
+              {READER_LEVELS.map(item => (
+                <View key={item.level} style={styles.levelRuleRow}>
+                  <Text
+                    style={{
+                      color:
+                        item.level === level.current.level
+                          ? theme.colors.primary
+                          : theme.colors.text,
+                    }}
+                  >
+                    Lv.{item.level} {item.title}
+                    {item.level === level.current.level ? ' · 当前' : ''}
+                  </Text>
+                  <Text style={{ color: theme.colors.textSecondary }}>
+                    {item.thresholdMinutes} 阅历
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         animationType="slide"
@@ -541,6 +635,15 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   levelBadgeText: { color: '#DCC484', fontSize: 11.5, fontWeight: '600' },
+  levelRules: { paddingHorizontal: 20, paddingBottom: 20 },
+  levelSheet: { height: '72%' },
+  levelScroll: { flex: 1 },
+  levelRuleText: { fontSize: 13, lineHeight: 22, marginBottom: 12 },
+  levelRuleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+  },
   progressHeader: {
     alignItems: 'center',
     flexDirection: 'row',

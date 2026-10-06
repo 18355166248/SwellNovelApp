@@ -39,9 +39,17 @@ describe('reading stats summary', () => {
       now,
     );
 
-    expect(summary.dailyGoalMinutes).toBe(
-      DEFAULT_DAILY_READING_GOAL_MINUTES,
-    );
+    expect(summary.dailyGoalMinutes).toBe(DEFAULT_DAILY_READING_GOAL_MINUTES);
     expect(summary.todayGoalProgress).toBe(1);
+  });
+
+  it('阅历每日封顶，真实阅读时长和目标统计保持完整', () => {
+    const summary = summarizeReadingStats(
+      { secondsByDate: { '2026-08-08': 18000 } },
+      new Date(2026, 7, 8),
+    );
+    expect(summary.totalMinutes).toBe(300);
+    expect(summary.todayMinutes).toBe(300);
+    expect(summary.growthMinutes).toBe(120);
   });
 });
