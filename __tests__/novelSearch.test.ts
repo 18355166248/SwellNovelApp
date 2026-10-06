@@ -1,3 +1,4 @@
+import { SOURCES } from '../src/services/source/registry';
 import { searchNovels } from '../src/services/search/novelSearch';
 import { searchNovels as searchNovelsWeb } from '../src/services/search/novelSearch.web';
 import { fetchHtml } from '../src/services/http/fetchHtml';
@@ -188,13 +189,13 @@ describe.each([
       onResults,
       isCancelled: () => cancelled,
     });
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(SOURCES.length);
     cancelled = true;
     pending.resolve(
       ddgHit('https://tw.mingzw.net/mzwbook/10001.html', '夜无疆'),
     );
     await expect(result).resolves.toEqual([]);
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(SOURCES.length);
     expect(onResults).not.toHaveBeenCalled();
     expect(mockCatalog).toHaveBeenCalledTimes(1);
   });

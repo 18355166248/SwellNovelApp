@@ -42,6 +42,7 @@ const ALLOWED_HOSTS = [
   /(^|\.)bookshuku\.org$/i,
   /(^|\.)mingzw\.net$/i,
   /(^|\.)xuanhuange\.info$/i,
+  /^(?:www\.)?bqquge\.org$/i,
   // 搜索页只用固定引擎定位已登记书源，仍不是开放代理。
   /^html\.duckduckgo\.com$/i,
   /^www\.bing\.com$/i,
@@ -127,7 +128,10 @@ app.use('/proxy', (req, res) => {
       if (err) {
         console.error('[source-proxy]', err.message);
         // 上游临时不可达时，宁可返回当天已验证的旧推荐，也不让发现页等待到超时。
-        if (cached && Date.now() - cached.savedAt < RECOMMENDATION_STALE_TTL_MS) {
+        if (
+          cached &&
+          Date.now() - cached.savedAt < RECOMMENDATION_STALE_TTL_MS
+        ) {
           sendProxyHtml(res, cached.html, 'STALE');
           return;
         }
@@ -135,7 +139,10 @@ app.use('/proxy', (req, res) => {
         return;
       }
       if (cacheKey && stdout.trim()) {
-        recommendationCache.set(cacheKey, { html: stdout, savedAt: Date.now() });
+        recommendationCache.set(cacheKey, {
+          html: stdout,
+          savedAt: Date.now(),
+        });
       }
       sendProxyHtml(res, stdout, cacheKey ? 'MISS' : 'BYPASS');
     },

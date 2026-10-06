@@ -21,6 +21,7 @@ import {
 } from '../services/search/novelSearch';
 import { isSameOnlineBook } from '../utils/addOnlineBook';
 import { createSearchRequestCoordinator } from './searchRequestCoordinator';
+import { resolveSource } from '../services/source/registry';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -168,10 +169,13 @@ export default function SearchScreen() {
         invalidateOnlineActivity();
         return;
       }
-      // 同一个输入框兼容书名与链接：粘贴 URL 时直接进入可见网页导入，避免用户先选模式。
+      // 已验证直连的书源走专用解析以取齐分页；需要浏览器会话的站点仍保留可见网页导入。
       if (isUrl(trimmed)) {
         invalidateOnlineActivity();
-        if (Platform.OS === 'web') {
+        if (
+          Platform.OS === 'web' ||
+          resolveSource(trimmed)?.preferDirectImport
+        ) {
           importOnlineUrl(trimmed);
         } else {
           openBrowser(trimmed);

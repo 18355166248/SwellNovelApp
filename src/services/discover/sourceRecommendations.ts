@@ -19,6 +19,7 @@ export interface SourceRecommendation {
 
 const BOOKSHUKU_LIST_URL = 'http://wap.bookshuku.org/txt/';
 const MINGZW_HOME_URL = 'https://www.mingzw.net/';
+const BQ_HOME_URL = 'https://www.bqquge.org/';
 const MAX_PER_SOURCE = 10;
 
 function unique(items: SourceRecommendation[]): SourceRecommendation[] {
@@ -74,6 +75,24 @@ export function parseMingzwRecommendations(
   return unique(items);
 }
 
+/** 仅收集首页明确的书籍根地址，不把章节、翻页、广告或相似域名当成书目。 */
+export function parseBqqugeRecommendations(
+  html: string,
+): SourceRecommendation[] {
+  const items: SourceRecommendation[] = [];
+  for (const match of html.matchAll(
+    /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+  )) {
+    const url = toAbsolute(BQ_HOME_URL, decodeEntities(match[1]));
+    if (!/^https?:\/\/(?:www\.)?bqquge\.org\/\d+\/?$/i.test(url)) continue;
+    const title = decodeEntities(stripTags(match[2])).trim();
+    if (!title || title.length > 60) continue;
+    // 当前首页没有作者字段；由详情页解析补全，不能从邻近其他书目的文字猜作者。
+    items.push({ url, title, sourceName: '笔趣阁（bqquge）' });
+  }
+  return unique(items);
+}
+
 async function fetchOne(
   url: string,
   parse: (html: string) => SourceRecommendation[],
@@ -93,6 +112,7 @@ export async function fetchSourceRecommendations(): Promise<
   const groups = await Promise.all([
     fetchOne(BOOKSHUKU_LIST_URL, parseBookshukuRecommendations),
     fetchOne(MINGZW_HOME_URL, parseMingzwRecommendations),
+    fetchOne(BQ_HOME_URL, parseBqqugeRecommendations),
   ]);
   // 防御性校验：页面广告或导航链接即使误命中，也不能进入“加入书架”流程。
   return unique(groups.flatMap(group => group.slice(0, MAX_PER_SOURCE)))
@@ -117,6 +137,9 @@ export async function searchSourceCatalogs(
     fetchHtml(MINGZW_HOME_URL, options.timeoutMs, {
       preferLocalProxy: true,
     }).then(parseMingzwRecommendations),
+    fetchHtml(BQ_HOME_URL, options.timeoutMs, {
+      preferLocalProxy: true,
+    }).then(parseBqqugeRecommendations),
   ]);
   // 搜索必须区分“没有匹配”和“所有站点都不可用”；单站失败则仍保留另一站结果。
   if (groups.every(group => group.status === 'rejected')) {

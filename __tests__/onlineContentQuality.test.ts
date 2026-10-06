@@ -31,6 +31,35 @@ describe('online chapter content quality', () => {
     expect(isInvalidOnlineChapterContent('有效正文。'.repeat(80))).toBe(false);
   });
 
+  it('拒绝字体映射乱码及解码损坏，字数达标也不能缓存为完整正文', () => {
+    expect(
+      isInvalidOnlineChapterContent(
+        ('正常文字' + '\uE123'.repeat(6)).repeat(40),
+      ),
+    ).toBe(true);
+    expect(
+      isInvalidOnlineChapterContent(
+        ('正常文字' + '\uFFFD'.repeat(6)).repeat(40),
+      ),
+    ).toBe(true);
+    expect(
+      isInvalidOnlineChapterContent('有效正文。'.repeat(80) + '\uE123'),
+    ).toBe(false);
+    expect(
+      isInvalidOnlineChapterContent(
+        '生僻字𠮷与表情😀都应正常保留。'.repeat(40),
+      ),
+    ).toBe(false);
+  });
+
+  it('有网页会员/下载全本提示的预览不能当作完整章', () => {
+    expect(
+      isInvalidOnlineChapterContent(
+        '有效预览。'.repeat(80) + '扫码下载APP免费读，SVIP网页畅读',
+      ),
+    ).toBe(true);
+  });
+
   it('只放行书源结构校验过的短章，拦截页即使标记可信也不能缓存', () => {
     expect(
       isInvalidOnlineChapterContent('状态不好，休息一天。', {

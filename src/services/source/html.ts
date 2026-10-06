@@ -13,6 +13,9 @@ export function matchOne(re: RegExp, html: string): string | undefined {
 
 const ENTITY_MAP: Record<string, string> = {
   '&nbsp;': ' ',
+  '&ensp;': ' ',
+  '&emsp;': ' ',
+  '&thinsp;': ' ',
   '&amp;': '&',
   '&lt;': '<',
   '&gt;': '>',
@@ -32,10 +35,7 @@ export function decodeEntities(text: string): string {
       String.fromCodePoint(parseInt(hex, 16)),
     )
     .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
-    .replace(
-      /&[a-zA-Z]+;|&#39;/g,
-      entity => ENTITY_MAP[entity] ?? entity,
-    );
+    .replace(/&[a-zA-Z]+;|&#39;/g, entity => ENTITY_MAP[entity] ?? entity);
 }
 
 /** 去除所有 HTML 标签（不做实体解码）。 */

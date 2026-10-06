@@ -532,3 +532,19 @@ it('bookshuku 同路径的 query 子页不会误判成已读章首页', async ()
   });
   jest.runOnlyPendingTimers();
 });
+
+it('浏览器识别可直连笔趣阁后重取专用目录，保留注册书源和分页能力', async () => {
+  const book = {
+    ...incomingBook('bqquge:1'),
+    source: { name: 'bqquge', bookUrl: 'https://www.bqquge.org/1' },
+  };
+  jest.mocked(addOnlineBook).mockResolvedValue(result(book, [1, 2, 3]));
+  const added = await useAddRecognizedBook()({
+    ...recognized([1]),
+    host: 'www.bqquge.org',
+    url: 'https://www.bqquge.org/1',
+  });
+  expect(addOnlineBook).toHaveBeenCalledWith('https://www.bqquge.org/1');
+  expect(added.source?.name).toBe('bqquge');
+  expect(mockStore.get(chaptersAtom)[added.id]).toHaveLength(3);
+});

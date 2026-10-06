@@ -144,6 +144,7 @@ module.exports = (_env, argv) => {
           /(^|\.)bookshuku\.org$/i,
           /(^|\.)mingzw\.net$/i,
           /(^|\.)xuanhuange\.info$/i,
+          /^(?:www\.)?bqquge\.org$/i,
           /^html\.duckduckgo\.com$/i,
           /^www\.bing\.com$/i,
         ];

@@ -13,11 +13,23 @@ export const HEADING_RE = /^第[零一二三四五六七八九十百千两万0-9
 const BLOCKED_KEYWORDS =
   /外围名媛|福利姬|自慰|口交|成人视频|性感女性|访问权限|立即下载|约爱社区/;
 
+/** 字体映射未还原或解码损坏时，字数再多也不是可离线阅读的正文。 */
+export function hasUnreadableChapterText(text: string): boolean {
+  const compact = text.replace(/\s+/g, '');
+  // 少量私用字符可能是站点图标，不误伤；密集私用字/替换符才认定正文未解析。
+  const unreadable = compact.match(/[\uE000-\uF8FF\uFFFD]/g)?.length ?? 0;
+  return unreadable >= 5 && unreadable / Math.max(1, compact.length) >= 0.05;
+}
+
 /** 拦截提示页 / 广告卡片正文的整体特征,命中说明不是真正的章节正文。 */
 export function isBlockedText(text?: string): boolean {
   if (!text) return false;
   const normalized = text.replace(/\s+/g, '');
   return (
+    hasUnreadableChapterText(text) ||
+    /扫码下载APP免费读[，,]?SVIP网页畅读|会员登录后[，,]?可在网页畅读全文/.test(
+      normalized,
+    ) ||
     /请在浏览器中打开/.test(text) ||
     /当前环境无法直接下载/.test(text) ||
     /点击右上角.*按钮/.test(text) ||

@@ -26,6 +26,7 @@ import {
 import { resumeChapterIndex } from '../utils/chapters';
 import { sanitizeBookDescription } from '../utils/bookDescription';
 import { isBadBookshukuCatalog } from '../utils/bookCatalogQuality';
+import { catalogNumberSummary } from '../utils/catalogNumberSummary';
 import { getSourceById } from '../services/source/registry';
 import { isCompleteOnlineChapterCacheUsable } from '../services/source/contentQuality';
 import {
@@ -96,6 +97,10 @@ export default function BookDetailScreen() {
     caching.total > 0 ? Math.round((caching.done / caching.total) * 100) : 0;
   const catalogNeedsRepair =
     !!book && isBadBookshukuCatalog(book.source?.name, chapters);
+  const catalogNumbers = React.useMemo(
+    () => catalogNumberSummary(chapters),
+    [chapters],
+  );
 
   const onCheckUpdate = async () => {
     if (checking || caching.active || !supportsCatalogActions) return;
@@ -109,7 +114,7 @@ export default function BookDetailScreen() {
             ? `已修复目录，更新 ${n} 章`
             : '目录已重新检查'
           : n > 0
-          ? `发现 ${n} 个新章节`
+          ? `目录新增 ${n} 项`
           : '已是最新章节',
       );
     } catch {
@@ -148,10 +153,10 @@ export default function BookDetailScreen() {
       );
       setOnlineMsg(
         res.cancelled
-          ? `已停止，缓存了 ${res.done}/${res.total} 章`
+          ? `已停止，缓存了 ${res.done}/${res.total} 项正文`
           : res.done >= res.total
-          ? `已缓存全部 ${res.total} 章，可离线阅读`
-          : `已缓存 ${res.done}/${res.total} 章（部分失败，可重试）`,
+          ? `已缓存全部 ${res.total} 项正文，可离线阅读`
+          : `已缓存 ${res.done}/${res.total} 项正文（部分失败，可重试）`,
       );
     } catch {
       setOnlineMsg('缓存失败，请检查网络后重试');
@@ -320,11 +325,15 @@ export default function BookDetailScreen() {
             <View style={styles.statsRow}>
               <View
                 accessible
-                accessibilityLabel={`${chapters.length} 章`}
+                accessibilityLabel={`${chapters.length} ${
+                  book.source ? '项目录' : '章'
+                }`}
                 style={styles.statItem}
               >
                 <Text style={styles.statValue}>{chapters.length}</Text>
-                <Text style={styles.statLabel}>章节</Text>
+                <Text style={styles.statLabel}>
+                  {book.source ? '目录项' : '章节'}
+                </Text>
               </View>
               <View
                 accessible
@@ -381,7 +390,9 @@ export default function BookDetailScreen() {
                 numberOfLines={1}
                 style={{ color: theme.colors.text, fontSize: 13 }}
               >
-                第 {chapters.length} 章 · {latest.title}
+                {book.source
+                  ? latest.title
+                  : `第 ${chapters.length} 章 · ${latest.title}`}
               </Text>
               <Text
                 variant="caption"
@@ -556,8 +567,8 @@ export default function BookDetailScreen() {
                   : !chaptersReady
                   ? '正在读取章节目录…'
                   : !supportsCatalogActions
-                  ? `已缓存 ${cachedCount}/${chapters.length} 章。阅读时自动缓存；更新目录请回原网页重新识别。`
-                  : `已缓存 ${cachedCount}/${chapters.length} 章${
+                  ? `已缓存 ${cachedCount}/${chapters.length} 项正文。阅读时自动缓存；更新目录请回原网页重新识别。`
+                  : `已缓存 ${cachedCount}/${chapters.length} 项正文${
                       cachedCount > 0
                         ? '，这些章节可离线阅读'
                         : '，阅读时自动缓存'
@@ -597,7 +608,9 @@ export default function BookDetailScreen() {
                     ? '目录修复中…'
                     : '目录暂不可用'
                   : chaptersReady
-                  ? `共 ${chapters.length} 章`
+                  ? book.source
+                    ? `共 ${chapters.length} 项目录`
+                    : `共 ${chapters.length} 章`
                   : '目录加载中…'}
               </Text>
               <Icon
@@ -607,6 +620,26 @@ export default function BookDetailScreen() {
               />
             </Pressable>
           </View>
+          {book.source && catalogNumbers.maxNumber > 0 && (
+            <Text
+              variant="caption"
+              color="textSecondary"
+              style={styles.catalogAudit}
+            >
+              章号至第 {catalogNumbers.maxNumber} 章 ·
+              目录项可能含上下篇、合章与公告
+            </Text>
+          )}
+          {book.source && catalogNumbers.unmatchedNumbers.length > 0 && (
+            <Text
+              variant="caption"
+              color="textSecondary"
+              style={styles.catalogAudit}
+            >
+              有 {catalogNumbers.unmatchedNumbers.length}{' '}
+              个章号未匹配，建议核对原站目录；原站跳号不一定是缺章。
+            </Text>
+          )}
           <View
             style={[
               styles.tocList,
@@ -629,7 +662,11 @@ export default function BookDetailScreen() {
                   <Pressable
                     key={c.id}
                     accessibilityRole="button"
-                    accessibilityLabel={`阅读第 ${idx + 1} 章 ${c.title}`}
+                    accessibilityLabel={
+                      book.source
+                        ? `阅读目录第 ${idx + 1} 项 ${c.title}`
+                        : `阅读第 ${idx + 1} 章 ${c.title}`
+                    }
                     onPress={() => goReader(idx)}
                     style={[
                       styles.tocRow,
@@ -766,7 +803,9 @@ export default function BookDetailScreen() {
                 : !chaptersReady
                 ? '章节加载中'
                 : book.progress > 0
-                ? `继续阅读第 ${resumeIdx + 1} 章`
+                ? book.source
+                  ? `继续阅读 ${chapters[resumeIdx]?.title || ''}`
+                  : `继续阅读第 ${resumeIdx + 1} 章`
                 : '开始阅读'
             }
             accessibilityState={{ disabled: !catalogReady }}
@@ -791,7 +830,9 @@ export default function BookDetailScreen() {
                 : !chaptersReady
                 ? '章节加载中…'
                 : book.progress > 0
-                ? `继续阅读 · 第 ${resumeIdx + 1} 章`
+                ? book.source
+                  ? `继续阅读 · ${chapters[resumeIdx]?.title || ''}`
+                  : `继续阅读 · 第 ${resumeIdx + 1} 章`
                 : '开始阅读'}
             </Text>
           </Pressable>
@@ -975,6 +1016,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   tocList: { marginTop: 8, borderRadius: 8, overflow: 'hidden' },
+  catalogAudit: { marginHorizontal: 16, marginBottom: 10 },
   catalogBlocked: {
     alignItems: 'center',
     flexDirection: 'row',

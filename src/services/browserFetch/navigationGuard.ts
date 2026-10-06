@@ -7,15 +7,27 @@ function hostOf(url: string): string {
   return /^https?:\/\/([^/:?#]+)/i.exec(url)?.[1].toLowerCase() || '';
 }
 
-export function isSameSiteNavigation(fromUrl: string, targetUrl: string): boolean {
+export function isSameSiteNavigation(
+  fromUrl: string,
+  targetUrl: string,
+): boolean {
   const from = hostOf(fromUrl);
   const target = hostOf(targetUrl);
   if (!from || !target) return true;
-  return target === from || target.endsWith(`.${from}`) || from.endsWith(`.${target}`);
+  return (
+    target === from ||
+    target.endsWith(`.${from}`) ||
+    from.endsWith(`.${target}`)
+  );
 }
 
-/** 仅对用户确认的玄幻阁站点启用顶层跨站拦截，保留通用浏览器的正常外链能力。 */
-export function shouldBlockAdNavigation(fromUrl: string, targetUrl: string): boolean {
-  return /(^|\.)xuanhuange\.info(?::\d+)?$/i.test(hostOf(fromUrl)) &&
-    !isSameSiteNavigation(fromUrl, targetUrl);
+/** 已适配的第三方书源启用跨站跳转拦截，广告不能把目录带离当前小说站。 */
+export function shouldBlockAdNavigation(
+  fromUrl: string,
+  targetUrl: string,
+): boolean {
+  return (
+    /(^|\.)(?:xuanhuange\.info|bqquge\.org)(?::\d+)?$/i.test(hostOf(fromUrl)) &&
+    !isSameSiteNavigation(fromUrl, targetUrl)
+  );
 }

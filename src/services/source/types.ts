@@ -51,6 +51,8 @@ export interface BookSource {
    * 实际走繁体站），所以单独给出；缺省时由 registry 用 host 拼 http。
    */
   homeUrl?: string;
+  /** 已验证静态页面可完整解析，原生粘贴链接时优先专用解析，避免通用 DOM 丢目录分页。 */
+  preferDirectImport?: boolean;
   /** 判断某个 URL 是否属于本书源。 */
   matchUrl(url: string): boolean;
   /** 从任意站内 URL（详情/目录/正文页）提取站内书籍 id；取不到返回 undefined。 */

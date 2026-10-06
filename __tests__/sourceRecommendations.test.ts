@@ -1,9 +1,23 @@
 import {
   parseBookshukuRecommendations,
   parseMingzwRecommendations,
+  parseBqqugeRecommendations,
 } from '../src/services/discover/sourceRecommendations';
 
 describe('书源推荐解析', () => {
+  it('笔趣阁首页提取真实书名，过滤章节、相似域名与重复卡片', () => {
+    expect(
+      parseBqqugeRecommendations(
+        '<li><p><a href="/1">夜无疆</a></p></li><a href="/1">夜无疆</a><a href="/1/100">第1章</a><a href="https://www.bqquge.org.fake.test/1">广告</a>',
+      ),
+    ).toEqual([
+      {
+        url: 'https://www.bqquge.org/1',
+        title: '夜无疆',
+        sourceName: '笔趣阁（bqquge）',
+      },
+    ]);
+  });
   it('解析书库列表并提取书名、作者和详情页', () => {
     const items = parseBookshukuRecommendations(
       '<li><a href="http://wap.bookshuku.org/bookinfo/132737.html">[玄幻] <b>夜无疆</b><span>/</span>辰东</a></li>',

@@ -41,6 +41,19 @@ describe('collectChapterPages', () => {
     expect(requested).toEqual([`${base}100_2.html`, `${base}100_3.html`]);
   });
 
+  it('续页字体映射乱码时保留已读正文，不追加坏文本且保留重试入口', async () => {
+    const nextPageUrl = `${base}100_2.html`;
+    const merged = await collectChapterPages({
+      firstContent: '正常首屏正文',
+      firstNextPageUrl: nextPageUrl,
+      fetchPage: async () => ({ content: '\uE123'.repeat(30) }),
+      cleanPage: identity,
+    });
+    expect(merged.content).toBe('正常首屏正文');
+    expect(merged.nextPageUrl).toBe(nextPageUrl);
+    expect(merged.loadedPageUrls).toEqual([]);
+  });
+
   it('单页章节不额外发请求', async () => {
     const { fetchPage, requested } = sitePages({});
     const merged = await collectChapterPages({

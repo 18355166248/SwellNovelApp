@@ -21,7 +21,7 @@ import {
   recognizedBookImportId,
   type OnlineBookResult,
 } from '../../utils/addOnlineBook';
-import { getSourceById } from '../../services/source/registry';
+import { getSourceById, resolveSource } from '../../services/source/registry';
 import type { ParsedChapterContent } from '../../services/source/types';
 import {
   isInvalidOnlineChapterContent,
@@ -442,6 +442,17 @@ export const useAddRecognizedBook = () => {
     runBookImport(store, onlineBookImportKey(data.url), async () => {
       if (!data.ok || !data.isDetail)
         throw new Error('未识别到书籍目录，请重新识别后重试');
+      // 可直连的专用书源必须重取完整目录并保存注册身份；否则浏览导入会误走通用正文抓取，丢失章内子页。
+      if (resolveSource(data.url)?.preferDirectImport) {
+        return commitBookImport(
+          store,
+          await withTimeout(
+            addOnlineBook(data.url),
+            BOOK_IMPORT_TIMEOUT_MS,
+            '书源响应超时',
+          ),
+        );
+      }
       const metas = normalizeOnlineCatalog(data.chapters);
       const bookId = recognizedBookImportId(data.url, data.host);
 

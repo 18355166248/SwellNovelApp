@@ -41,6 +41,7 @@ const ALLOWED_HOSTS = [
   /(^|\.)bookshuku\.org$/i,
   /(^|\.)mingzw\.net$/i,
   /(^|\.)xuanhuange\.info$/i,
+  /^(?:www\.)?bqquge\.org$/i,
   // 搜索页只用固定引擎定位已登记书源，仍不是开放代理。
   /^html\.duckduckgo\.com$/i,
   /^www\.bing\.com$/i,
@@ -55,7 +56,9 @@ app.use('/proxy', (req, res) => {
   const m = /^\/(https?)\/([^/]+)(\/.*)?$/.exec(req.url || '');
   const host = m && m[2].toLowerCase();
   if (!host || !ALLOWED_HOSTS.some(re => re.test(host))) {
-    res.status(host ? 403 : 400).type('text/plain')
+    res
+      .status(host ? 403 : 400)
+      .type('text/plain')
       .send(host ? 'Host not allowed' : 'Bad proxy path');
     return;
   }
@@ -64,12 +67,20 @@ app.use('/proxy', (req, res) => {
   execFile(
     'curl',
     [
-      '-s', '-L', '--max-redirs', '3',
-      '--connect-timeout', '10',
-      '--max-time', '25',
-      '-H', `User-Agent: ${MOBILE_UA}`,
-      '-H', 'Accept: text/html',
-      '-H', 'Accept-Encoding:',
+      '-s',
+      '-L',
+      '--max-redirs',
+      '3',
+      '--connect-timeout',
+      '10',
+      '--max-time',
+      '25',
+      '-H',
+      `User-Agent: ${MOBILE_UA}`,
+      '-H',
+      'Accept: text/html',
+      '-H',
+      'Accept-Encoding:',
       target,
     ],
     { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
@@ -79,7 +90,8 @@ app.use('/proxy', (req, res) => {
         res.status(502).type('text/plain').send('Proxy upstream error');
         return;
       }
-      res.type('text/html; charset=utf-8')
+      res
+        .type('text/html; charset=utf-8')
         .set('cache-control', 'no-store')
         .send(stdout);
     },
