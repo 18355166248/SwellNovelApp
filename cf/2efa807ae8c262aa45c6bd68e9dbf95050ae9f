@@ -1,0 +1,64 @@
+src/services/source/types.ts
+  s_e80f7d159de26d::t_e0e3498e14a280 33
+__tests__/chapterPages.test.ts
+  s_e80f7d159de26d::t_7a1802c30a0e4e 52-55,144,148-165
+  s_e80f7d159de26d::t_77636b9a02e885 166
+src/utils/catalogRepair.ts
+  s_e80f7d159de26d::t_0b99859235ebcf 360-361
+  s_e80f7d159de26d::t_1b4217d571b89a 160
+docs/audits/2026-10-06-reader-continuation-audit.md
+  s_e80f7d159de26d::t_05cabfc43c5ed4 1-25
+docs/audits/2026-10-06-reader-bookmark-excerpt-audit.md
+  s_e80f7d159de26d::t_5a616d7a7d726c 1-14,17-20
+  s_e80f7d159de26d::t_bc4743f907e81b 15-16
+src/store/hooks/useOnlineBook.ts
+  s_e80f7d159de26d::t_e0e3498e14a280 101,538,727,751,763
+  s_e80f7d159de26d::t_fe010161fbc556 36,840-841,843,878,1029
+  s_e80f7d159de26d::t_7d599490083ec4 1023,1027
+  s_e80f7d159de26d::t_3b9bbed0d6375e 837-839,842,844-851,876-877,879-881,885-888
+  s_e80f7d159de26d::t_7a1802c30a0e4e 699,904-908
+  s_e80f7d159de26d::t_4071bb46ac8c35 1024-1026
+src/screens/ReaderScreen.tsx
+  s_e80f7d159de26d::t_0138d994f0a5e2 682,1843-1849,1912-1917,1919,1986
+  s_7aa9251711039a::t_320127b17760e6 1918
+src/store/types/book.ts
+  s_e80f7d159de26d::t_3b9bbed0d6375e 48
+__tests__/onlineBookImport.test.ts
+  s_e80f7d159de26d::t_7a1802c30a0e4e 14,447-534
+__tests__/catalogRepair.test.ts
+  s_e80f7d159de26d::t_b80bf7eced943c 264-302
+src/services/source/chapterPages.ts
+  s_e80f7d159de26d::t_6bbee157ebf1a9 14-28
+  s_e80f7d159de26d::t_734b783d9f88f6 33,37,58,69-70,72,74-76,86,93
+  s_e80f7d159de26d::t_e2bfca18ee15c6 71
+src/services/source/xuanhuange.ts
+  s_e80f7d159de26d::t_e0e3498e14a280 126,135
+__tests__/readerExcerpt.test.ts
+  s_e80f7d159de26d::t_efebcb1729f83c 62-81
+src/utils/readerExcerpt.ts
+  s_7aa9251711039a::t_0a4e4722510945 31-54,77-81,94,123-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "cf2efa807ae8c262aa45c6bd68e9dbf95050ae9f",
+  "prompts": {},
+  "sessions": {
+    "s_7aa9251711039a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fd03-3670-77e2-8b5c-740397b0570b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    },
+    "s_e80f7d159de26d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fd45-c8e8-76b2-823c-0e66a11613c9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
