@@ -99,6 +99,22 @@ describe.each([
     expect(queries.every(query => !query.includes(' OR '))).toBe(true);
   });
 
+  it('引擎已有结果时仍合并书源列表的其他入口，避免只能选失效站点', async () => {
+    mockFetch.mockImplementation(async url =>
+      queryFor(url).includes('site:mingzw.net')
+        ? ddgHit('https://tw.mingzw.net/mzwbook/10001.html', '夜无疆')
+        : '<html></html>',
+    );
+    mockCatalog.mockResolvedValue([
+      {
+        url: 'http://wap.bookshuku.org/bookinfo/10002.html',
+        title: '夜无疆',
+        sourceName: 'TXT图书下载网',
+      },
+    ]);
+    expect(await search('夜无疆')).toHaveLength(2);
+  });
+
   it('作者查询只采信明确作者字段，保持同名不同作者的候选可区分', async () => {
     mockFetch.mockImplementation(async url =>
       queryFor(url).includes('site:mingzw.net')
@@ -160,7 +176,7 @@ describe.each([
     ]);
     pending.resolve('<html></html>');
     await expect(result).resolves.toHaveLength(1);
-    expect(mockCatalog).not.toHaveBeenCalled();
+    expect(mockCatalog).toHaveBeenCalledTimes(1);
   });
 
   it('输入变更后不回传旧结果，也不继续后备引擎或书库请求', async () => {
@@ -180,7 +196,7 @@ describe.each([
     await expect(result).resolves.toEqual([]);
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(onResults).not.toHaveBeenCalled();
-    expect(mockCatalog).not.toHaveBeenCalled();
+    expect(mockCatalog).toHaveBeenCalledTimes(1);
   });
 
   it('搜索请求卡住有总等待上限，迟到结果不能替换已完成结果', async () => {

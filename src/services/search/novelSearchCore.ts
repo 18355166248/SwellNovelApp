@@ -253,6 +253,22 @@ export async function searchNovels(
   if (collected.length) publish();
   // 已知书目先展示，但精确书名也继续查其他书源；固定入口失效时仍能选择其他结果。
 
+  // 引擎命中一个站点不代表它能成功入库。书源列表同时查找其他入口，
+  // 给失效或超时的候选提供替代；与引擎并行，不再额外累加搜索等待时间。
+  const catalogRequest = withinDeadline(
+    searchSourceCatalogs(kw, { timeoutMs: CATALOG_TIMEOUT_MS }),
+    CATALOG_TIMEOUT_MS,
+  ).then(
+    catalog => {
+      if (!options.isCancelled?.() && catalog.length) {
+        collected.push(...catalog);
+        publish();
+      }
+      return false;
+    },
+    () => true,
+  );
+
   await Promise.all(
     SOURCES.map(async source => {
       const query = `${kw} site:${sourceDomain(source.host)}`;
@@ -292,24 +308,11 @@ export async function searchNovels(
       }
     }),
   );
+  const catalogFailed = await catalogRequest;
   if (options.isCancelled?.()) return [];
   if (collected.length) return mergeResults(collected, normalized);
-  try {
-    const catalog = await withinDeadline(
-      searchSourceCatalogs(kw, { timeoutMs: CATALOG_TIMEOUT_MS }),
-      CATALOG_TIMEOUT_MS,
-    );
-    if (options.isCancelled?.()) return [];
-    collected = catalog.map(item => ({
-      url: item.url,
-      title: item.title,
-      author: item.author,
-      sourceName: item.sourceName,
-    }));
-    if (collected.length) publish();
-    return mergeResults(collected, normalized);
-  } catch {
-    if (options.isCancelled?.()) return [];
+  if (catalogFailed) {
     throw new Error('搜索服务暂时不可用，请检查网络后重试');
   }
+  return [];
 }

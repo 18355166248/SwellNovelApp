@@ -19,7 +19,7 @@ export interface RecognizedBook {
   host: string;
   title?: string;
   author?: string;
- cover?: string;
+  cover?: string;
   chapters: RecognizedChapter[];
   /** 当前目录页发现的其他分页链接（不含当前页），加入时由 WebView 聚合。 */
   pageUrls?: string[];
@@ -188,14 +188,13 @@ export const RECOGNIZER_JS = `(function(){
 const CHAPTER_TITLE_RE = /第\s*[0-9零一二三四五六七八九十百千两]+\s*[章节回卷]/;
 
 function resolveHref(base: string, href: string): string {
-  const value = href.trim();
-  if (/^https?:\/\//i.test(value)) return value;
-  const origin = /^(https?:\/\/[^/]+)/i.exec(base)?.[1];
-  if (!origin) return value;
-  if (value.startsWith('//')) return `${base.split(':')[0]}:${value}`;
-  if (value.startsWith('/')) return `${origin}${value}`;
-  const directory = base.replace(/[?#].*$/, '').replace(/\/[^/]*$/, '/');
-  return `${directory}${value}`;
+  try {
+    // 标准 URL 解析覆盖 ../、?page= 和 HTML 实体，手工拼目录会生成失效章节地址。
+    const target = new URL(href.trim().replace(/&amp;/gi, '&'), base);
+    return /^https?:$/.test(target.protocol) ? target.href : '';
+  } catch {
+    return '';
+  }
 }
 
 /** 从 WebView 回传的单个目录页 HTML 提取章节，供分页目录聚合使用。 */
@@ -224,23 +223,35 @@ export function parseRecognizedChaptersHtml(
 }
 
 /** 从目录 HTML 的“第 N/总页数 页”和翻页 URL 模板补齐所有分页地址。 */
-export function parseRecognizedPageUrlsHtml(html: string, baseUrl: string): string[] {
+export function parseRecognizedPageUrlsHtml(
+  html: string,
+  baseUrl: string,
+): string[] {
   const anchors = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  const pageInfo = /第\s*(\d+)\s*\/\s*(\d+)\s*页/.exec(html.replace(/<[^>]+>/g, ' '));
+  const pageInfo = /第\s*(\d+)\s*\/\s*(\d+)\s*页/.exec(
+    html.replace(/<[^>]+>/g, ' '),
+  );
   const currentPage = Number(pageInfo?.[1] || 1);
   const totalPages = Number(pageInfo?.[2] || 0);
-  if (!Number.isInteger(totalPages) || totalPages <= 1 || totalPages > 200) return [];
+  if (!Number.isInteger(totalPages) || totalPages <= 1 || totalPages > 200)
+    return [];
 
-  let template: { origin: string; prefix: string; suffix: string } | null = null;
+  let template: { origin: string; prefix: string; suffix: string } | null =
+    null;
   let match: RegExpExecArray | null;
   while ((match = anchors.exec(html)) !== null) {
     const text = htmlText(match[2]);
     if (!/^(上一页|下一页|上页|下页|首页|尾页|末页)$/.test(text)) continue;
     try {
       const target = new URL(resolveHref(baseUrl, match[1]));
+      if (target.origin !== new URL(baseUrl).origin) continue;
       const pathMatch = /^(.*[_-])\d+(\/?)$/.exec(target.pathname);
       if (pathMatch) {
-        template = { origin: target.origin, prefix: pathMatch[1], suffix: pathMatch[2] };
+        template = {
+          origin: target.origin,
+          prefix: pathMatch[1],
+          suffix: pathMatch[2],
+        };
         break;
       }
     } catch {
@@ -250,7 +261,10 @@ export function parseRecognizedPageUrlsHtml(html: string, baseUrl: string): stri
   if (!template) return [];
   return Array.from({ length: totalPages }, (_, index) => index + 1)
     .filter(page => page !== currentPage)
-    .map(page => `${template!.origin}${template!.prefix}${page}${template!.suffix}`);
+    .map(
+      page =>
+        `${template!.origin}${template!.prefix}${page}${template!.suffix}`,
+    );
 }
 
 function htmlText(value: string): string {
@@ -350,7 +364,9 @@ export async function expandRecognizedCatalog(
       }
     }
     if (pageChapters.length === 0) {
-      throw new Error(`目录第 ${index + 2} 页加载失败（已重试 3 次）：${lastError}`);
+      throw new Error(
+        `目录第 ${index + 2} 页加载失败（已重试 3 次）：${lastError}`,
+      );
     }
     pageChapters.forEach(chapter => {
       if (!seen.has(chapter.url)) {

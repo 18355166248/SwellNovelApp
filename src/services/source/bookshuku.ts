@@ -538,13 +538,30 @@ function normalizeReadUrl(raw: string): string {
   return path ? `${ORIGIN}/read/${path}.html` : absolute;
 }
 
-function parseCatalogHtml(html: string, bookTitle?: string): ParsedChapter[] {
+function parseCatalogHtml(
+  html: string,
+  bookTitle?: string,
+  bookId?: string,
+): ParsedChapter[] {
   const re =
     /<a[^>]+href=["']([^"']*\/read\/\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/g;
   const chapters: ParsedChapter[] = [];
   const seen = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
+    // 推荐区也可能包含章节链接；先校验原始主机及书号，再转换移动站地址。
+    // 否则其他书的章节会被计入完整度，甚至掩盖本书残目录。
+    try {
+      const target = new URL(toAbsolute(ORIGIN, m[1]));
+      if (
+        !/^https?:$/.test(target.protocol) ||
+        !/(^|\.)bookshuku\.org$/i.test(target.hostname)
+      )
+        continue;
+      if (bookId && extractBookId(target.href) !== bookId) continue;
+    } catch {
+      continue;
+    }
     const url = normalizeReadUrl(m[1]);
     if (seen.has(url)) continue;
     seen.add(url);
@@ -645,7 +662,7 @@ async function attemptCatalog(
       requireLocalProxy: true,
       localProxyRetries: 2,
     });
-    const chapters = parseCatalogHtml(html, bookTitle);
+    const chapters = parseCatalogHtml(html, bookTitle, extractBookId(url));
     debug.push(
       `${label}Html=${html.length}`,
       `${label}Parsed=${chapters.length}`,
@@ -660,7 +677,7 @@ async function attemptCatalog(
       waitMs: 1000,
       priority: 'high',
     });
-    const chapters = parseCatalogHtml(html, bookTitle);
+    const chapters = parseCatalogHtml(html, bookTitle, extractBookId(url));
     debug.push(
       `${label}WebViewHtml=${html.length}`,
       `${label}WebViewParsed=${chapters.length}`,
@@ -675,7 +692,7 @@ async function attemptCatalog(
         timeout: 45000,
         renderedFallback: false,
       });
-      const chapters = parseCatalogHtml(html, bookTitle);
+      const chapters = parseCatalogHtml(html, bookTitle, extractBookId(url));
       debug.push(
         `${label}DirectHtml=${html.length}`,
         `${label}DirectParsed=${chapters.length}`,

@@ -12,12 +12,12 @@ const PAGE_TWO = `
 
 describe('browser catalog recognizer', () => {
   it('玄幻阁详情页自动换算到同书号目录页', () => {
-    expect(getRecognitionTargetUrl('http://wap.xuanhuange.info/info-170446/')).toBe(
-      'http://wap.xuanhuange.info/wapbook-170446/',
-    );
-    expect(getRecognitionTargetUrl('http://wap.xuanhuange.info/wapbook-170446/')).toBe(
-      'http://wap.xuanhuange.info/wapbook-170446/',
-    );
+    expect(
+      getRecognitionTargetUrl('http://wap.xuanhuange.info/info-170446/'),
+    ).toBe('http://wap.xuanhuange.info/wapbook-170446/');
+    expect(
+      getRecognitionTargetUrl('http://wap.xuanhuange.info/wapbook-170446/'),
+    ).toBe('http://wap.xuanhuange.info/wapbook-170446/');
     expect(getRecognitionTargetUrl('http://example.com/info-170446/')).toBe(
       'http://example.com/info-170446/',
     );
@@ -25,11 +25,41 @@ describe('browser catalog recognizer', () => {
 
   it('从分页 HTML 提取并归一化章节链接', () => {
     expect(
-      parseRecognizedChaptersHtml(PAGE_TWO, 'http://wap.example.com/book/9/2.html'),
+      parseRecognizedChaptersHtml(
+        PAGE_TWO,
+        'http://wap.example.com/book/9/2.html',
+      ),
     ).toEqual([
       { title: '第十一章 山门', url: 'http://wap.example.com/book/9/11.html' },
       { title: '第十二章 夜谈', url: 'http://wap.example.com/book/9/12.html' },
     ]);
+  });
+
+  it('相对上级路径和 query 章节地址按标准 URL 解析，拒绝非网页协议', () => {
+    expect(
+      parseRecognizedChaptersHtml(
+        `
+      <a href="../chapter/1.html">第一章 开始</a>
+      <a href="?chapter=2&amp;mode=read">第二章 继续</a>
+      <a href="javascript:alert(1)">第三章 广告</a>`,
+        'https://example.com/book/9/catalog.html',
+      ),
+    ).toEqual([
+      { title: '第一章 开始', url: 'https://example.com/book/chapter/1.html' },
+      {
+        title: '第二章 继续',
+        url: 'https://example.com/book/9/catalog.html?chapter=2&mode=read',
+      },
+    ]);
+  });
+
+  it('分页模板不能使用站外广告的下一页链接', () => {
+    expect(
+      parseRecognizedPageUrlsHtml(
+        '<a href="https://ad.example/book-9_2/">下一页</a><div>第1/3页</div>',
+        'https://example.com/book-9/',
+      ),
+    ).toEqual([]);
   });
 
   it('合并全部分页后才返回目录，章节链接去重', async () => {
@@ -40,7 +70,9 @@ describe('browser catalog recognizer', () => {
         isDetail: true,
         url: 'http://wap.example.com/book/9/1.html',
         host: 'wap.example.com',
-        chapters: [{ title: '第一章 开始', url: 'http://wap.example.com/book/9/1.html' }],
+        chapters: [
+          { title: '第一章 开始', url: 'http://wap.example.com/book/9/1.html' },
+        ],
         pageUrls: [
           'http://wap.example.com/book/9/1.html',
           'http://wap.example.com/book/9/2.html',

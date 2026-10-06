@@ -192,6 +192,26 @@ describe('bookshukuSource', () => {
     expect(chapters[1].url).toBe('http://wap.bookshuku.org/read/160297_2.html');
   });
 
+  it('parseCatalog 排除其他书及伪造域名的章节，不能混入本书目录', async () => {
+    mockFetch.mockResolvedValue(
+      CATALOG +
+        `
+      <a href="/read/999_1.html">第一章 推荐书</a>
+      <a href="https://bookshuku.org.fake.test/read/160297_3.html">第三章 广告</a>`,
+    );
+    const chapters = await bookshukuSource.parseCatalog({
+      sourceBookId: '160297',
+      title: '捞尸人',
+      author: '纯洁滴小龙',
+      catalogUrl: 'http://wap.bookshuku.org/read/160297.html',
+    });
+    expect(chapters).toHaveLength(2);
+    expect(chapters.map(chapter => chapter.title)).toEqual([
+      '第一章',
+      '第二章',
+    ]);
+  });
+
   it('parseCatalog 目录重试后保留站点真实章号，不能按 URL 序号或数组顺序命名', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.endsWith('/read/160297.html')) return '<html></html>';

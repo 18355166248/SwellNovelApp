@@ -107,6 +107,52 @@ describe('mingzwSource', () => {
     ]);
   });
 
+  const info = {
+    sourceBookId: '17482',
+    title: '凡人修仙传',
+    author: '忘语',
+    catalogUrl: 'https://tw.mingzw.net/mzwchapter/17482.html',
+  };
+
+  it('空分段切换镜像后恢复，本书以外的目录链接不能混入', async () => {
+    mockFetchHtml.mockImplementation(async url => {
+      if (url.includes('/mzwchapter/'))
+        return CATALOG_PAGE + '<a href="/mclist/999_0_100.html">推荐书</a>';
+      if (url.includes('tw.mingzw.net') && url.includes('_100_200'))
+        return '<h1>广告页</h1>';
+      return SEGMENT_PAGE + '<a href="/mzwread/999_1.html">第一章 其他书</a>';
+    });
+    const chapters = await mingzwSource.parseCatalog(info);
+    expect(chapters).toHaveLength(3);
+    expect(chapters.every(chapter => chapter.url.includes('17482_'))).toBe(
+      true,
+    );
+    expect(
+      mockFetchHtml.mock.calls.some(([url]) => url.includes('/mclist/999_')),
+    ).toBe(false);
+    expect(
+      mockFetchHtml.mock.calls.some(
+        ([url]) => url === 'https://www.mingzw.net/mclist/17482_100_200.html',
+      ),
+    ).toBe(true);
+  });
+
+  it('任一分段两节点都返回无效目录时拒绝残目录入库', async () => {
+    mockFetchHtml.mockImplementation(async url => {
+      if (url.includes('/mzwchapter/')) return CATALOG_PAGE;
+      return url.includes('_100_200') ? '<h1>请稍后再试</h1>' : SEGMENT_PAGE;
+    });
+    await expect(mingzwSource.parseCatalog(info)).rejects.toThrow(
+      '目录第 2 段加载失败',
+    );
+  });
+
+  it('短书直接使用完整目录页的章节，无需多抓取不存在的分段页', async () => {
+    mockFetchHtml.mockResolvedValue(SEGMENT_PAGE);
+    expect(await mingzwSource.parseCatalog(info)).toHaveLength(3);
+    expect(mockFetchHtml).toHaveBeenCalledTimes(1);
+  });
+
   it('parseChapterContent 保留正文容器嵌套 div 后的完整内容', async () => {
     mockFetchHtml.mockResolvedValue(`
       <div id="content">

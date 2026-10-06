@@ -240,8 +240,9 @@ export const mingzwSource: BookSource = {
       new Set(
         Array.from(
           detail.matchAll(/\/mclist\/(\d+)_(\d+)_(\d+)\.html/g),
-          m => ({ url: m[0], start: parseInt(m[2], 10) }),
+          m => ({ id: m[1], url: m[0], start: parseInt(m[2], 10) }),
         )
+          .filter(segment => segment.id === info.sourceBookId)
           .sort((a, b) => a.start - b.start)
           .map(s => s.url),
       ),
@@ -250,19 +251,65 @@ export const mingzwSource: BookSource = {
     const pages =
       segUrls.length > 0 ? segUrls : [`/mclist/${info.sourceBookId}.html`];
 
-    const pageHtml = new Array<string>(pages.length);
+    // 分段响应可能是广告页或其他书籍目录；HTTP 成功不等于目录解析成功。
+    // 每段都验证本书章节，失败时换镜像重试，不能把空段拼成“成功”的残目录。
+    const parsePage = (html: string): ParsedChapter[] => {
+      const chapters: ParsedChapter[] = [];
+      const re =
+        /<a[^>]+href=["']([^"']*\/(?:miread|mzwread)\/(?:[^"'/]*_)?\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
+      for (const match of html.matchAll(re)) {
+        const url = toAbsolute(origin, match[1]);
+        const title = decodeEntities(stripTags(match[2])).trim();
+        let validHost = false;
+        try {
+          validHost = /(^|\.)mingzw\.net$/i.test(new URL(url).hostname);
+        } catch {
+          /* 非法链接不能入库。 */
+        }
+        if (
+          !validHost ||
+          extractBookId(url) !== info.sourceBookId ||
+          !HEADING_RE.test(title)
+        )
+          continue;
+        chapters.push({ url, title });
+      }
+      return chapters;
+    };
+    // 短书目录有时直接列出章节，不必再请求不存在的 mclist 页。
+    if (!segUrls.length) {
+      const direct = parsePage(detail);
+      if (direct.length) return direct;
+    }
+    const pageChapters = new Array<ParsedChapter[]>(pages.length);
     let nextPageIndex = 0;
     let failed = false;
-    // 长篇目录常有二十多个分段，串行抓取会让“加入书架”长时间停住。
-    // 最多三路并发并按原分段顺序合并；任一分段失败就整体失败，不发布残缺目录。
+    // 最多三路并发，输出仍按分段顺序；任何分段最终失败都阻止入库。
     await Promise.all(
       Array.from({ length: Math.min(3, pages.length) }, async () => {
         while (!failed && nextPageIndex < pages.length) {
           const index = nextPageIndex++;
           try {
-            pageHtml[index] = await fetchMingzwHtml(
+            let parsed: ParsedChapter[] = [];
+            let lastError: unknown;
+            for (const candidate of alternateMingzwUrls(
               toAbsolute(origin, pages[index]),
-            );
+            )) {
+              try {
+                parsed = parsePage(await fetchMingzwHtml(candidate));
+                if (parsed.length) break;
+                lastError = new Error('未识别到本书章节');
+              } catch (error) {
+                lastError = error;
+              }
+            }
+            if (!parsed.length)
+              throw new Error(
+                `目录第 ${index + 1} 段加载失败：${
+                  lastError instanceof Error ? lastError.message : '解析失败'
+                }`,
+              );
+            pageChapters[index] = parsed;
           } catch (error) {
             failed = true;
             throw error;
@@ -272,18 +319,13 @@ export const mingzwSource: BookSource = {
     );
     const chapters: ParsedChapter[] = [];
     const seen = new Set<string>();
-    for (const html of pageHtml) {
-      const re =
-        /<a[^>]+href=["']([^"']*\/(?:miread|mzwread)\/(?:[^"'/]*_)?\d+_\d+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(html)) !== null) {
-        const url = toAbsolute(origin, m[1]);
-        if (seen.has(url)) continue;
-        const title = decodeEntities(stripTags(m[2])).trim();
-        // 只保留章节链接（标题形如“第N章…”），过滤书名/导航等杂链。
-        if (!HEADING_RE.test(title)) continue;
-        seen.add(url);
-        chapters.push({ url, title });
+    for (const page of pageChapters) {
+      for (const chapter of page) {
+        // 镜像只改变域名，正文路径才是本站章节身份。
+        const identity = new URL(chapter.url).pathname;
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        chapters.push(chapter);
       }
     }
     if (chapters.length === 0) throw new Error('未能解析到章节目录');
