@@ -1,0 +1,150 @@
+server.js
+  s_e80f7d159de26d::t_b7e22204661a6a 131-134,142-143,145
+  s_e80f7d159de26d::t_43d746098b8709 45
+  s_7aa9251711039a::t_f11eada3bec089 144
+src/services/discover/sourceRecommendations.ts
+  s_e80f7d159de26d::t_43d746098b8709 22,79-81,86-87,115,140,142
+  s_e80f7d159de26d::t_783bb16592d6bc 78,82-83,85,88-89,92-95
+  s_e80f7d159de26d::t_ad3ff47a8db274 90-91
+  s_e80f7d159de26d::t_0f06bd05d6f47f 84
+  s_e80f7d159de26d::t_6d5740603d0172 141
+deploy/server.js
+  s_e80f7d159de26d::t_b7e22204661a6a 59-61,70-83,93-94
+  s_e80f7d159de26d::t_43d746098b8709 44
+src/services/browserFetch/navigationGuard.ts
+  s_e80f7d159de26d::t_7e26bcfdf5e056 31
+  s_e80f7d159de26d::t_783bb16592d6bc 24
+  s_7aa9251711039a::t_9fc4a763ca4aad 10-13,17-21,25-30,32
+src/screens/BookDetailScreen.tsx
+  s_e80f7d159de26d::t_a699cb49d4f1e6 117,156,158-159,393-395,570-571,633-636,638,640-642,665-669,806-808,833-835
+  s_e80f7d159de26d::t_b542cd916953fc 627,637,1019
+  s_e80f7d159de26d::t_27d86de085046a 29,100-101,103,334-336,611-613,624-626,628-631
+  s_e80f7d159de26d::t_25ef61f66240a2 102
+  s_e80f7d159de26d::t_2703e05b522d30 623
+  s_e80f7d159de26d::t_e0bde99b0bfea7 632
+  s_e80f7d159de26d::t_7951c499241e60 639
+src/services/source/types.ts
+  s_e80f7d159de26d::t_ca33ca907ab3d1 54-55
+__tests__/sourceRecommendations.test.ts
+  s_e80f7d159de26d::t_43d746098b8709 4,10,15,17
+  s_e80f7d159de26d::t_ad3ff47a8db274 8,11
+  s_e80f7d159de26d::t_a8a2be58281627 9,13-14,16,19-20
+  s_e80f7d159de26d::t_b070743fd6e151 12
+  s_e80f7d159de26d::t_902c7aec3a834c 18
+src/services/source/bqquge.ts
+  s_e80f7d159de26d::t_c6d27a94ef3589 137-138
+  s_e80f7d159de26d::t_7f70243509c468 1-7,9-14,16-22,24-25,27-34,37-42,48-50,52,56-91,106-110,114-129,155-165,167-170
+  s_e80f7d159de26d::t_f96c5f1d4a5095 8,130-136
+  s_e80f7d159de26d::t_d6af6b0532dcbd 15
+  s_e80f7d159de26d::t_6c783d7b54d55b 23
+  s_e80f7d159de26d::t_3aa42bef8c056a 26
+  s_e80f7d159de26d::t_8541f8733ecafc 35-36
+  s_e80f7d159de26d::t_4eccf81a5db2d0 43-47
+  s_e80f7d159de26d::t_a7a055ceb59fce 51
+  s_e80f7d159de26d::t_fd40dbfe7b7ad6 53-55
+  s_e80f7d159de26d::t_46a1077785509e 92-94,103-105
+  s_e80f7d159de26d::t_42c76cb9eec626 111-113
+  s_e80f7d159de26d::t_ca006e762d3b59 139-141,152-154
+  s_e80f7d159de26d::t_ac9d87e8a4fe04 166
+src/store/hooks/useOnlineBook.ts
+  s_e80f7d159de26d::t_d8c60c0f91353c 24,445-451,454-455
+  s_e80f7d159de26d::t_140af4f1040742 452-453
+src/services/source/html.ts
+  s_e80f7d159de26d::t_4a64966cdf94b3 38
+  s_e80f7d159de26d::t_ff42263d43853d 16-18
+__tests__/catalogNumberSummary.test.ts
+  s_e80f7d159de26d::t_27d86de085046a 1-8,10-18,20-31,35-40,44-45
+  s_e80f7d159de26d::t_5e014a9efe7615 9
+  s_e80f7d159de26d::t_7881989ce0d75c 19
+  s_e80f7d159de26d::t_eb334c3e3648a7 32-34
+  s_e80f7d159de26d::t_657781152b7cd9 41-43
+docs/audits/2026-10-06-source-candidates.md
+  s_e80f7d159de26d::t_6d548593f3beed 1-2,4-6,14-18,20-25,27,29-41
+  s_e80f7d159de26d::t_fba65a88e75790 65-74
+  s_e80f7d159de26d::t_e26e70d82331b1 75-80,82-93,95-109
+  s_e80f7d159de26d::t_b7e22204661a6a 3,26,42,53-64
+  s_e80f7d159de26d::t_814065f9dafe27 7-13,19,28,43-52
+  s_e80f7d159de26d::t_224e84c687083f 81
+  s_e80f7d159de26d::t_1569370245508c 94
+src/services/source/registry.ts
+  s_e80f7d159de26d::t_7f70243509c468 8,15
+__tests__/navigationGuard.test.ts
+  s_e80f7d159de26d::t_43d746098b8709 30
+  s_e80f7d159de26d::t_a8a2be58281627 29,31-33
+  s_e80f7d159de26d::t_9a312aad0d1c5b 10-15,19-28
+webpack.config.js
+  s_e80f7d159de26d::t_43d746098b8709 147
+__tests__/xs23.test.ts
+  s_e80f7d159de26d::t_ca33ca907ab3d1 1-21,30-68,71-77,116-147
+  s_e80f7d159de26d::t_3e9b0164e24e1b 22-23,25-26,28-29
+  s_e80f7d159de26d::t_a8a2be58281627 69-70,78-79,81,83-90,92-96,98-99,101-104,106-107,109-110,112-113,115
+  s_e80f7d159de26d::t_ff6c384bf8c769 24,27,80,82,91,97,100,105,108,111,114
+__tests__/onlineContentQuality.test.ts
+  s_e80f7d159de26d::t_7665ab4dc8f676 34-62
+src/services/source/xs23.ts
+  s_e80f7d159de26d::t_a8a2be58281627 146-147,165-169,171-174,176-178
+  s_e80f7d159de26d::t_8b7bf47035fcf6 108,113
+  s_e80f7d159de26d::t_7fe1827dbe8831 12-13,15-16,19,29-41,43,52,139,152
+  s_e80f7d159de26d::t_f6dbe7c99833d6 2-11,17-18,20-28,42,44-51,53-107,114-121,123-138,140-145,148-151,153-164,179-235
+  s_e80f7d159de26d::t_b7e22204661a6a 1
+  s_e80f7d159de26d::t_b654fb0d0c679f 109-112
+  s_e80f7d159de26d::t_ca33ca907ab3d1 122
+  s_e80f7d159de26d::t_2bb5e8492c76b7 14,170,175
+src/utils/catalogNumberSummary.ts
+  s_e80f7d159de26d::t_27d86de085046a 1-13,15-73,75-76
+  s_e80f7d159de26d::t_452308e31274ff 14
+  s_e80f7d159de26d::t_875f4fa5df6312 74
+src/services/source/contentGuards.ts
+  s_e80f7d159de26d::t_7665ab4dc8f676 16-23,29-32
+__tests__/chapterPages.test.ts
+  s_e80f7d159de26d::t_7665ab4dc8f676 44-56
+__tests__/onlineBookImport.test.ts
+  s_e80f7d159de26d::t_a6e16f66afc8ad 535-550
+src/screens/SearchScreen.tsx
+  s_e80f7d159de26d::t_ca33ca907ab3d1 24,172,175-178
+__tests__/bqquge.test.ts
+  s_e80f7d159de26d::t_2b70e7ffeda575 16,27
+  s_e80f7d159de26d::t_f96c5f1d4a5095 17-23,25-26
+  s_e80f7d159de26d::t_3e9b0164e24e1b 1-9,11-15,28-34,36-41,43-46,48-51,53-62,64-68,71-78,80-83,85-89,91-92,94-97,100-101,103-104
+  s_e80f7d159de26d::t_b654fb0d0c679f 98
+  s_e80f7d159de26d::t_0635643901c3f1 10
+  s_e80f7d159de26d::t_aacfd1e2362445 24
+  s_e80f7d159de26d::t_c03f7f0684d04e 35
+  s_e80f7d159de26d::t_a35cc44607e8bb 42
+  s_e80f7d159de26d::t_01a61503f21e9c 47
+  s_e80f7d159de26d::t_c4bd791e4d4282 52
+  s_e80f7d159de26d::t_b94881a5f548cf 63
+  s_e80f7d159de26d::t_9032f4d14218ad 69-70
+  s_e80f7d159de26d::t_2c53a4181f1b1c 79
+  s_e80f7d159de26d::t_320d8c4eede631 84
+  s_e80f7d159de26d::t_8dd880f8de4453 90
+  s_e80f7d159de26d::t_49bfe1cc41ee55 93
+  s_e80f7d159de26d::t_dbebc3a6e50d89 99
+  s_e80f7d159de26d::t_8a28a5cd460a13 102
+__tests__/novelSearch.test.ts
+  s_e80f7d159de26d::t_a93a81512dc846 1,192,198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "bcecc762a1fec44502d8ebe25faa167a115b317f",
+  "prompts": {},
+  "sessions": {
+    "s_7aa9251711039a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fd03-3670-77e2-8b5c-740397b0570b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    },
+    "s_e80f7d159de26d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fd45-c8e8-76b2-823c-0e66a11613c9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
