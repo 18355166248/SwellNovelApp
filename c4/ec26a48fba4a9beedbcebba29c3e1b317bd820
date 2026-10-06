@@ -1,0 +1,54 @@
+src/store/types/stats.ts
+  s_e80f7d159de26d::t_83f702dbfb244a 8-9,32,87
+docs/audits/2026-10-06-reader-growth.md
+  s_e80f7d159de26d::t_2c28ace4dd90c7 24
+  s_e80f7d159de26d::t_00463e658baed5 1-23
+src/utils/readerLevel.ts
+  s_e80f7d159de26d::t_40e673b6377479 9-27,30-33,35-46,54,56-58
+  s_e80f7d159de26d::t_9940224c67f26b 34
+src/components/ProfileIdentityCard.tsx
+  s_e80f7d159de26d::t_eb4fa20ea62cda 209,234-237,639-640
+  s_e80f7d159de26d::t_f55294f3dc1e01 145
+  s_e80f7d159de26d::t_83f702dbfb244a 30-32,34,67-68,78-79,142-144,146-147,151,156,194-208,210-211,214-233,238-240,242-243,245-249,251-261,263-277,638,641-644,646
+  s_e80f7d159de26d::t_74ea44385e0010 33
+  s_e80f7d159de26d::t_642fb2f81367e6 212-213
+  s_e80f7d159de26d::t_78459b36c93dab 241
+  s_e80f7d159de26d::t_b9b799e7cd4009 244
+  s_e80f7d159de26d::t_ebf1a847e7f81a 250
+  s_e80f7d159de26d::t_a5ed4e7d2560ce 262
+  s_e80f7d159de26d::t_7517f4b5d25a4d 645
+__tests__/readerLevel.test.ts
+  s_e80f7d159de26d::t_6c11ed075ab9e9 1-5,11-13,19-20,27-43,52
+  s_e80f7d159de26d::t_7dd2c0fec38483 44-46,49-51
+  s_e80f7d159de26d::t_ffa0d95931bdeb 53-55
+__tests__/ReaderScreen.paging.test.tsx
+  s_e80f7d159de26d::t_273c1635d3e9dd 36-38,173-180,182-183,191-196,199-200,202-207
+  s_e80f7d159de26d::t_6c11ed075ab9e9 23,35,42,159-160
+  s_e80f7d159de26d::t_5d5677252c3479 184-186,188-190,201
+  s_e80f7d159de26d::t_ee321e131be78f 181
+  s_e80f7d159de26d::t_e55032bbb04267 187
+  s_e80f7d159de26d::t_de2d60fb2be542 197-198
+  s_e80f7d159de26d::t_650931c56cb86c 208
+__tests__/readingStats.test.ts
+  s_e80f7d159de26d::t_273c1635d3e9dd 45-48,50-54
+  s_e80f7d159de26d::t_e60c625af98db2 49
+src/screens/ReaderScreen.tsx
+  s_e80f7d159de26d::t_83f702dbfb244a 23-26,28,503,1171-1182
+  s_e80f7d159de26d::t_fc0842e1c62f04 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "c4ec26a48fba4a9beedbcebba29c3e1b317bd820",
+  "prompts": {},
+  "sessions": {
+    "s_e80f7d159de26d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fd45-c8e8-76b2-823c-0e66a11613c9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
