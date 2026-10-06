@@ -1,0 +1,43 @@
+__tests__/recognizer.test.ts
+  s_e80f7d159de26d::t_13b96002ac21f3 15-20,28-31,38-64,73-75
+src/services/recognize/recognizer.ts
+  s_e80f7d159de26d::t_13b96002ac21f3 22,191-197,226-229,231-233,236-237,239-240,247,250-254,264-267,367-369
+__tests__/bookshuku.test.ts
+  s_e80f7d159de26d::t_016b8d4c2ca54a 195-214
+src/services/source/mingzw.ts
+  s_e80f7d159de26d::t_958c4b56273f28 243,245,254-265,275-284,287,293-294,298-301,305,312,322-328
+  s_e80f7d159de26d::t_4b2ad10b594087 266-274,295,297,302-304,306-311
+src/services/source/bookshuku.ts
+  s_e80f7d159de26d::t_016b8d4c2ca54a 541-545,552-564,665,680,695
+docs/audits/2026-10-06-online-import-catalog-audit.md
+  s_e80f7d159de26d::t_6d8bd5acc5bfd9 1-18,20-25
+  s_7aa9251711039a::t_f78e43738076a6 19
+__tests__/mingzw.test.ts
+  s_e80f7d159de26d::t_73a50e6e6c807e 110-155
+__tests__/novelSearch.test.ts
+  s_e80f7d159de26d::t_ec59b34f543545 102-117,179,199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "c1e86732c1b05a84c66883eb24ec30e4483f273e",
+  "prompts": {},
+  "sessions": {
+    "s_7aa9251711039a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fd03-3670-77e2-8b5c-740397b0570b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    },
+    "s_e80f7d159de26d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fd45-c8e8-76b2-823c-0e66a11613c9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
