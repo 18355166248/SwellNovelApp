@@ -59,3 +59,23 @@ describe('reader excerpt positioning', () => {
     expect(draft?.excerpt.endsWith('…')).toBe(true);
   });
 });
+
+it('同一长段重复锚点时，摘抄实际长按处而非第一次出现处', () => {
+  const before = `${'甲'.repeat(500)}重复锚点${'乙'.repeat(1000)}`;
+  const content = `${before}重复锚点这里是后一个位置${'丙'.repeat(500)}`;
+  const draft = resolveExcerptDraft(
+    content,
+    '重复锚点',
+    Array.from(before).length,
+  );
+  expect(draft?.position).toBe(Array.from(before).length - 180);
+  expect(draft?.excerpt).toContain('这里是后一个位置');
+});
+
+it('含表情的同段重复摘抄回跳使用最近码点偏移', () => {
+  const before = `${'😀'.repeat(250)}重复文字${'𠮷'.repeat(250)}`;
+  const content = `${before}重复文字结尾`;
+  const position = Array.from(before).length;
+  const range = resolveExcerptRange(content, '重复文字', position);
+  expect(range).toEqual({ start: position, end: position + 4 });
+});

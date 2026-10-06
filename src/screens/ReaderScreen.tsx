@@ -679,6 +679,7 @@ export default function ReaderScreen() {
     string | null
   >(null);
   const [scrollPosition, setScrollPosition] = React.useState(0);
+  const [readingJumpRequest, setReadingJumpRequest] = React.useState(0);
   const [scrollMetrics, setScrollMetrics] = React.useState({
     measurementKey: '',
     contentHeight: 0,
@@ -1839,6 +1840,13 @@ export default function ReaderScreen() {
     (chapterId: string, position: number) => {
       const idx = chapters.findIndex(c => c.id === chapterId);
       if (idx < 0) return;
+      // 同章同位置的回跳也要重新定位；不能只依赖 position 变化触发布局 effect。
+      // 先清掉旧滚动的延迟回写，防止书签刚跳过去就被上一落点覆盖。
+      if (scrollProgressTimerRef.current) {
+        clearTimeout(scrollProgressTimerRef.current);
+        scrollProgressTimerRef.current = undefined;
+      }
+      setReadingJumpRequest(request => request + 1);
       setReadingEngaged(true);
       setDrawerOpen(false);
       if (idx !== chapterIndex) {
@@ -1901,7 +1909,14 @@ export default function ReaderScreen() {
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [status, pageIndex, pages.length, scrollToPage, viewportWidth]);
+  }, [
+    status,
+    pageIndex,
+    pages.length,
+    scrollToPage,
+    viewportWidth,
+    readingJumpRequest,
+  ]);
 
   const updateScrollMetrics = React.useCallback(
     (next: Partial<typeof scrollMetrics>) => {
@@ -1968,6 +1983,7 @@ export default function ReaderScreen() {
     scrollMetrics.measurementKey,
     scrollMetrics.viewportHeight,
     scrollMeasurementKey,
+    readingJumpRequest,
     settings.pageMode,
     status,
   ]);

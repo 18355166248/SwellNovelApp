@@ -11,13 +11,30 @@ import { isBlockedText } from './contentGuards';
 /** 分页链接成环时的抓取上限，避免无限翻页。 */
 export const MAX_CHAPTER_PAGES = 20;
 
+/** 分页身份保留 query：同一章节的 ?page=2 与 ?page=3 必须是不同子页。 */
+export function chapterPageIdentity(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.protocol = 'https:';
+    parsed.hostname = parsed.hostname.replace(/^(?:www|wap)\./, '');
+    parsed.hash = '';
+    parsed.searchParams.delete('__nvl_proxy_ts');
+    parsed.searchParams.sort();
+    return parsed.toString();
+  } catch {
+    return url.trim();
+  }
+}
+
 /** 单个子页的抓取结果：正文原文 + 页面标注的下一子页。 */
 export interface ChapterPageResult {
   content: string;
   nextPageUrl?: string;
+  loadedPageUrls?: string[];
 }
 
 export interface CollectChapterPagesOptions {
+  firstPageUrl?: string;
   /** 已抓到并清洗过的首个子页正文。 */
   firstContent: string;
   /** 首个子页指向的下一子页；为空表示本章只有一页。 */
@@ -38,6 +55,7 @@ export interface CollectChapterPagesOptions {
  * nextPageUrl 返回：已读到的正文不会作废，调用方可把它当作续载入口按需重试。
  */
 export async function collectChapterPages({
+  firstPageUrl,
   firstContent,
   firstNextPageUrl,
   fetchPage,
@@ -48,7 +66,14 @@ export async function collectChapterPages({
   let content = firstContent;
   let cursor = firstNextPageUrl;
   let guard = 0;
+  const loadedPageUrls: string[] = [];
+  const visited = new Set(
+    firstPageUrl ? [chapterPageIdentity(firstPageUrl)] : [],
+  );
   while (cursor && guard < maxPages) {
+    const identity = chapterPageIdentity(cursor);
+    if (visited.has(identity)) break;
+    visited.add(identity);
     guard += 1;
     const pageUrl = cursor;
     try {
@@ -58,11 +83,12 @@ export async function collectChapterPages({
       const text = cleanPage(page.content);
       if (!text || isBlockedText(text)) break;
       content = content ? `${content}\n${text}` : text;
+      loadedPageUrls.push(pageUrl);
       cursor = page.nextPageUrl;
     } catch (error) {
       onError?.(pageUrl, error);
       break;
     }
   }
-  return { content, nextPageUrl: cursor };
+  return { content, nextPageUrl: cursor, loadedPageUrls };
 }

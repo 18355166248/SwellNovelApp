@@ -10,6 +10,7 @@ import { createStore, Provider } from 'jotai';
 import ReaderScreen from '../src/screens/ReaderScreen';
 import {
   booksAtom,
+  bookmarksAtom,
   chaptersAtom,
   selectedBookIdAtom,
   currentChapterIndexAtom,
@@ -368,6 +369,72 @@ describe('ReaderScreen paging interactions', () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  it('same-chapter scroll bookmark actually scrolls, including repeated jumps and pending old progress', async () => {
+    await mount(0, false, undefined, { pageMode: 'scroll' });
+    const scroll = () =>
+      tree.root
+        .findAllByType(ScrollView)
+        .find(node => node.props.testID === 'reader-scroll-view')!;
+    const scrollTo = jest.spyOn(scroll().instance, 'scrollTo');
+    await act(() => {
+      scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      scroll().props.onContentSizeChange(300, 5000);
+      store.set(bookmarksAtom, {
+        'paging-test': [
+          {
+            id: 'target',
+            bookId: 'paging-test',
+            chapterId: 'paging-chapter-0',
+            position: 1200,
+            createdAt: 1,
+          },
+        ],
+      });
+    });
+    await act(() => jest.advanceTimersByTime(20));
+    const jump = async () => {
+      await act(() =>
+        tree.root
+          .findByProps({ testID: 'reader-scroll-view' })
+          .props.children.props.onPress(),
+      );
+      await act(() =>
+        tree.root
+          .findAllByProps({ accessibilityLabel: '目录' })[0]
+          .props.onPress(),
+      );
+      await act(() =>
+        tree.root
+          .findAllByProps({
+            accessibilityLabel: '书签',
+            accessibilityRole: 'tab',
+          })[0]
+          .props.onPress(),
+      );
+      await act(() =>
+        tree.root
+          .findAllByProps({ accessibilityLabel: '跳转到第1章的书签' })[0]
+          .props.onPress(),
+      );
+      await act(() => jest.advanceTimersByTime(20));
+    };
+    await act(() =>
+      scroll().props.onScroll({ nativeEvent: { contentOffset: { y: 4000 } } }),
+    );
+    scrollTo.mockClear();
+    await jump();
+    expect(scrollTo).toHaveBeenCalledWith({
+      y: Math.round((1200 / Array.from(body.replace(/\n/g, '')).length) * 4400),
+      animated: false,
+    });
+    await act(() => jest.advanceTimersByTime(150));
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(1200);
+    scrollTo.mockClear();
+    await jump();
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    scrollTo.mockRestore();
   });
 
   it('keeps the scroll resume anchor through first-frame zero offsets and changed measurements', async () => {

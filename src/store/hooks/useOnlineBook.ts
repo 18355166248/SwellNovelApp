@@ -33,6 +33,7 @@ import {
 import { isBlockedText } from '../../services/source/contentGuards';
 import {
   collectChapterPages,
+  chapterPageIdentity,
   MAX_CHAPTER_PAGES,
 } from '../../services/source/chapterPages';
 import { loadBookChapters, saveBookChapters } from '../../utils/libraryStorage';
@@ -46,7 +47,6 @@ import {
   migrateReaderSelection,
   progressAfterCatalogRepair,
   repairCatalogPreservingIdentity,
-  normalizedChapterIdentity,
 } from '../../utils/catalogRepair';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
@@ -98,6 +98,7 @@ function unpackChapterContent(result: ParsedChapterContent): {
   nextPageUrl?: string;
   complete?: boolean;
   trustedShort?: boolean;
+  loadedPageUrls?: string[];
 } {
   return typeof result === 'string' ? { content: result } : result;
 }
@@ -534,7 +535,7 @@ export const useEnsureChapterContent = () => {
       let content: string;
       let parsedMeta: Pick<
         ReturnType<typeof unpackChapterContent>,
-        'nextPageUrl' | 'complete' | 'trustedShort'
+        'nextPageUrl' | 'complete' | 'trustedShort' | 'loadedPageUrls'
       > = {};
       if (source) {
         const needsCatalogRefresh =
@@ -695,6 +696,7 @@ export const useEnsureChapterContent = () => {
           nextPageUrl: parsed.nextPageUrl,
           complete: parsed.complete,
           trustedShort: parsed.trustedShort,
+          loadedPageUrls: parsed.loadedPageUrls,
         };
         chapter = {
           ...chapter,
@@ -722,6 +724,7 @@ export const useEnsureChapterContent = () => {
         // 章节，而不是读到章尾才现拉下一页。中途失败保留 nextPageUrl 交给续载兜底。
         const chapterTitle = chapter.title;
         const merged = await collectChapterPages({
+          firstPageUrl: chapter.sourceUrl,
           firstContent: content,
           firstNextPageUrl: rendered.nextPageUrl,
           fetchPage: pageUrl =>
@@ -745,6 +748,7 @@ export const useEnsureChapterContent = () => {
         content = merged.content;
         parsedMeta = {
           nextPageUrl: merged.nextPageUrl,
+          loadedPageUrls: merged.loadedPageUrls,
           complete: !merged.nextPageUrl,
         };
       }
@@ -756,6 +760,7 @@ export const useEnsureChapterContent = () => {
         contentVersion: ONLINE_CONTENT_VERSION,
         browserContentVersion: source ? undefined : BROWSER_CONTENT_VERSION,
         contentTrustedShort: parsedMeta.trustedShort,
+        loadedPageUrls: parsedMeta.loadedPageUrls,
         nextPageUrl: parsedMeta.nextPageUrl,
         contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
       };
@@ -829,6 +834,21 @@ export const useLoadNextChapterPage = () => {
       });
 
       const requestedPageUrl = chapter.nextPageUrl!;
+      // 逐页阅读也必须检查环路；记录随正文保存，重启后不能再次追加已经读过的子页。
+      const visited = new Set(
+        [chapter.sourceUrl, ...(chapter.loadedPageUrls ?? [])]
+          .filter((url): url is string => !!url)
+          .map(chapterPageIdentity),
+      );
+      const requestedIdentity = chapterPageIdentity(requestedPageUrl);
+      if (
+        !requestedIdentity ||
+        visited.has(requestedIdentity) ||
+        visited.size >= MAX_CHAPTER_PAGES
+      ) {
+        throw new Error('章节分页链接异常，已保留已读正文，请重试或更换书源');
+      }
+      visited.add(requestedIdentity);
       const parsed: ReturnType<typeof unpackChapterContent> = source
         ? unpackChapterContent(
             await withTimeout(
@@ -853,16 +873,19 @@ export const useLoadNextChapterPage = () => {
               complete: !rendered.nextPageUrl,
             };
           })();
+      if (
+        parsed.nextPageUrl &&
+        visited.has(chapterPageIdentity(parsed.nextPageUrl))
+      ) {
+        throw new Error('章节分页链接循环，已保留已读正文，请重试或更换书源');
+      }
       const content = chapter.content
         ? `${chapter.content}\n${parsed.content}`
         : parsed.content;
-      // 子页是整章的一部分，尾页天然可能很短。浏览器识别源没有书源级的短章确认，
-      // 只挡空白页和广告/拦截页；注册书源仍按自己的 trustedShort 口径校验。
-      const invalidPage = source
-        ? isInvalidOnlineChapterContent(parsed.content, {
-            trustedShort: parsed.trustedShort,
-          })
-        : !parsed.content || isBlockedText(parsed.content);
+      // 此处是已校验章正文的续页，尾页可能只有一句话；不能再套整章的 200 字门槛。
+      // 仍拒绝空白和拦截/广告页，防止把网络错误标记为读完。
+      const invalidPage =
+        !parsed.content.trim() || isBlockedText(parsed.content);
       if (invalidPage) {
         throw new Error('书源返回分页正文不完整，未写入章节缓存');
       }
@@ -878,6 +901,11 @@ export const useLoadNextChapterPage = () => {
             ? !!chapter.contentTrustedShort && !!parsed.trustedShort
             : undefined,
         nextPageUrl: parsed.nextPageUrl,
+        loadedPageUrls: [
+          ...(chapter.loadedPageUrls ?? []),
+          requestedPageUrl,
+          ...(parsed.loadedPageUrls ?? []),
+        ],
         contentComplete: parsed.complete ?? !parsed.nextPageUrl,
       };
 
@@ -992,9 +1020,13 @@ export const useCacheWholeBook = () => {
         let nextPageUrl = parsed.nextPageUrl;
         let contentComplete = parsed.complete ?? !nextPageUrl;
         let allPartsTrustedShort = !!parsed.trustedShort;
-        const visited = new Set([normalizedChapterIdentity(ch.sourceUrl)]);
+        const visited = new Set(
+          [ch.sourceUrl!, ...(parsed.loadedPageUrls ?? [])].map(
+            chapterPageIdentity,
+          ),
+        );
         while (nextPageUrl && !signal?.aborted) {
-          const identity = normalizedChapterIdentity(nextPageUrl);
+          const identity = chapterPageIdentity(nextPageUrl);
           // 站点错误的下一页可能指回首页或成环，不能无限抓取并把重复正文标成完整。
           if (visited.has(identity) || visited.size >= MAX_CHAPTER_PAGES) {
             throw new Error('章节分页异常，未写入完整缓存');

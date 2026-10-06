@@ -261,3 +261,42 @@ describe('catalog repair', () => {
     ).toBe(99);
   });
 });
+
+it('重识别目录保留子页记录，末章未续载完时不能变成已读完', () => {
+  const current = {
+    ...chapter(1, 0),
+    nextPageUrl: 'https://www.bookshuku.org/read/1_1.html?page=3',
+    loadedPageUrls: ['https://www.bookshuku.org/read/1_1.html?page=2'],
+    contentComplete: false,
+  };
+  const book: Book = {
+    id: 'book-1',
+    title: '测试',
+    author: '作者',
+    addedAt: 1,
+    updatedAt: 1,
+    progress: 99,
+    currentChapterId: current.id,
+  };
+  const repaired = repairCatalogPreservingIdentity(
+    book.id,
+    [current],
+    [{ title: current.title, url: current.sourceUrl! }],
+    () => true,
+  );
+  expect(repaired.chapters[0].loadedPageUrls).toEqual(current.loadedPageUrls);
+  expect(
+    progressAfterCatalogRepair(
+      book,
+      [current],
+      repaired.chapters,
+      {
+        bookId: book.id,
+        chapterId: current.id,
+        position: current.content.length,
+        updatedAt: 1,
+      },
+      repaired.chapterIdMap,
+    ),
+  ).toBe(99);
+});

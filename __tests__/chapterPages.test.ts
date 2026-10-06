@@ -1,5 +1,4 @@
 import {
-  MAX_CHAPTER_PAGES,
   collectChapterPages,
   type ChapterPageResult,
 } from '../src/services/source/chapterPages';
@@ -50,7 +49,10 @@ describe('collectChapterPages', () => {
       fetchPage,
       cleanPage: identity,
     });
-    expect(merged).toEqual({ content: '整章正文', nextPageUrl: undefined });
+    expect(merged).toMatchObject({
+      content: '整章正文',
+      nextPageUrl: undefined,
+    });
     expect(requested).toEqual([]);
   });
 
@@ -139,7 +141,26 @@ describe('collectChapterPages', () => {
       cleanPage: identity,
     });
 
-    expect(requested).toHaveLength(MAX_CHAPTER_PAGES);
+    expect(requested).toHaveLength(1);
     expect(merged.nextPageUrl).toBe(loop);
   });
+});
+
+it('分页回指章首页时不再次追加首页，仍留下未完成的续载入口', async () => {
+  const first = `${base}100.html`;
+  const second = `${base}100_2.html`;
+  const fetchPage = jest
+    .fn()
+    .mockResolvedValue({ content: '第二页', nextPageUrl: first });
+  const merged = await collectChapterPages({
+    firstPageUrl: first,
+    firstContent: '首页',
+    firstNextPageUrl: second,
+    fetchPage,
+    cleanPage: text => text,
+  });
+  expect(merged.content).toBe('首页\n第二页');
+  expect(merged.nextPageUrl).toBe(first);
+  expect(merged.loadedPageUrls).toEqual([second]);
+  expect(fetchPage).toHaveBeenCalledTimes(1);
 });

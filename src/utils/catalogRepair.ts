@@ -157,6 +157,7 @@ export function repairCatalogPreservingIdentity(
       contentTrustedShort: reusable?.contentTrustedShort,
       nextPageUrl: reusable?.nextPageUrl,
       contentComplete: reusable?.contentComplete,
+      loadedPageUrls: reusable?.loadedPageUrls,
     };
   });
 
@@ -356,5 +357,7 @@ export function progressAfterCatalogRepair(
     chapterIndex: nextIndex,
     totalChapters: nextChapters.length,
     chapterFraction,
+    // 目录修复/重复入库不能把当前缓存的末尾当作整章读完，后续子页仍需继续阅读。
+    hasRemainingPages: !!nextChapters[nextIndex].nextPageUrl,
   });
 }

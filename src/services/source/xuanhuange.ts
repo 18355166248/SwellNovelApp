@@ -123,6 +123,7 @@ const xuanhuangeSource: BookSource = {
     }
     // 一章被拆成多个网页子页时一次读完，阅读器拿到的就是完整章节。
     const merged = await collectChapterPages({
+      firstPageUrl: url,
       firstContent,
       firstNextPageUrl: firstPage.nextPageUrl,
       fetchPage: pageUrl => fetchRenderedChapterPage(pageUrl, { priority }),
@@ -131,6 +132,7 @@ const xuanhuangeSource: BookSource = {
     return {
       content: merged.content,
       nextPageUrl: merged.nextPageUrl,
+      loadedPageUrls: merged.loadedPageUrls,
       complete: !merged.nextPageUrl,
     };
   },

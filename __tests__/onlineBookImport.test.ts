@@ -11,6 +11,7 @@ import {
   useAddOnlineBook,
   useAddRecognizedBook,
   useCacheWholeBook,
+  useLoadNextChapterPage,
 } from '../src/store/hooks/useOnlineBook';
 import {
   addOnlineBook,
@@ -442,4 +443,92 @@ it('入库总超时后恢复操作，迟到解析不能偷偷加入书架', asyn
   } finally {
     jest.useRealTimers();
   }
+});
+
+it('逐页续载允许正常短尾页，缓存完整正文而不是误报失败', async () => {
+  jest.useFakeTimers();
+  const book = incomingBook();
+  const current = {
+    ...chapter(book.id, 'tail', 1, true),
+    contentComplete: false,
+    nextPageUrl: `${sourceUrl(1)}2.html`,
+  };
+  mockStore.set(booksAtom, [book]);
+  mockStore.set(chaptersAtom, { [book.id]: [current] });
+  jest
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+    .mockResolvedValue({ content: '完。', complete: true });
+  const loaded = await useLoadNextChapterPage()(book.id, 0);
+  expect(loaded?.content).toBe(`${current.content}\n完。`);
+  expect(loaded?.contentComplete).toBe(true);
+  expect(mockStore.get(chaptersAtom)[book.id][0].nextPageUrl).toBeUndefined();
+  jest.runOnlyPendingTimers();
+});
+
+it('续页回到已读分页时拒绝追加，已缓存正文与重试入口保持原样', async () => {
+  const book = incomingBook();
+  const current = {
+    ...chapter(book.id, 'cycle', 1, true),
+    contentComplete: false,
+    nextPageUrl: `${sourceUrl(1)}2.html`,
+  };
+  mockStore.set(booksAtom, [book]);
+  mockStore.set(chaptersAtom, { [book.id]: [current] });
+  const parse = jest
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+    .mockResolvedValue({
+      content: '错误的重复页',
+      nextPageUrl: current.sourceUrl,
+      complete: false,
+    });
+  await expect(useLoadNextChapterPage()(book.id, 0)).rejects.toThrow(
+    '链接循环',
+  );
+  expect(mockStore.get(chaptersAtom)[book.id][0]).toEqual(current);
+  expect(parse).toHaveBeenCalledTimes(1);
+});
+
+it('落盘恢复的已读分页列表仍拦截循环，不发起重复网络请求', async () => {
+  const book = incomingBook();
+  const page = `${sourceUrl(1)}2.html`;
+  const current = {
+    ...chapter(book.id, 'restore', 1, true),
+    nextPageUrl: page,
+    loadedPageUrls: [page],
+    contentComplete: false,
+  };
+  mockStore.set(booksAtom, [book]);
+  mockStore.set(chaptersAtom, { [book.id]: [current] });
+  const parse = jest.spyOn(getSourceById('xuanhuange')!, 'parseChapterContent');
+  await expect(useLoadNextChapterPage()(book.id, 0)).rejects.toThrow(
+    '链接异常',
+  );
+  expect(parse).not.toHaveBeenCalled();
+  expect(mockStore.get(chaptersAtom)[book.id][0].content).toBe(current.content);
+});
+
+it('bookshuku 同路径的 query 子页不会误判成已读章首页', async () => {
+  jest.useFakeTimers();
+  const book = {
+    ...incomingBook(),
+    source: {
+      name: 'bookshuku',
+      bookUrl: 'https://www.bookshuku.org/bookinfo/123.html',
+    },
+  };
+  const current = {
+    ...chapter(book.id, 'query', 1, true),
+    sourceUrl: 'https://www.bookshuku.org/read/123_1.html',
+    nextPageUrl: 'https://wap.bookshuku.org/read/123_1.html?page=2',
+    contentComplete: false,
+  };
+  mockStore.set(booksAtom, [book]);
+  mockStore.set(chaptersAtom, { [book.id]: [current] });
+  jest
+    .spyOn(getSourceById('bookshuku')!, 'parseChapterContent')
+    .mockResolvedValue({ content: '尾页。', complete: true });
+  await expect(useLoadNextChapterPage()(book.id, 0)).resolves.toMatchObject({
+    contentComplete: true,
+  });
+  jest.runOnlyPendingTimers();
 });

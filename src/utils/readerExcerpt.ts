@@ -28,11 +28,30 @@ function paragraphEntries(content: string): ParagraphEntry[] {
   });
 }
 
-function distanceToParagraph(position: number, entry: ParagraphEntry): number {
-  const end = entry.start + charLength(entry.text);
-  if (position < entry.start) return entry.start - position;
-  if (position > end) return position - end;
-  return 0;
+/** 同段文字可以重复多次；记录每次命中的逻辑偏移，按实际长按/书签位置选最近锚点。 */
+function anchorCandidates(content: string, anchor: string) {
+  return paragraphEntries(content).flatMap(entry => {
+    const matches: Array<{
+      entry: ParagraphEntry;
+      anchorIndex: number;
+      position: number;
+    }> = [];
+    let cursor = 0;
+    let logical = 0;
+    let index = entry.text.indexOf(anchor);
+    while (index >= 0) {
+      // 增量计算码点偏移，生僻字/表情按一个字符处理，长段反复匹配也不重复扫描整段。
+      logical += charLength(entry.text.slice(cursor, index));
+      matches.push({
+        entry,
+        anchorIndex: index,
+        position: entry.start + logical,
+      });
+      cursor = index;
+      index = entry.text.indexOf(anchor, index + 1);
+    }
+    return matches;
+  });
 }
 
 function normalizedVisibleAnchor(visibleText: string): string {
@@ -55,17 +74,11 @@ export function resolveExcerptDraft(
   const anchor = normalizedVisibleAnchor(visibleText);
   if (!anchor || !content) return null;
 
-  const candidates = paragraphEntries(content)
-    .map(entry => ({
-      entry,
-      anchorIndex: entry.text.trim().indexOf(anchor),
-    }))
-    .filter(candidate => candidate.anchorIndex >= 0)
-    .sort(
-      (a, b) =>
-        distanceToParagraph(fallbackPosition, a.entry) -
-        distanceToParagraph(fallbackPosition, b.entry),
-    );
+  const candidates = anchorCandidates(content, anchor).sort(
+    (a, b) =>
+      Math.abs(a.position - fallbackPosition) -
+      Math.abs(b.position - fallbackPosition),
+  );
   const selected = candidates[0];
   if (!selected) return null;
 
@@ -78,7 +91,7 @@ export function resolveExcerptDraft(
 
   // 极少数无换行长文本只保留锚点附近内容，防止笔记面板被超长段落撑满。
   if (chars.length > 600) {
-    const anchorUnits = trimmed.indexOf(anchor);
+    const anchorUnits = selected.anchorIndex - leadingUnits;
     const anchorOffset = charLength(trimmed.slice(0, Math.max(0, anchorUnits)));
     const sliceStart = Math.max(0, anchorOffset - 180);
     position += sliceStart;
@@ -107,16 +120,11 @@ export function resolveExcerptRange(
     };
   }
 
-  const candidates = paragraphEntries(content)
-    .map(entry => ({ entry, anchorIndex: entry.text.indexOf(anchor) }))
-    .filter(candidate => candidate.anchorIndex >= 0)
-    .sort((a, b) => {
-      const aStart = a.entry.start + charLength(a.entry.text.slice(0, a.anchorIndex));
-      const bStart = b.entry.start + charLength(b.entry.text.slice(0, b.anchorIndex));
-      return (
-        Math.abs(aStart - fallbackPosition) - Math.abs(bStart - fallbackPosition)
-      );
-    });
+  const candidates = anchorCandidates(content, anchor).sort(
+    (a, b) =>
+      Math.abs(a.position - fallbackPosition) -
+      Math.abs(b.position - fallbackPosition),
+  );
   const selected = candidates[0];
   if (!selected) {
     return {

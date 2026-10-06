@@ -30,6 +30,7 @@ export type ParsedChapterContent =
       content: string;
       title?: string;
       nextPageUrl?: string;
+      loadedPageUrls?: string[];
       complete?: boolean;
       /** 书源已用正文容器、页码和章节导航确认这是合法短章，而非广告/拦截页。 */
       trustedShort?: boolean;
