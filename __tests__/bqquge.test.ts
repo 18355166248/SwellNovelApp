@@ -1,5 +1,6 @@
 import { bqqugeSource as source } from '../src/services/source/bqquge';
 import { fetchHtml } from '../src/services/http/fetchHtml';
+import { isInvalidOnlineChapterContent } from '../src/services/source/contentQuality';
 jest.mock('../src/services/http/fetchHtml', () => ({ fetchHtml: jest.fn() }));
 const fetchMock = fetchHtml as jest.MockedFunction<typeof fetchHtml>;
 const root = 'https://www.bqquge.org/1';
@@ -13,6 +14,71 @@ const text = '真实正文。'.repeat(80);
 const page = (body: string, next: string) =>
   `<div class="con"><h1>第1章</h1><p>${body}</p><script>广告脚本()</script></div><div class="prenext">${next}</div><div>猜你喜欢：广告</div>`;
 beforeEach(() => fetchMock.mockReset());
+it('合法短公告带同书目录及章节导航时可读，广告和普通残章仍拒绝', async () => {
+  const announcement = page(
+    '今天休息一天，明天恢复更新。',
+    '<a href="/1">目录</a><a href="/1/11">下一章</a>',
+  ).replace('<h1>第1章</h1>', '<h1>休整一天</h1>');
+  fetchMock.mockResolvedValue(announcement);
+  const parsed = await source.parseChapterContent(`${root}/10`);
+  expect(parsed).toMatchObject({
+    content: '今天休息一天，明天恢复更新。',
+    complete: true,
+    trustedShort: true,
+  });
+  if (typeof parsed !== 'string')
+    expect(
+      isInvalidOnlineChapterContent(parsed.content, {
+        trustedShort: parsed.trustedShort,
+      }),
+    ).toBe(false);
+  fetchMock.mockResolvedValue(
+    announcement.replace('今天休息一天，明天恢复更新。', '立即下载领取福利'),
+  );
+  await expect(source.parseChapterContent(`${root}/10`)).rejects.toThrow(
+    '正文无效',
+  );
+  fetchMock.mockResolvedValue(
+    announcement.replace('<a href="/1">目录</a>', ''),
+  );
+  await expect(source.parseChapterContent(`${root}/10`)).rejects.toThrow(
+    '正文无效',
+  );
+  fetchMock.mockResolvedValue(page('正文过短。', '<a href="/1/11">下一章</a>'));
+  await expect(source.parseChapterContent(`${root}/10`)).rejects.toThrow(
+    '正文无效',
+  );
+});
+it('先合并短首屏再检查整章字数，不把正常分页正文误判为空', async () => {
+  fetchMock.mockImplementation(async url =>
+    url.endsWith('/10')
+      ? page('首屏只有一句。', '<a href="/1/10-2">下一页</a>')
+      : page(text, '<a href="/1/11">下一章</a>'),
+  );
+  await expect(source.parseChapterContent(`${root}/10`)).resolves.toMatchObject(
+    { content: `首屏只有一句。\n${text}`, complete: true, trustedShort: false },
+  );
+});
+it('嵌套广告、脚本伪标签不截断正文，也不把广告标题和同书广告链接混入目录', async () => {
+  fetchMock.mockResolvedValue(
+    `<div class="con reader"><div class="ad"><h1>广告标题</h1><div>立即下载</div></div><h1>第1章</h1><p>${text}</p><script>var bait='<div>伪标签';</script><div><p>正文后半段。</p></div></div><div class="prenext"><a href="/1/11">下一章</a></div>`,
+  );
+  await expect(source.parseChapterContent(`${root}/10`)).resolves.toMatchObject(
+    { title: '第1章', content: `${text}\n正文后半段。`, complete: true },
+  );
+  fetchMock.mockResolvedValue(
+    '<div id="list"><div class="ad"><a href="/1/99">推广</a></div><div><a href="/1/10">第1章</a></div><a href="/1/11">第2章</a></div>',
+  );
+  expect(
+    (await source.parseCatalog(info)).map(chapter => chapter.title),
+  ).toEqual(['第1章', '第2章']);
+  fetchMock.mockResolvedValue(
+    `<div class="con"><h1>第1章</h1><p>${text}</p><div class="prenext"><a href="/1/11">下一章</a></div>`,
+  );
+  await expect(source.parseChapterContent(`${root}/10`)).rejects.toThrow(
+    '正文和章节标题',
+  );
+});
 it('网站最新章未在全文目录中出现时拒绝截短目录', async () => {
   fetchMock.mockResolvedValue(
     '<div class="newest"><h3><a href="/1/99">第99章</a></h3></div><div id="list"><a href="/1/10">第1章</a></div>',

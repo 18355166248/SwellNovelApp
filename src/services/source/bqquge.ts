@@ -6,6 +6,12 @@ import { collectChapterPages } from './chapterPages';
 import { isInvalidOnlineChapterContent } from './contentQuality';
 import type { BookSource } from './types';
 import { catalogNumberSummary } from '../../utils/catalogNumberSummary';
+import {
+  findDivBlock,
+  removeMarkedAdBlocks,
+  removeNonContentElements,
+} from './htmlContainers';
+import { isBlockedText } from './contentGuards';
 
 const ORIGIN = 'https://www.bqquge.org';
 // 使用固定地址规则，避免 RN 内置 URL 给数字地址加斜杠或错误拼接相对链接。
@@ -30,7 +36,7 @@ function plain(html: string) {
   // 脚本、嵌入广告和样式不参与正文；仅转成纯文本，绝不运行站点脚本。
   return decodeEntities(
     stripTags(
-      html
+      removeMarkedAdBlocks(html)
         .replace(/<(script|style|iframe|object)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
         .replace(/<\/?p\b[^>]*>|<br\s*\/?>/gi, '\n'),
     ),
@@ -39,10 +45,9 @@ function plain(html: string) {
 async function page(url: string) {
   const current = route(url);
   if (!current?.chapterId) throw new Error('章节地址无效');
-  const html = await fetchHtml(url, 12000);
-  const body = /<div\b[^>]*class=["']con["'][^>]*>([\s\S]*?)<\/div>/i.exec(
-    html,
-  )?.[1];
+  const html = removeNonContentElements(await fetchHtml(url, 12000));
+  const rawBody = findDivBlock(html, 'class', 'con')?.inner;
+  const body = rawBody && removeMarkedAdBlocks(rawBody);
   const title =
     body && plain(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(body)?.[1] || '');
   if (!body || !title) throw new Error('未解析到正文和章节标题');
@@ -50,9 +55,7 @@ async function page(url: string) {
     plain(body.replace(/<h1\b[^>]*>[\s\S]*?<\/h1>/i, '')),
     title,
   );
-  const nav = /<div\b[^>]*class=["']prenext["'][^>]*>([\s\S]*?)<\/div>/i.exec(
-    html,
-  )?.[1];
+  const nav = findDivBlock(html, 'class', 'prenext')?.inner;
   if (!nav) throw new Error('章节导航缺失');
   const next = links(nav).find(link => /^下一[页頁]$/.test(link.title));
   let nextPageUrl: string | undefined;
@@ -69,7 +72,23 @@ async function page(url: string) {
     nextPageUrl = next.url;
   }
   if (!content) throw new Error('正文为空');
-  return { content, title, nextPageUrl };
+  const navLinks = links(nav);
+  const trustedShortLayout =
+    /^(?:休息|休整|请假|公告|通知|上架感言|完本感言|更新说明|补更安排)/.test(
+      title,
+    ) &&
+    navLinks.some(
+      link =>
+        route(link.url)?.bookId === current.bookId &&
+        !route(link.url)?.chapterId,
+    ) &&
+    navLinks.some(
+      link =>
+        /^(?:上一章|下一章)$/.test(link.title) &&
+        route(link.url)?.bookId === current.bookId &&
+        !!route(link.url)?.chapterId,
+    );
+  return { content, title, nextPageUrl, trustedShortLayout };
 }
 export const bqqugeSource: BookSource = {
   id: 'bqquge',
@@ -106,11 +125,12 @@ export const bqqugeSource: BookSource = {
     };
   },
   async parseCatalog(info) {
-    const html = await fetchHtml(this.detailUrl(info.sourceBookId), 12000);
+    const html = removeNonContentElements(
+      await fetchHtml(this.detailUrl(info.sourceBookId), 12000),
+    );
     // 最新章节和推荐区都含阅读链接，只接受明确的全文目录容器，保留上/下篇真实标题。
-    const body = /<div\b[^>]*id=["']list["'][^>]*>([\s\S]*?)<\/div>/i.exec(
-      html,
-    )?.[1];
+    const rawCatalog = findDivBlock(html, 'id', 'list')?.inner;
+    const body = rawCatalog && removeMarkedAdBlocks(rawCatalog);
     if (!body) throw new Error('全文目录缺失');
     const seen = new Set<string>();
     const chapters = links(body).filter(link => {
@@ -135,8 +155,7 @@ export const bqqugeSource: BookSource = {
     )
       throw new Error('目录章号覆盖不足，请核对完整目录');
     // 最新章区域已给出确定的章地址时，完整目录必须包含它；避免截短/降级目录被正常入库。
-    const newest =
-      /<div\b[^>]*class=["']newest["'][^>]*>([\s\S]*?)<\/div>/i.exec(html)?.[1];
+    const newest = findDivBlock(html, 'class', 'newest')?.inner;
     const latestLink =
       newest &&
       links(newest).find(
@@ -156,8 +175,7 @@ export const bqqugeSource: BookSource = {
   },
   async parseChapterContent(url) {
     const first = await page(url);
-    if (isInvalidOnlineChapterContent(first.content))
-      throw new Error('正文无效');
+    if (isBlockedText(first.content)) throw new Error('正文无效');
     const merged = await collectChapterPages({
       firstPageUrl: url,
       firstContent: first.content,
@@ -165,6 +183,15 @@ export const bqqugeSource: BookSource = {
       fetchPage: page,
       cleanPage: text => text,
     });
-    return { ...merged, title: first.title, complete: !merged.nextPageUrl };
+    // 字数校验在子页合并之后进行；短公告仅在结构、同书导航和已取完全部页均确认后放行。
+    const trustedShort = first.trustedShortLayout && !merged.nextPageUrl;
+    if (isInvalidOnlineChapterContent(merged.content, { trustedShort }))
+      throw new Error('正文无效');
+    return {
+      ...merged,
+      title: first.title,
+      complete: !merged.nextPageUrl,
+      trustedShort,
+    };
   },
 };

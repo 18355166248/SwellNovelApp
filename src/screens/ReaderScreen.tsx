@@ -4052,7 +4052,9 @@ export default function ReaderScreen() {
                 }}
               >
                 {drawerTab === 'toc'
-                  ? `共 ${total} 章`
+                  ? isOnline
+                    ? `共 ${total} 项目录`
+                    : `共 ${total} 章`
                   : drawerTab === 'search'
                   ? `可搜索 ${searchableChapterCount} / ${total} 章正文`
                   : drawerTab === 'notes'
@@ -4240,7 +4242,9 @@ export default function ReaderScreen() {
                               marginTop: 2,
                             }}
                           >
-                            {`第 ${idx + 1} 章 · 长按删除`}
+                            {`${isOnline ? '目录第' : '第'} ${idx + 1} ${
+                              isOnline ? '项' : '章'
+                            } · 长按删除`}
                           </Text>
                         </View>
                       </Pressable>
@@ -4519,11 +4523,13 @@ export default function ReaderScreen() {
                     <Pressable
                       disabled={drawerPositioning}
                       accessibilityRole="button"
-                      accessibilityLabel={`第 ${
+                      // 在线列表序号包含公告和上下篇，不能作为原书章号读给 VoiceOver。
+                      accessibilityLabel={`${isOnline ? '目录第' : '第'} ${
                         idx + 1
-                      } 章 ${displayChapterTitle(c, idx)}${
-                        isCached ? '，已缓存' : ''
-                      }`}
+                      } ${isOnline ? '项' : '章'} ${displayChapterTitle(
+                        c,
+                        idx,
+                      )}${isCached ? '，已缓存' : ''}`}
                       accessibilityState={{
                         disabled: drawerPositioning,
                         selected: isCur,
