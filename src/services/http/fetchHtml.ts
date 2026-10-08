@@ -1,3 +1,4 @@
+import { abortable, forwardAbort, throwIfAborted } from '../../utils/abort';
 /**
  * 取 HTML（原生 iOS / Android）。
  *
@@ -23,6 +24,7 @@ const MOBILE_UA =
 const TIMEOUT_MS = 15000;
 
 type FetchHtmlOptions = {
+  signal?: AbortSignal;
   preferLocalProxy?: boolean;
   requireLocalProxy?: boolean;
   localProxyRetries?: number;
@@ -67,14 +69,16 @@ export async function fetchHtml(
   timeoutMs: number = TIMEOUT_MS,
   options: FetchHtmlOptions = {},
 ): Promise<string> {
+  throwIfAborted(options.signal);
   const proxyUrl = getSourceProxyUrl(url);
   if (options.preferLocalProxy && proxyUrl) {
     const retries = Math.max(1, options.localProxyRetries ?? 1);
     let lastProxyError: unknown;
     for (let attempt = 1; attempt <= retries; attempt += 1) {
       try {
-        return await fetchHtmlDirect(proxyUrl, timeoutMs);
+        return await fetchHtmlDirect(proxyUrl, timeoutMs, options.signal);
       } catch (error) {
+        throwIfAborted(options.signal);
         lastProxyError = error;
         devInfo('[fetchHtml] source proxy failed', {
           url,
@@ -104,22 +108,27 @@ export async function fetchHtml(
     }
   }
   try {
-    return await fetchHtmlDirect(url, timeoutMs);
+    return await fetchHtmlDirect(url, timeoutMs, options.signal);
   } catch (error) {
+    // 用户离开页面属于取消，不应继续直连/代理回退。
+    throwIfAborted(options.signal);
     if (!proxyUrl) throw error;
     devInfo('[fetchHtml] direct failed, try source proxy', {
       url,
       error: error instanceof Error ? error.message : String(error),
     });
-    return fetchHtmlDirect(proxyUrl, timeoutMs);
+    return fetchHtmlDirect(proxyUrl, timeoutMs, options.signal);
   }
 }
 
 async function fetchHtmlDirect(
   url: string,
   timeoutMs: number = TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   const controller = new AbortController();
+  const unlink = forwardAbort(signal, controller);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
@@ -143,7 +152,8 @@ async function fetchHtmlDirect(
     if (isProxyUrl(url)) {
       // 代理已经用 curl 取回并按 UTF-8 明文输出；RN iOS 的 arrayBuffer
       // 对这类大 HTML 偶发拿到不可解析内容，直接走 text() 更贴近浏览器端行为。
-      const html = await res.text();
+      const html = await abortable(res.text(), controller.signal);
+      throwIfAborted(controller.signal);
       if (!html.trim()) throw new Error('empty html');
       if (isChallengeHtml(html)) throw new Error('challenge html');
       return html;
@@ -151,7 +161,8 @@ async function fetchHtmlDirect(
 
     // React Native 的 fetch 支持 arrayBuffer；个别环境缺失时回退 base64/text。
     if (typeof res.arrayBuffer === 'function') {
-      const buf = await res.arrayBuffer();
+      const buf = await abortable(res.arrayBuffer(), controller.signal);
+      throwIfAborted(controller.signal);
       const bytes = new Uint8Array(buf);
       // 即便请求了 identity，个别 CDN/运营商仍可能回压缩体；gzip 魔数开头的字节
       // 强解会得到乱码 HTML，会被误当成“部分目录”写入缓存。这里直接抛错，交给
@@ -166,16 +177,20 @@ async function fetchHtmlDirect(
     }
     const anyRes = res as unknown as { base64?: () => Promise<string> };
     if (typeof anyRes.base64 === 'function') {
-      const html = decodeBytes(base64ToBytes(await anyRes.base64()));
+      const raw = await abortable(anyRes.base64(), controller.signal);
+      throwIfAborted(controller.signal);
+      const html = decodeBytes(base64ToBytes(raw));
       if (!html.trim()) throw new Error('empty html');
       if (isChallengeHtml(html)) throw new Error('challenge html');
       return html;
     }
-    const html = await res.text();
+    const html = await abortable(res.text(), controller.signal);
+    throwIfAborted(controller.signal);
     if (!html.trim()) throw new Error('empty html');
     if (isChallengeHtml(html)) throw new Error('challenge html');
     return html;
   } finally {
     clearTimeout(timer);
+    unlink();
   }
 }

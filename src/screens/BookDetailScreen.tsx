@@ -1,3 +1,5 @@
+import { forwardAbort, isAbortError } from '../utils/abort';
+import { useScreenTaskSignal } from '../store/hooks/useScreenTaskSignal';
 import React from 'react';
 import {
   View,
@@ -10,7 +12,12 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon, LinearGradient } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import {
+  useNavigation,
+  useRoute,
+  useIsFocused,
+  RouteProp,
+} from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
@@ -65,7 +72,9 @@ export default function BookDetailScreen() {
   const { bookId } = route.params;
   const books = useAllBooks();
   const book = books.find(b => b.id === bookId);
-  const chapters = useBookChapters(bookId);
+  const focused = useIsFocused();
+  const taskSignal = useScreenTaskSignal(navigation, bookId, focused);
+  const chapters = useBookChapters(bookId, taskSignal);
   const openChapter = useOpenChapter();
   const removeBook = useRemoveBook();
   const cacheWholeBook = useCacheWholeBook();
@@ -88,9 +97,14 @@ export default function BookDetailScreen() {
   // 缓存全本可中断：离开页面或点“停止”时 abort，避免后台继续抓取。
   const cacheAbortRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => cacheAbortRef.current?.abort(), []);
-  const cachedCount = chapters.filter(c =>
-    isCompleteOnlineChapterCacheUsable(c, book?.source?.name),
-  ).length;
+  // 正文校验会扫描缓存内容，只在章节或书源变更时执行，避免按钮状态更新反复扫描整本书。
+  const cachedCount = React.useMemo(
+    () =>
+      chapters.filter(c =>
+        isCompleteOnlineChapterCacheUsable(c, book?.source?.name),
+      ).length,
+    [chapters, book?.source?.name],
+  );
   const supportsCatalogActions =
     !!book?.source && !!getSourceById(book.source.name);
   const cachePct =
@@ -107,7 +121,8 @@ export default function BookDetailScreen() {
     setChecking(true);
     setOnlineMsg(catalogNeedsRepair ? '正在修复目录…' : '');
     try {
-      const n = await checkBookUpdate(bookId);
+      const n = await checkBookUpdate(bookId, taskSignal);
+      if (taskSignal.aborted) return;
       setOnlineMsg(
         catalogNeedsRepair
           ? n > 0
@@ -117,7 +132,8 @@ export default function BookDetailScreen() {
           ? `目录新增 ${n} 项`
           : '已是最新章节',
       );
-    } catch {
+    } catch (error) {
+      if (taskSignal.aborted || isAbortError(error)) return;
       setOnlineMsg(
         catalogNeedsRepair
           ? '目录修复失败，请稍后重试'
@@ -142,15 +158,20 @@ export default function BookDetailScreen() {
     )
       return;
     const controller = new AbortController();
+    const unlink = forwardAbort(taskSignal, controller);
     cacheAbortRef.current = controller;
     setCaching({ active: true, done: cachedCount, total: chapters.length });
     setOnlineMsg('');
     try {
       const res = await cacheWholeBook(
         bookId,
-        p => setCaching({ active: true, done: p.done, total: p.total }),
+        p => {
+          if (!taskSignal.aborted)
+            setCaching({ active: true, done: p.done, total: p.total });
+        },
         controller.signal,
       );
+      if (taskSignal.aborted) return;
       setOnlineMsg(
         res.cancelled
           ? `已停止，缓存了 ${res.done}/${res.total} 项正文`
@@ -159,8 +180,10 @@ export default function BookDetailScreen() {
           : `已缓存 ${res.done}/${res.total} 项正文（部分失败，可重试）`,
       );
     } catch {
+      if (taskSignal.aborted) return;
       setOnlineMsg('缓存失败，请检查网络后重试');
     } finally {
+      unlink();
       cacheAbortRef.current = null;
       setCaching(prev => ({ ...prev, active: false }));
     }

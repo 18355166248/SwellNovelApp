@@ -1,3 +1,4 @@
+import { throwIfAborted } from '../../utils/abort';
 /**
  * 书源：明智屋中文网（www.mingzw.net，手机版）。
  *
@@ -15,6 +16,7 @@ import { fetchRenderedHtml } from '../browserFetch/bridge';
 import {
   BookSource,
   ParsedBookInfo,
+  ParseChapterOptions,
   ParsedChapter,
   ParsedChapterContent,
 } from './types';
@@ -43,22 +45,30 @@ function extractBookId(url: string): string | undefined {
  * 明智屋的 www 证书主机名偶发不匹配，iOS 原生 TLS 直连会被 ATS 拦下。
  * 固定走我们白名单 curl 代理，既规避该兼容问题，也保证目录与正文来自同一链路。
  */
-async function fetchMingzwHtml(url: string): Promise<string> {
+async function fetchMingzwHtml(
+  url: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<string> {
+  throwIfAborted(options.signal);
   try {
     return await fetchHtml(url, PROXY_TIMEOUT_MS, {
+      signal: options.signal,
       preferLocalProxy: true,
       requireLocalProxy: true,
     });
   } catch (proxyError) {
+    throwIfAborted(options.signal);
     // 公网 curl 代理故障时，真机仍可用隐藏 WebView 完成站点挑战并取最终 DOM。
     // 不把代理作为唯一可用链路，否则一次服务端 502 会让整个书源全部不可读。
     try {
       return await fetchRenderedHtml(url, {
+        signal: options.signal,
         timeout: 35000,
         waitMs: 6000,
         priority: 'high',
       });
     } catch (webViewError) {
+      throwIfAborted(options.signal);
       throw new Error(
         `明智屋页面加载失败：${
           webViewError instanceof Error
@@ -229,12 +239,15 @@ export const mingzwSource: BookSource = {
     };
   },
 
-  async parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]> {
+  async parseCatalog(
+    info: ParsedBookInfo,
+    options: ParseChapterOptions = {},
+  ): Promise<ParsedChapter[]> {
     const catalogUrl = /\/mzwchapter\/\d+\.html/i.test(info.catalogUrl)
       ? info.catalogUrl
       : `${ORIGIN}/mzwchapter/${info.sourceBookId}.html`;
     const origin = new URL(catalogUrl).origin;
-    const detail = await fetchMingzwHtml(catalogUrl);
+    const detail = await fetchMingzwHtml(catalogUrl, options);
     // 目录按每 100 章分段：取完整目录页里的各分段链接，按起始序号排序后逐段抓取。
     const segUrls = Array.from(
       new Set(
@@ -296,10 +309,11 @@ export const mingzwSource: BookSource = {
               toAbsolute(origin, pages[index]),
             )) {
               try {
-                parsed = parsePage(await fetchMingzwHtml(candidate));
+                parsed = parsePage(await fetchMingzwHtml(candidate, options));
                 if (parsed.length) break;
                 lastError = new Error('未识别到本书章节');
               } catch (error) {
+                throwIfAborted(options.signal);
                 lastError = error;
               }
             }
@@ -332,16 +346,20 @@ export const mingzwSource: BookSource = {
     return chapters;
   },
 
-  async parseChapterContent(url: string): Promise<ParsedChapterContent> {
+  async parseChapterContent(
+    url: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ParsedChapterContent> {
     let lastError: unknown;
     for (const candidate of alternateMingzwUrls(url)) {
       try {
-        const content = cleanArticle(await fetchMingzwHtml(candidate));
+        const content = cleanArticle(await fetchMingzwHtml(candidate, options));
         if (isInvalidOnlineChapterContent(content)) {
           throw new Error(`正文不完整（${content.length} 字）`);
         }
         return { content, complete: true };
       } catch (error) {
+        throwIfAborted(options.signal);
         lastError = error;
       }
     }

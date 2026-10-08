@@ -1,3 +1,4 @@
+import { throwIfAborted } from '../../utils/abort';
 /** 未注册候选（中后段正文异常，禁止直接登记为可读书源）。23xs.la 笔趣阁：完整目录分页 + 章内子页；只解码公开 HTML 中固定的 base64 段落，不执行站点脚本。 */
 import { fetchHtml } from '../http/fetchHtml';
 import { base64ToBytes, decodeBytes } from '../../utils/decodeText';
@@ -67,10 +68,10 @@ function meta(html: string, key: string) {
   }
   return '';
 }
-async function page(url: string) {
+async function page(url: string, signal?: AbortSignal) {
   const current = route(url);
   if (!current?.chapterId) throw new Error('章节地址无效');
-  const html = await fetchHtml(url, 12000);
+  const html = await fetchHtml(url, 12000, { signal });
   const block =
     /<div\b[^>]*class=["'][^"']*\bword_read\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(
       html,
@@ -140,9 +141,9 @@ export const xs23Source: BookSource = {
       catalogUrl,
     };
   },
-  async parseCatalog(info) {
+  async parseCatalog(info, options = {}) {
     const firstUrl = this.detailUrl(info.sourceBookId);
-    const first = await fetchHtml(firstUrl, 12000);
+    const first = await fetchHtml(firstUrl, 12000, { signal: options.signal });
     if (!first.includes('全部章节目录'))
       throw new Error('未解析到完整目录区域');
     const urls = new Set([firstUrl]);
@@ -189,7 +190,9 @@ export const xs23Source: BookSource = {
               const html =
                 index === 0 && attempt === 0
                   ? first
-                  : await fetchHtml(pages[index], 12000);
+                  : await fetchHtml(pages[index], 12000, {
+                      signal: options.signal,
+                    });
               // 同页顶部的最新章节不能排到第一章前，优先限定“全部章节目录”所在区域。
               const marker = html.indexOf('全部章节目录');
               const catalog = marker >= 0 ? html.slice(marker) : html;
@@ -203,6 +206,7 @@ export const xs23Source: BookSource = {
               });
               if (chapters.length) break;
             } catch (error) {
+              throwIfAborted(options.signal);
               if (attempt === 1) throw error;
             }
           }
@@ -219,15 +223,16 @@ export const xs23Source: BookSource = {
       return true;
     });
   },
-  async parseChapterContent(url) {
-    const first = await page(url);
+  async parseChapterContent(url, options = {}) {
+    const first = await page(url, options.signal);
     if (isInvalidOnlineChapterContent(first.content))
       throw new Error('正文不完整');
     const merged = await collectChapterPages({
       firstPageUrl: url,
       firstContent: first.content,
       firstNextPageUrl: first.nextPageUrl,
-      fetchPage: page,
+      signal: options.signal,
+      fetchPage: pageUrl => page(pageUrl, options.signal),
       cleanPage: text => text,
     });
     return { ...merged, title: first.title, complete: !merged.nextPageUrl };

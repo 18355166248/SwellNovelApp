@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import {
+  loadBookChapters,
   saveLibraryMeta,
   saveBookChapters,
   deleteBookChapters,
@@ -89,4 +90,21 @@ it('创建章节目录失败会反馈给导入调用者，不会误报正文已�
     'disk full',
   );
   expect(RNFS.writeFile).not.toHaveBeenCalled();
+});
+
+it('返回后读盘才结束，不再解析整本 JSON', async () => {
+  let finish!: (data: string) => void;
+  (RNFS.readFile as jest.Mock).mockReturnValueOnce(
+    new Promise<string>(resolve => {
+      finish = resolve;
+    }),
+  );
+  const controller = new AbortController();
+  const loading = loadBookChapters('a', controller.signal);
+  await Promise.resolve();
+  expect(RNFS.readFile).toHaveBeenCalled();
+  controller.abort();
+  // 无效 JSON 若仍被解析会抛 SyntaxError；正确路径应直接结束为取消。
+  finish('invalid large JSON');
+  await expect(loading).rejects.toMatchObject({ name: 'AbortError' });
 });

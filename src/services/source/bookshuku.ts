@@ -1,3 +1,4 @@
+import { throwIfAborted } from '../../utils/abort';
 /**
  * 书源：TXT图书下载网（wap.bookshuku.org）。
  *
@@ -71,6 +72,7 @@ function isCloudflareChallenge(html: string): boolean {
 async function fetchBookshukuHtml(
   url: string,
   options: {
+    signal?: AbortSignal;
     timeout?: number;
     renderedFallback?: boolean;
     renderedTimeout?: number;
@@ -85,6 +87,7 @@ async function fetchBookshukuHtml(
   const startedAt = Date.now();
   try {
     const html = await fetchHtml(url, options.timeout, {
+      signal: options.signal,
       preferLocalProxy: options.preferLocalProxy,
       requireLocalProxy: options.requireLocalProxy,
       localProxyRetries: options.localProxyRetries,
@@ -100,6 +103,7 @@ async function fetchBookshukuHtml(
         length: html.length,
       });
       const renderedHtml = await fetchRenderedHtml(url, {
+        signal: options.signal,
         timeout: options.renderedTimeout,
         waitMs: options.renderedWaitMs,
         priority: options.priority,
@@ -118,6 +122,7 @@ async function fetchBookshukuHtml(
     });
     return html;
   } catch (error) {
+    throwIfAborted(options.signal);
     if (options.requireLocalProxy) {
       // bookshuku 的 WebView/原生直连会稳定返回分页短目录；既然调用方声明必须走
       // curl 代理，代理失败就直接抛错，避免继续用 WebView 结果污染入库目录。
@@ -137,6 +142,7 @@ async function fetchBookshukuHtml(
     });
     if (!renderedFallback) throw error;
     const html = await fetchRenderedHtml(url, {
+      signal: options.signal,
       timeout: options.renderedTimeout,
       waitMs: options.renderedWaitMs,
       priority: options.priority,
@@ -153,6 +159,7 @@ async function fetchBookshukuHtml(
 async function fetchBookshukuProxyRenderedHtml(
   url: string,
   options: {
+    signal?: AbortSignal;
     timeout?: number;
     waitMs?: number;
     priority?: ParseChapterOptions['priority'];
@@ -164,6 +171,7 @@ async function fetchBookshukuProxyRenderedHtml(
   // 先让 WebView 打开同源代理首页，再在页面内 fetch /proxy，复用 WKWebView
   // 对该地址的可达性，同时避免把大 HTML 当主文档导航导致 onHttpError 误杀任务。
   return fetchWebViewHttpText(proxyUrl, getSourceProxyOrigin(), {
+    signal: options.signal,
     timeout: options.timeout ?? 45000,
     waitMs: options.waitMs ?? 500,
     priority: options.priority ?? 'high',
@@ -361,6 +369,7 @@ async function fetchArticleText(
     // 正文页先做一次短直连：大多数成功页 1~2 秒能拿到，失败再走 WebView。
     // 这样不会每次点击章节都先占用隐藏 WebView 等完整挑战流程。
     html = await fetchHtml(url, ARTICLE_DIRECT_TIMEOUT_MS, {
+      signal: options.signal,
       preferLocalProxy: true,
       requireLocalProxy: true,
       localProxyRetries: 2,
@@ -372,6 +381,7 @@ async function fetchArticleText(
       length: html.length,
     });
   } catch (error) {
+    throwIfAborted(options.signal);
     devInfo(
       '[bookshuku] article direct failed, fallback source proxy WebView',
       {
@@ -384,12 +394,14 @@ async function fetchArticleText(
       // 正文和目录保持同一条真机可用链路：通过代理首页里的同源 fetch 拿 curl HTML，
       // 避免 RN fetch 代理失败后又退回书源直连，导致章节页拿到提示页或超时。
       html = await fetchBookshukuProxyRenderedHtml(url, {
+        signal: options.signal,
         timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
         waitMs: 500,
         priority: options.priority ?? 'normal',
       });
       usedRenderedHtml = true;
     } catch (proxyError) {
+      throwIfAborted(options.signal);
       devInfo(
         '[bookshuku] article proxy WebView failed, fallback source WebView',
         {
@@ -402,6 +414,7 @@ async function fetchArticleText(
         },
       );
       html = await fetchRenderedHtml(url, {
+        signal: options.signal,
         timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
         waitMs: ARTICLE_WEBVIEW_WAIT_MS,
         priority: options.priority ?? 'normal',
@@ -409,6 +422,7 @@ async function fetchArticleText(
       usedRenderedHtml = true;
     }
   }
+  throwIfAborted(options.signal);
   let directText = cleanArticle(html);
   if (directText && !isInvalidArticleText(directText, html)) {
     devInfo('[bookshuku] article text ok', {
@@ -437,11 +451,13 @@ async function fetchArticleText(
       );
       try {
         html = await fetchBookshukuProxyRenderedHtml(url, {
+          signal: options.signal,
           timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
           waitMs: 500,
           priority: options.priority ?? 'normal',
         });
       } catch (proxyError) {
+        throwIfAborted(options.signal);
         devInfo('[bookshuku] article proxy WebView html retry failed', {
           url,
           ms: Date.now() - startedAt,
@@ -451,6 +467,7 @@ async function fetchArticleText(
               : String(proxyError),
         });
         html = await fetchRenderedHtml(url, {
+          signal: options.signal,
           timeout: ARTICLE_WEBVIEW_TIMEOUT_MS,
           waitMs: ARTICLE_WEBVIEW_WAIT_MS,
           priority: options.priority ?? 'normal',
@@ -473,6 +490,7 @@ async function fetchArticleText(
         };
       }
     } catch (error) {
+      throwIfAborted(options.signal);
       devInfo('[bookshuku] article WebView html retry failed', {
         url,
         ms: Date.now() - startedAt,
@@ -495,6 +513,7 @@ async function fetchArticleText(
   });
   const renderedText = cleanRenderedText(
     await fetchRenderedContent(url, {
+      signal: options.signal,
       timeout: ARTICLE_TEXT_WEBVIEW_TIMEOUT_MS,
       waitMs: ARTICLE_TEXT_WEBVIEW_WAIT_MS,
       priority: options.priority ?? 'normal',
@@ -652,10 +671,11 @@ async function attemptCatalog(
   bookTitle: string | undefined,
   label: string,
   debug: string[],
-  options: { allowDirectSource?: boolean } = {},
+  options: { allowDirectSource?: boolean; signal?: AbortSignal } = {},
 ): Promise<ParsedChapter[]> {
   try {
     const html = await fetchBookshukuHtml(url, {
+      signal: options.signal,
       timeout: 45000,
       renderedFallback: false,
       preferLocalProxy: true,
@@ -669,10 +689,12 @@ async function attemptCatalog(
     );
     return chapters;
   } catch (error) {
+    throwIfAborted(options.signal);
     debug.push(`${label}Error=${errMsg(error)}`);
   }
   try {
     const html = await fetchBookshukuProxyRenderedHtml(url, {
+      signal: options.signal,
       timeout: 45000,
       waitMs: 1000,
       priority: 'high',
@@ -684,11 +706,13 @@ async function attemptCatalog(
     );
     return chapters;
   } catch (error) {
+    throwIfAborted(options.signal);
     debug.push(`${label}WebViewError=${errMsg(error)}`);
   }
   if (options.allowDirectSource) {
     try {
       const html = await fetchBookshukuHtml(url, {
+        signal: options.signal,
         timeout: 45000,
         renderedFallback: false,
       });
@@ -699,6 +723,7 @@ async function attemptCatalog(
       );
       return chapters;
     } catch (error) {
+      throwIfAborted(options.signal);
       debug.push(`${label}DirectError=${errMsg(error)}`);
     }
   }
@@ -873,7 +898,11 @@ export const bookshukuSource: BookSource = {
     };
   },
 
-  async parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]> {
+  async parseCatalog(
+    info: ParsedBookInfo,
+    options: ParseChapterOptions = {},
+  ): Promise<ParsedChapter[]> {
+    throwIfAborted(options.signal);
     const sourceBookId =
       info.sourceBookId || extractBookId(info.catalogUrl) || '';
     const catalogUrl = normalizeCatalogUrl(info.catalogUrl, sourceBookId);
@@ -883,6 +912,7 @@ export const bookshukuSource: BookSource = {
     // 首个来源额外允许直连书源（真机蜂窝网络可能访问不了自建代理端口）。
     let chapters = await attemptCatalog(catalogUrl, info.title, 'wap', debug, {
       allowDirectSource: true,
+      signal: options.signal,
     });
     if (
       chapters.length === 0 ||
@@ -894,7 +924,9 @@ export const bookshukuSource: BookSource = {
         [catalogUrl, 'wapRetry'],
         [desktopUrl, 'desktop'],
       ] as const) {
-        const candidate = await attemptCatalog(url, info.title, label, debug);
+        const candidate = await attemptCatalog(url, info.title, label, debug, {
+          signal: options.signal,
+        });
         chapters = pickBetterCatalog(chapters, candidate);
       }
     }

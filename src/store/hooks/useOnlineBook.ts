@@ -1,3 +1,8 @@
+import {
+  abortable,
+  createSharedRequestPool,
+  throwIfAborted,
+} from '../../utils/abort';
 /**
  * 网络书源相关 hooks：添加在线书、按需抓取并缓存章节正文。
  */
@@ -75,8 +80,22 @@ const BOOK_IMPORT_TIMEOUT_MS = 45000;
 const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // 阅读器后台预取与用户主动切章可能同时命中同一章。按章节合并在途请求，
 // 避免重复占用书源连接；前台切章会直接等待已经开始的预取结果。
-const chapterContentRequests = new Map<string, Promise<Chapter | null>>();
-const chapterPageRequests = new Map<string, Promise<Chapter | null>>();
+type ChapterRequests = ReturnType<
+  typeof createSharedRequestPool<Chapter | null>
+>;
+const chapterContentRequests = new WeakMap<LibraryStore, ChapterRequests>();
+const chapterPageRequests = new WeakMap<LibraryStore, ChapterRequests>();
+function chapterRequests(
+  pools: WeakMap<LibraryStore, ChapterRequests>,
+  store: LibraryStore,
+) {
+  let pool = pools.get(store);
+  if (!pool) {
+    pool = createSharedRequestPool<Chapter | null>();
+    pools.set(store, pool);
+  }
+  return pool;
+}
 
 function scheduleCache(bookId: string, chapters: Chapter[]) {
   const existing = cacheTimers.get(bookId);
@@ -211,12 +230,13 @@ function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
   message: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(message)), ms);
   });
-  return Promise.race([promise, timeout]).finally(() => {
+  return abortable(Promise.race([promise, timeout]), signal).finally(() => {
     if (timer) clearTimeout(timer);
   });
 }
@@ -488,6 +508,7 @@ export const useAddRecognizedBook = () => {
  */
 interface EnsureChapterOptions {
   background?: boolean;
+  signal?: AbortSignal;
 }
 
 export const useEnsureChapterContent = () => {
@@ -498,6 +519,7 @@ export const useEnsureChapterContent = () => {
     index: number,
     options: EnsureChapterOptions = {},
   ): Promise<Chapter | null> => {
+    throwIfAborted(options.signal);
     const startedAt = Date.now();
     let chapters = store.get(chaptersAtom)[bookId];
     let chapter = chapters?.[index];
@@ -528,286 +550,288 @@ export const useEnsureChapterContent = () => {
     const bookSource = book.source;
 
     const requestKey = `${bookId}:${chapter.id}`;
-    const existingRequest = chapterContentRequests.get(requestKey);
-    if (existingRequest) {
-      console.info('[useOnlineBook] ensure join in-flight request', {
-        bookId,
-        index,
-        title: chapter.title,
-        background: !!options.background,
-      });
-      return existingRequest;
-    }
+    return chapterRequests(chapterContentRequests, store)(
+      requestKey,
+      options.signal,
+      async signal => {
+        throwIfAborted(signal);
+        // 注册书源（bookshuku/mingzw…）走 fetch 解析；浏览器识别源（source 为站点 host、
+        // 无注册书源）走隐藏 WebView 取渲染后正文。
+        const source = getSourceById(bookSource.name);
+        let content: string;
+        let parsedMeta: Pick<
+          ReturnType<typeof unpackChapterContent>,
+          'nextPageUrl' | 'complete' | 'trustedShort' | 'loadedPageUrls'
+        > = {};
+        if (source) {
+          const needsCatalogRefresh =
+            source.id === 'bookshuku' &&
+            chapters &&
+            isBadBookshukuCatalog(source.id, chapters);
+          if (needsCatalogRefresh) {
+            console.info('[useOnlineBook] refresh stale catalog start', {
+              bookId,
+              index,
+              oldCount: chapters.length,
+            });
+            const metas = await source.parseCatalog(
+              {
+                sourceBookId: source.extractId(bookSource.bookUrl) ?? '',
+                title: book.title,
+                author: book.author,
+                catalogUrl: bookSource.bookUrl,
+              },
+              { signal },
+            );
+            throwIfAborted(signal);
+            const requestedChapterId = chapter.id;
+            const existingForRepair =
+              store.get(chaptersAtom)[bookId] ?? chapters;
+            if (
+              !isSafeBookshukuCatalogReplacement(
+                source.id,
+                existingForRepair,
+                metas.map(meta => ({
+                  title: meta.title,
+                  sourceUrl: meta.url,
+                })),
+              )
+            ) {
+              // 临时空响应或半截目录不能覆盖本地数据，否则会永久丢失续读与书签引用。
+              throw new Error(
+                '书源返回的目录仍不完整，已保留本地目录和阅读数据',
+              );
+            }
+            const latestBook =
+              store.get(booksAtom).find(item => item.id === bookId) ?? book;
+            const repaired = repairCatalogPreservingIdentity(
+              bookId,
+              existingForRepair,
+              metas,
+              cached => isCachedOnlineChapterUsable(cached, source.id),
+            );
+            const refreshed = repaired.chapters;
+            const previousHistory = store.get(readingHistoryAtom)[bookId];
+            const migratedReferences = migrateCatalogReferences(
+              bookId,
+              latestBook.currentChapterId,
+              previousHistory,
+              store.get(bookmarksAtom)[bookId] ?? [],
+              refreshed,
+              repaired.chapterIdMap,
+            );
+            const repairedProgress = progressAfterCatalogRepair(
+              latestBook,
+              existingForRepair,
+              refreshed,
+              previousHistory,
+              repaired.chapterIdMap,
+            );
+            const migratedRequestedChapterId =
+              repaired.chapterIdMap.get(requestedChapterId);
+            const migratedRequestedChapter = migratedRequestedChapterId
+              ? refreshed.find(item => item.id === migratedRequestedChapterId)
+              : undefined;
+            const readerTargetsBook = store.get(selectedBookIdAtom) === bookId;
+            const migratedReaderSelection = migrateReaderSelection(
+              existingForRepair,
+              refreshed,
+              readerTargetsBook ? store.get(currentChapterIndexAtom) : null,
+              migratedReferences.currentChapterId,
+              repaired.chapterIdMap,
+            );
 
-    const request = (async (): Promise<Chapter | null> => {
-      // 注册书源（bookshuku/mingzw…）走 fetch 解析；浏览器识别源（source 为站点 host、
-      // 无注册书源）走隐藏 WebView 取渲染后正文。
-      const source = getSourceById(bookSource.name);
-      let content: string;
-      let parsedMeta: Pick<
-        ReturnType<typeof unpackChapterContent>,
-        'nextPageUrl' | 'complete' | 'trustedShort' | 'loadedPageUrls'
-      > = {};
-      if (source) {
-        const needsCatalogRefresh =
-          source.id === 'bookshuku' &&
-          chapters &&
-          isBadBookshukuCatalog(source.id, chapters);
-        if (needsCatalogRefresh) {
-          console.info('[useOnlineBook] refresh stale catalog start', {
+            // 目录和所有 chapterId 引用同步迁移；消失的旧章不按数组下标猜测，避免串章。
+            store.set(chaptersAtom, prev => ({ ...prev, [bookId]: refreshed }));
+            if (readerTargetsBook) {
+              // Reader 仍持有旧数组索引；必须与目录替换同批迁移，否则旧 index=0
+              // 会从“第690章”静默变成完整目录的“第1章”。
+              store.set(
+                currentChapterIndexAtom,
+                migratedReaderSelection.chapterIndex,
+              );
+              store.set(
+                currentChapterContentAtom,
+                migratedReaderSelection.chapterContent,
+              );
+            }
+            store.set(readingHistoryAtom, prev => {
+              const next = { ...prev };
+              if (migratedReferences.history) {
+                next[bookId] = migratedReferences.history;
+              } else {
+                delete next[bookId];
+              }
+              return next;
+            });
+            store.set(bookmarksAtom, prev => {
+              const next = { ...prev };
+              if (migratedReferences.bookmarks.length > 0) {
+                next[bookId] = migratedReferences.bookmarks;
+              } else {
+                delete next[bookId];
+              }
+              return next;
+            });
+            store.set(booksAtom, prev =>
+              prev.map(b =>
+                b.id === bookId
+                  ? {
+                      ...b,
+                      currentChapterId: migratedReferences.currentChapterId,
+                      progress: repairedProgress,
+                      totalChapters: refreshed.length,
+                      updatedAt: Date.now(),
+                    }
+                  : b,
+              ),
+            );
+            saveBookChapters(bookId, refreshed).catch(error => {
+              console.warn(
+                '[useOnlineBook] refresh stale catalog failed',
+                error,
+              );
+            });
+            console.info('[useOnlineBook] refresh stale catalog done', {
+              bookId,
+              oldCount: existingForRepair.length,
+              newCount: refreshed.length,
+              ms: Date.now() - startedAt,
+            });
+            chapters = refreshed;
+            if (!migratedRequestedChapter?.sourceUrl) {
+              return migratedRequestedChapter ?? null;
+            }
+            chapter = migratedRequestedChapter;
+          }
+          console.info('[useOnlineBook] parse chapter start', {
             bookId,
             index,
-            oldCount: chapters.length,
+            url: chapter.sourceUrl,
           });
-          const metas = await source.parseCatalog({
-            sourceBookId: source.extractId(bookSource.bookUrl) ?? '',
-            title: book.title,
-            author: book.author,
-            catalogUrl: bookSource.bookUrl,
-          });
-          const requestedChapterId = chapter.id;
-          const existingForRepair = store.get(chaptersAtom)[bookId] ?? chapters;
-          if (
-            !isSafeBookshukuCatalogReplacement(
-              source.id,
-              existingForRepair,
-              metas.map(meta => ({
-                title: meta.title,
-                sourceUrl: meta.url,
-              })),
-            )
-          ) {
-            // 临时空响应或半截目录不能覆盖本地数据，否则会永久丢失续读与书签引用。
-            throw new Error('书源返回的目录仍不完整，已保留本地目录和阅读数据');
-          }
-          const latestBook =
-            store.get(booksAtom).find(item => item.id === bookId) ?? book;
-          const repaired = repairCatalogPreservingIdentity(
-            bookId,
-            existingForRepair,
-            metas,
-            cached => isCachedOnlineChapterUsable(cached, source.id),
-          );
-          const refreshed = repaired.chapters;
-          const previousHistory = store.get(readingHistoryAtom)[bookId];
-          const migratedReferences = migrateCatalogReferences(
-            bookId,
-            latestBook.currentChapterId,
-            previousHistory,
-            store.get(bookmarksAtom)[bookId] ?? [],
-            refreshed,
-            repaired.chapterIdMap,
-          );
-          const repairedProgress = progressAfterCatalogRepair(
-            latestBook,
-            existingForRepair,
-            refreshed,
-            previousHistory,
-            repaired.chapterIdMap,
-          );
-          const migratedRequestedChapterId =
-            repaired.chapterIdMap.get(requestedChapterId);
-          const migratedRequestedChapter = migratedRequestedChapterId
-            ? refreshed.find(item => item.id === migratedRequestedChapterId)
-            : undefined;
-          const readerTargetsBook = store.get(selectedBookIdAtom) === bookId;
-          const migratedReaderSelection = migrateReaderSelection(
-            existingForRepair,
-            refreshed,
-            readerTargetsBook ? store.get(currentChapterIndexAtom) : null,
-            migratedReferences.currentChapterId,
-            repaired.chapterIdMap,
-          );
-
-          // 目录和所有 chapterId 引用同步迁移；消失的旧章不按数组下标猜测，避免串章。
-          store.set(chaptersAtom, prev => ({ ...prev, [bookId]: refreshed }));
-          if (readerTargetsBook) {
-            // Reader 仍持有旧数组索引；必须与目录替换同批迁移，否则旧 index=0
-            // 会从“第690章”静默变成完整目录的“第1章”。
-            store.set(
-              currentChapterIndexAtom,
-              migratedReaderSelection.chapterIndex,
-            );
-            store.set(
-              currentChapterContentAtom,
-              migratedReaderSelection.chapterContent,
-            );
-          }
-          store.set(readingHistoryAtom, prev => {
-            const next = { ...prev };
-            if (migratedReferences.history) {
-              next[bookId] = migratedReferences.history;
-            } else {
-              delete next[bookId];
-            }
-            return next;
-          });
-          store.set(bookmarksAtom, prev => {
-            const next = { ...prev };
-            if (migratedReferences.bookmarks.length > 0) {
-              next[bookId] = migratedReferences.bookmarks;
-            } else {
-              delete next[bookId];
-            }
-            return next;
-          });
-          store.set(booksAtom, prev =>
-            prev.map(b =>
-              b.id === bookId
-                ? {
-                    ...b,
-                    currentChapterId: migratedReferences.currentChapterId,
-                    progress: repairedProgress,
-                    totalChapters: refreshed.length,
-                    updatedAt: Date.now(),
-                  }
-                : b,
+          const sourceUrl = chapter.sourceUrl;
+          if (!sourceUrl) return chapter;
+          const parsed = unpackChapterContent(
+            await withTimeout(
+              source.parseChapterContent(sourceUrl, {
+                priority: options.background ? 'low' : 'high',
+                signal,
+              }),
+              ENSURE_CHAPTER_TIMEOUT_MS,
+              `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+              signal,
             ),
           );
-          saveBookChapters(bookId, refreshed).catch(error => {
-            console.warn('[useOnlineBook] refresh stale catalog failed', error);
-          });
-          console.info('[useOnlineBook] refresh stale catalog done', {
-            bookId,
-            oldCount: existingForRepair.length,
-            newCount: refreshed.length,
-            ms: Date.now() - startedAt,
-          });
-          chapters = refreshed;
-          if (!migratedRequestedChapter?.sourceUrl) {
-            return migratedRequestedChapter ?? null;
+          content = parsed.content;
+          if (
+            isInvalidOnlineChapterContent(content, {
+              trustedShort: parsed.trustedShort,
+            })
+          ) {
+            throw new Error('书源返回正文不完整，未写入章节缓存');
           }
-          chapter = migratedRequestedChapter;
-        }
-        console.info('[useOnlineBook] parse chapter start', {
-          bookId,
-          index,
-          url: chapter.sourceUrl,
-        });
-        const sourceUrl = chapter.sourceUrl;
-        if (!sourceUrl) return chapter;
-        const parsed = unpackChapterContent(
-          await withTimeout(
-            source.parseChapterContent(sourceUrl, {
+          parsedMeta = {
+            nextPageUrl: parsed.nextPageUrl,
+            complete: parsed.complete,
+            trustedShort: parsed.trustedShort,
+            loadedPageUrls: parsed.loadedPageUrls,
+          };
+          chapter = {
+            ...chapter,
+            title: resolveChapterTitle(chapter, parsed.title, content),
+          };
+        } else {
+          const sourceUrl = chapter.sourceUrl;
+          if (!sourceUrl) return chapter;
+          const rendered = await withTimeout(
+            fetchRenderedChapterPage(sourceUrl, {
               priority: options.background ? 'low' : 'high',
+              signal,
             }),
             ENSURE_CHAPTER_TIMEOUT_MS,
             `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-          ),
-        );
-        content = parsed.content;
-        if (
-          isInvalidOnlineChapterContent(content, {
-            trustedShort: parsed.trustedShort,
-          })
-        ) {
-          throw new Error('书源返回正文不完整，未写入章节缓存');
+            signal,
+          );
+          content = cleanRenderedText(rendered.content, chapter.title);
+          if (isInvalidOnlineChapterContent(content)) {
+            throw new Error('网页返回正文不完整，未写入章节缓存');
+          }
+          chapter = {
+            ...chapter,
+            title: resolveChapterTitle(chapter, undefined, content),
+          };
+          // 站点把一章拆成多个网页子页时，这里一次性读完再入库，让阅读器拿到完整
+          // 章节，而不是读到章尾才现拉下一页。中途失败保留 nextPageUrl 交给续载兜底。
+          const chapterTitle = chapter.title;
+          const merged = await collectChapterPages({
+            signal,
+            firstPageUrl: chapter.sourceUrl,
+            firstContent: content,
+            firstNextPageUrl: rendered.nextPageUrl,
+            fetchPage: pageUrl =>
+              withTimeout(
+                fetchRenderedChapterPage(pageUrl, {
+                  priority: options.background ? 'low' : 'high',
+                  signal,
+                }),
+                ENSURE_CHAPTER_TIMEOUT_MS,
+                `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+                signal,
+              ),
+            cleanPage: raw => cleanRenderedText(raw, chapterTitle),
+            onError: (pageUrl, error) => {
+              console.warn('[useOnlineBook] merge chapter page failed', {
+                bookId,
+                index,
+                url: pageUrl,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            },
+          });
+          content = merged.content;
+          parsedMeta = {
+            nextPageUrl: merged.nextPageUrl,
+            loadedPageUrls: merged.loadedPageUrls,
+            complete: !merged.nextPageUrl,
+          };
         }
-        parsedMeta = {
-          nextPageUrl: parsed.nextPageUrl,
-          complete: parsed.complete,
-          trustedShort: parsed.trustedShort,
-          loadedPageUrls: parsed.loadedPageUrls,
-        };
-        chapter = {
+
+        throwIfAborted(signal);
+        const filled: Chapter = {
           ...chapter,
-          title: resolveChapterTitle(chapter, parsed.title, content),
+          content,
+          wordCount: content.length,
+          contentVersion: ONLINE_CONTENT_VERSION,
+          browserContentVersion: source ? undefined : BROWSER_CONTENT_VERSION,
+          contentTrustedShort: parsedMeta.trustedShort,
+          loadedPageUrls: parsedMeta.loadedPageUrls,
+          nextPageUrl: parsedMeta.nextPageUrl,
+          contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
         };
-      } else {
-        const sourceUrl = chapter.sourceUrl;
-        if (!sourceUrl) return chapter;
-        const rendered = await withTimeout(
-          fetchRenderedChapterPage(sourceUrl, {
-            priority: options.background ? 'low' : 'high',
-          }),
-          ENSURE_CHAPTER_TIMEOUT_MS,
-          `章节加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-        );
-        content = cleanRenderedText(rendered.content, chapter.title);
-        if (isInvalidOnlineChapterContent(content)) {
-          throw new Error('网页返回正文不完整，未写入章节缓存');
-        }
-        chapter = {
-          ...chapter,
-          title: resolveChapterTitle(chapter, undefined, content),
-        };
-        // 站点把一章拆成多个网页子页时，这里一次性读完再入库，让阅读器拿到完整
-        // 章节，而不是读到章尾才现拉下一页。中途失败保留 nextPageUrl 交给续载兜底。
-        const chapterTitle = chapter.title;
-        const merged = await collectChapterPages({
-          firstPageUrl: chapter.sourceUrl,
-          firstContent: content,
-          firstNextPageUrl: rendered.nextPageUrl,
-          fetchPage: pageUrl =>
-            withTimeout(
-              fetchRenderedChapterPage(pageUrl, {
-                priority: options.background ? 'low' : 'high',
-              }),
-              ENSURE_CHAPTER_TIMEOUT_MS,
-              `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-            ),
-          cleanPage: raw => cleanRenderedText(raw, chapterTitle),
-          onError: (pageUrl, error) => {
-            console.warn('[useOnlineBook] merge chapter page failed', {
-              bookId,
-              index,
-              url: pageUrl,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          },
+
+        let nextForBook: Chapter[] | undefined;
+        store.set(chaptersAtom, prev => {
+          const list = prev[bookId];
+          // 抓取期间列表可能被其它入口替换：以最新引用为准，按 id 精确回填。
+          if (!list) return prev;
+          const next = list.map(c => (c.id === filled.id ? filled : c));
+          nextForBook = next;
+          return { ...prev, [bookId]: next };
         });
-        content = merged.content;
-        parsedMeta = {
-          nextPageUrl: merged.nextPageUrl,
-          loadedPageUrls: merged.loadedPageUrls,
-          complete: !merged.nextPageUrl,
-        };
-      }
+        if (nextForBook) scheduleCache(bookId, nextForBook);
 
-      const filled: Chapter = {
-        ...chapter,
-        content,
-        wordCount: content.length,
-        contentVersion: ONLINE_CONTENT_VERSION,
-        browserContentVersion: source ? undefined : BROWSER_CONTENT_VERSION,
-        contentTrustedShort: parsedMeta.trustedShort,
-        loadedPageUrls: parsedMeta.loadedPageUrls,
-        nextPageUrl: parsedMeta.nextPageUrl,
-        contentComplete: parsedMeta.complete ?? !parsedMeta.nextPageUrl,
-      };
-
-      let nextForBook: Chapter[] | undefined;
-      store.set(chaptersAtom, prev => {
-        const list = prev[bookId];
-        // 抓取期间列表可能被其它入口替换：以最新引用为准，按 id 精确回填。
-        if (!list) return prev;
-        const next = list.map(c => (c.id === filled.id ? filled : c));
-        nextForBook = next;
-        return { ...prev, [bookId]: next };
-      });
-      if (nextForBook) scheduleCache(bookId, nextForBook);
-
-      console.info('[useOnlineBook] ensure done', {
-        bookId,
-        index,
-        title: filled.title,
-        ms: Date.now() - startedAt,
-        length: filled.content.length,
-        contentComplete: filled.contentComplete,
-        nextPageUrl: filled.nextPageUrl,
-      });
-      return filled;
-    })();
-
-    chapterContentRequests.set(requestKey, request);
-    try {
-      return await request;
-    } finally {
-      // 只清理由本次调用登记的 Promise，避免旧请求 finally 误删后来的重试。
-      if (chapterContentRequests.get(requestKey) === request) {
-        chapterContentRequests.delete(requestKey);
-      }
-    }
+        console.info('[useOnlineBook] ensure done', {
+          bookId,
+          index,
+          title: filled.title,
+          ms: Date.now() - startedAt,
+          length: filled.content.length,
+          contentComplete: filled.contentComplete,
+          nextPageUrl: filled.nextPageUrl,
+        });
+        return filled;
+      },
+    );
   };
 };
 
@@ -832,126 +856,126 @@ export const useLoadNextChapterPage = () => {
       return chapter ?? null;
 
     const requestKey = `${bookId}:${chapter.id}:${chapter.nextPageUrl}`;
-    const existingRequest = chapterPageRequests.get(requestKey);
-    if (existingRequest) return existingRequest;
+    return chapterRequests(chapterPageRequests, store)(
+      requestKey,
+      options.signal,
+      async signal => {
+        throwIfAborted(signal);
+        console.info('[useOnlineBook] load next page start', {
+          bookId,
+          index,
+          title: chapter.title,
+          url: chapter.nextPageUrl,
+          currentLength: chapter.content.length,
+        });
 
-    const request = (async (): Promise<Chapter | null> => {
-      console.info('[useOnlineBook] load next page start', {
-        bookId,
-        index,
-        title: chapter.title,
-        url: chapter.nextPageUrl,
-        currentLength: chapter.content.length,
-      });
+        const requestedPageUrl = chapter.nextPageUrl!;
+        // 逐页阅读也必须检查环路；记录随正文保存，重启后不能再次追加已经读过的子页。
+        const visited = new Set(
+          [chapter.sourceUrl, ...(chapter.loadedPageUrls ?? [])]
+            .filter((url): url is string => !!url)
+            .map(chapterPageIdentity),
+        );
+        const requestedIdentity = chapterPageIdentity(requestedPageUrl);
+        if (
+          !requestedIdentity ||
+          visited.has(requestedIdentity) ||
+          visited.size >= MAX_CHAPTER_PAGES
+        ) {
+          throw new Error('章节分页链接异常，已保留已读正文，请重试或更换书源');
+        }
+        visited.add(requestedIdentity);
+        const parsed: ReturnType<typeof unpackChapterContent> = source
+          ? unpackChapterContent(
+              await withTimeout(
+                source.parseChapterContent(requestedPageUrl, {
+                  priority: options.background ? 'low' : 'high',
+                  signal,
+                }),
+                ENSURE_CHAPTER_TIMEOUT_MS,
+                `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+                signal,
+              ),
+            )
+          : await (async (): Promise<
+              ReturnType<typeof unpackChapterContent>
+            > => {
+              const rendered = await withTimeout(
+                fetchRenderedChapterPage(requestedPageUrl, {
+                  priority: options.background ? 'low' : 'high',
+                  signal,
+                }),
+                ENSURE_CHAPTER_TIMEOUT_MS,
+                `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
+                signal,
+              );
+              return {
+                content: cleanRenderedText(rendered.content, chapter.title),
+                nextPageUrl: rendered.nextPageUrl,
+                complete: !rendered.nextPageUrl,
+              };
+            })();
+        if (
+          parsed.nextPageUrl &&
+          visited.has(chapterPageIdentity(parsed.nextPageUrl))
+        ) {
+          throw new Error('章节分页链接循环，已保留已读正文，请重试或更换书源');
+        }
+        const content = chapter.content
+          ? `${chapter.content}\n${parsed.content}`
+          : parsed.content;
+        // 此处是已校验章正文的续页，尾页可能只有一句话；不能再套整章的 200 字门槛。
+        // 仍拒绝空白和拦截/广告页，防止把网络错误标记为读完。
+        const invalidPage =
+          !parsed.content.trim() || isBlockedText(parsed.content);
+        if (invalidPage) {
+          throw new Error('书源返回分页正文不完整，未写入章节缓存');
+        }
+        throwIfAborted(signal);
+        const filled: Chapter = {
+          ...chapter,
+          title: resolveChapterTitle(chapter, parsed.title, content),
+          content,
+          wordCount: content.length,
+          contentVersion: ONLINE_CONTENT_VERSION,
+          browserContentVersion: source ? undefined : BROWSER_CONTENT_VERSION,
+          contentTrustedShort:
+            content.replace(/\s+/g, '').length < 200
+              ? !!chapter.contentTrustedShort && !!parsed.trustedShort
+              : undefined,
+          nextPageUrl: parsed.nextPageUrl,
+          loadedPageUrls: [
+            ...(chapter.loadedPageUrls ?? []),
+            requestedPageUrl,
+            ...(parsed.loadedPageUrls ?? []),
+          ],
+          contentComplete: parsed.complete ?? !parsed.nextPageUrl,
+        };
 
-      const requestedPageUrl = chapter.nextPageUrl!;
-      // 逐页阅读也必须检查环路；记录随正文保存，重启后不能再次追加已经读过的子页。
-      const visited = new Set(
-        [chapter.sourceUrl, ...(chapter.loadedPageUrls ?? [])]
-          .filter((url): url is string => !!url)
-          .map(chapterPageIdentity),
-      );
-      const requestedIdentity = chapterPageIdentity(requestedPageUrl);
-      if (
-        !requestedIdentity ||
-        visited.has(requestedIdentity) ||
-        visited.size >= MAX_CHAPTER_PAGES
-      ) {
-        throw new Error('章节分页链接异常，已保留已读正文，请重试或更换书源');
-      }
-      visited.add(requestedIdentity);
-      const parsed: ReturnType<typeof unpackChapterContent> = source
-        ? unpackChapterContent(
-            await withTimeout(
-              source.parseChapterContent(requestedPageUrl, {
-                priority: options.background ? 'low' : 'high',
-              }),
-              ENSURE_CHAPTER_TIMEOUT_MS,
-              `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-            ),
-          )
-        : await (async (): Promise<ReturnType<typeof unpackChapterContent>> => {
-            const rendered = await withTimeout(
-              fetchRenderedChapterPage(requestedPageUrl, {
-                priority: options.background ? 'low' : 'high',
-              }),
-              ENSURE_CHAPTER_TIMEOUT_MS,
-              `章节分页加载超时 ${ENSURE_CHAPTER_TIMEOUT_MS}ms`,
-            );
-            return {
-              content: cleanRenderedText(rendered.content, chapter.title),
-              nextPageUrl: rendered.nextPageUrl,
-              complete: !rendered.nextPageUrl,
-            };
-          })();
-      if (
-        parsed.nextPageUrl &&
-        visited.has(chapterPageIdentity(parsed.nextPageUrl))
-      ) {
-        throw new Error('章节分页链接循环，已保留已读正文，请重试或更换书源');
-      }
-      const content = chapter.content
-        ? `${chapter.content}\n${parsed.content}`
-        : parsed.content;
-      // 此处是已校验章正文的续页，尾页可能只有一句话；不能再套整章的 200 字门槛。
-      // 仍拒绝空白和拦截/广告页，防止把网络错误标记为读完。
-      const invalidPage =
-        !parsed.content.trim() || isBlockedText(parsed.content);
-      if (invalidPage) {
-        throw new Error('书源返回分页正文不完整，未写入章节缓存');
-      }
-      const filled: Chapter = {
-        ...chapter,
-        title: resolveChapterTitle(chapter, parsed.title, content),
-        content,
-        wordCount: content.length,
-        contentVersion: ONLINE_CONTENT_VERSION,
-        browserContentVersion: source ? undefined : BROWSER_CONTENT_VERSION,
-        contentTrustedShort:
-          content.replace(/\s+/g, '').length < 200
-            ? !!chapter.contentTrustedShort && !!parsed.trustedShort
-            : undefined,
-        nextPageUrl: parsed.nextPageUrl,
-        loadedPageUrls: [
-          ...(chapter.loadedPageUrls ?? []),
-          requestedPageUrl,
-          ...(parsed.loadedPageUrls ?? []),
-        ],
-        contentComplete: parsed.complete ?? !parsed.nextPageUrl,
-      };
+        let nextForBook: Chapter[] | undefined;
+        store.set(chaptersAtom, prev => {
+          const list = prev[bookId];
+          if (!list) return prev;
+          const latest = list.find(c => c.id === filled.id);
+          // 快速翻页可能在请求返回前已完成同一子页；只允许仍指向本次 URL 的请求落盘。
+          if (latest?.nextPageUrl !== requestedPageUrl) return prev;
+          const next = list.map(c => (c.id === filled.id ? filled : c));
+          nextForBook = next;
+          return { ...prev, [bookId]: next };
+        });
+        if (nextForBook) scheduleCache(bookId, nextForBook);
 
-      let nextForBook: Chapter[] | undefined;
-      store.set(chaptersAtom, prev => {
-        const list = prev[bookId];
-        if (!list) return prev;
-        const latest = list.find(c => c.id === filled.id);
-        // 快速翻页可能在请求返回前已完成同一子页；只允许仍指向本次 URL 的请求落盘。
-        if (latest?.nextPageUrl !== requestedPageUrl) return prev;
-        const next = list.map(c => (c.id === filled.id ? filled : c));
-        nextForBook = next;
-        return { ...prev, [bookId]: next };
-      });
-      if (nextForBook) scheduleCache(bookId, nextForBook);
-
-      console.info('[useOnlineBook] load next page done', {
-        bookId,
-        index,
-        ms: Date.now() - startedAt,
-        length: filled.content.length,
-        contentComplete: filled.contentComplete,
-        nextPageUrl: filled.nextPageUrl,
-      });
-      return filled;
-    })();
-
-    chapterPageRequests.set(requestKey, request);
-    try {
-      return await request;
-    } finally {
-      if (chapterPageRequests.get(requestKey) === request) {
-        chapterPageRequests.delete(requestKey);
-      }
-    }
+        console.info('[useOnlineBook] load next page done', {
+          bookId,
+          index,
+          ms: Date.now() - startedAt,
+          length: filled.content.length,
+          contentComplete: filled.contentComplete,
+          nextPageUrl: filled.nextPageUrl,
+        });
+        return filled;
+      },
+    );
   };
 };
 
@@ -1017,7 +1041,13 @@ export const useCacheWholeBook = () => {
       }
       try {
         let parsed = unpackChapterContent(
-          await source.parseChapterContent(ch.sourceUrl, { priority: 'low' }),
+          await abortable(
+            source.parseChapterContent(ch.sourceUrl, {
+              priority: 'low',
+              signal,
+            }),
+            signal,
+          ),
         );
         if (
           isInvalidOnlineChapterContent(parsed.content, {
@@ -1045,7 +1075,13 @@ export const useCacheWholeBook = () => {
           visited.add(identity);
           // 整本缓存需要完整章节；这里沿用分页元数据顺序抓取，阅读器按需加载不受影响。
           parsed = unpackChapterContent(
-            await source.parseChapterContent(nextPageUrl, { priority: 'low' }),
+            await abortable(
+              source.parseChapterContent(nextPageUrl, {
+                priority: 'low',
+                signal,
+              }),
+              signal,
+            ),
           );
           // 尾页可能只有几十字；整章首页已过字数校验，子页只拦空白和广告/拦截文本。
           if (!parsed.content.trim() || isBlockedText(parsed.content)) {
@@ -1089,6 +1125,10 @@ export const useCacheWholeBook = () => {
         onProgress?.({ done, total });
         if (sinceFlush >= FLUSH_EVERY) await flush();
       } catch {
+        if (signal?.aborted) {
+          if (sinceFlush > 0) await flush();
+          return { done, total, cancelled: true };
+        }
         // 单章失败静默跳过，继续抓下一章。
       }
     }
@@ -1106,23 +1146,32 @@ export const useCacheWholeBook = () => {
 export const useCheckBookUpdate = () => {
   const store = useStore();
 
-  return async (bookId: string): Promise<number> => {
+  return async (bookId: string, signal?: AbortSignal): Promise<number> => {
+    throwIfAborted(signal);
     const book = store.get(booksAtom).find(b => b.id === bookId);
     const source = book?.source ? getSourceById(book.source.name) : null;
     if (!source || !book?.source) return 0;
     const sourceBookId = source.extractId(book.source.bookUrl) ?? '';
 
-    const metas = await source.parseCatalog({
-      sourceBookId,
-      title: book.title,
-      author: book.author,
-      catalogUrl: book.source.bookUrl,
-    });
+    const metas = await abortable(
+      source.parseCatalog(
+        {
+          sourceBookId,
+          title: book.title,
+          author: book.author,
+          catalogUrl: book.source.bookUrl,
+        },
+        { signal },
+      ),
+      signal,
+    );
+    throwIfAborted(signal);
     let existing = store.get(chaptersAtom)[bookId];
     if (!existing) {
       // 章节正文按书懒加载。追更可能发生在用户尚未打开书籍时，必须先恢复旧目录，
       // 否则会把远端整本目录误判成新增章节，并覆盖本地已缓存正文。
-      const loaded = (await loadBookChapters(bookId)) ?? [];
+      const loaded = (await loadBookChapters(bookId, signal)) ?? [];
+      throwIfAborted(signal);
       store.set(chaptersAtom, prev =>
         prev[bookId] ? prev : { ...prev, [bookId]: loaded },
       );

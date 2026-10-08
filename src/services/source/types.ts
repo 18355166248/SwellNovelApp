@@ -37,6 +37,7 @@ export type ParsedChapterContent =
     };
 
 export interface ParseChapterOptions {
+  signal?: AbortSignal;
   /** 当前阅读正文用 high，后台目录标题补全用 low，避免后台任务阻塞用户点击。 */
   priority?: 'high' | 'normal' | 'low';
 }
@@ -62,7 +63,10 @@ export interface BookSource {
   /** 解析详情页（也兼容传入目录页/正文页 URL，只要能取到书籍 id）。 */
   parseBookInfo(url: string): Promise<ParsedBookInfo>;
   /** 解析完整目录，返回按顺序排列的章节列表。 */
-  parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]>;
+  parseCatalog(
+    info: ParsedBookInfo,
+    options?: ParseChapterOptions,
+  ): Promise<ParsedChapter[]>;
   /** 解析单章正文，返回纯文本（段落以换行分隔），可附带页面真实章节名。 */
   parseChapterContent(
     url: string,

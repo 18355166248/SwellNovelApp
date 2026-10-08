@@ -1,3 +1,4 @@
+import { abortable, forwardAbort, throwIfAborted } from '../../utils/abort';
 /// <reference lib="dom" />
 /**
  * 取 HTML（Web / react-native-web）。
@@ -33,15 +34,20 @@ const TIMEOUT_MS = 15000;
 export async function fetchHtml(
   url: string,
   timeoutMs: number = TIMEOUT_MS,
+  options: { signal?: AbortSignal } = {},
 ): Promise<string> {
+  throwIfAborted(options.signal);
   const controller = new AbortController();
+  const unlink = forwardAbort(options.signal, controller);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(toProxyUrl(url), { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const buf = await res.arrayBuffer();
+    const buf = await abortable(res.arrayBuffer(), controller.signal);
+    throwIfAborted(controller.signal);
     return decodeBytes(new Uint8Array(buf));
   } finally {
     clearTimeout(timer);
+    unlink();
   }
 }

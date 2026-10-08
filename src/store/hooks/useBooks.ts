@@ -3,6 +3,7 @@
  */
 
 import { useEffect } from 'react';
+import { forwardAbort, isAbortError } from '../../utils/abort';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
   activeBooksAtom,
@@ -245,17 +246,21 @@ export const useSetChapters = () => {
 /**
  * 获取书籍的章节列表；内存中没有时从磁盘按需懒加载。
  */
-export const useBookChapters = (bookId: string | null) => {
+export const useBookChapters = (
+  bookId: string | null,
+  signal?: AbortSignal,
+) => {
   const [chaptersMap, setChaptersMap] = useAtom(chaptersAtom);
 
   useEffect(() => {
-    if (!bookId || chaptersMap[bookId]) {
+    if (!bookId || signal?.aborted || chaptersMap[bookId]) {
       return;
     }
-    let cancelled = false;
-    loadBookChapters(bookId)
+    const controller = new AbortController();
+    const unlink = forwardAbort(signal, controller);
+    loadBookChapters(bookId, controller.signal)
       .then(loaded => {
-        if (cancelled || !loaded) {
+        if (controller.signal.aborted || !loaded) {
           return;
         }
         // 已被其它入口填充时不覆盖，避免竞态。
@@ -264,12 +269,14 @@ export const useBookChapters = (bookId: string | null) => {
         );
       })
       .catch(error => {
-        console.warn('[useBookChapters] load chapters failed', error);
+        if (!isAbortError(error))
+          console.warn('[useBookChapters] load chapters failed', error);
       });
     return () => {
-      cancelled = true;
+      controller.abort();
+      unlink();
     };
-  }, [bookId, chaptersMap, setChaptersMap]);
+  }, [bookId, chaptersMap, setChaptersMap, signal]);
 
   if (!bookId) return [];
   return chaptersMap[bookId] || [];

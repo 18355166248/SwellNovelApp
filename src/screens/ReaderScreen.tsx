@@ -1,3 +1,5 @@
+import { useScreenTaskSignal } from '../store/hooks/useScreenTaskSignal';
+import { forwardAbort, isAbortError } from '../utils/abort';
 import React from 'react';
 import {
   View,
@@ -427,6 +429,8 @@ export default function ReaderScreen() {
   const progressHintBottom =
     Platform.OS === 'web' ? 10 : Math.max(insets.bottom, 10);
   const { bookId, openDrawer } = route.params;
+  const readerFocused = useIsFocused();
+  const taskSignal = useScreenTaskSignal(navigation, bookId, readerFocused);
   // 从详情页“仅查看目录”进入时，先保持预览态；真正选章或关闭目录开始阅读后，
   // 才允许记录阅读时长与进度，避免一次目录浏览污染续读位置和阅读统计。
   const [readingEngaged, setReadingEngaged] = React.useState(!openDrawer);
@@ -437,7 +441,7 @@ export default function ReaderScreen() {
   const book = books.find(b => b.id === bookId);
   const isOnline = !!book?.source;
   const selectBook = useSelectBook();
-  const chapters = useBookChapters(bookId);
+  const chapters = useBookChapters(bookId, taskSignal);
   const chapterIndex = useCurrentChapterIndex() ?? 0;
   const content = useCurrentChapterContent();
   const openChapter = useOpenChapter();
@@ -500,8 +504,6 @@ export default function ReaderScreen() {
   React.useEffect(() => {
     addReadingTimeRef.current = addReadingTime;
   });
-  const readerFocused = useIsFocused();
-
   const bookmarks = useBookmarks(bookId);
   const toggleBookmark = useToggleBookmark();
   const saveExcerpt = useSaveExcerpt();
@@ -882,6 +884,8 @@ export default function ReaderScreen() {
   const drawerVisibleKey = drawerVisibleIndices.join(',');
   React.useEffect(() => {
     if (
+      !readerFocused ||
+      taskSignal.aborted ||
       !drawerOpen ||
       drawerTab !== 'toc' ||
       book?.source?.name !== 'bookshuku' ||
@@ -890,6 +894,8 @@ export default function ReaderScreen() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
+    const unlink = forwardAbort(taskSignal, controller);
     const targets = drawerVisibleIndices
       .map(idx => ({ idx, chapter: chapters[idx] }))
       .filter(
@@ -906,12 +912,15 @@ export default function ReaderScreen() {
       resolvingDrawerTitlesRef.current.add(chapter.id),
     );
     const timer = setTimeout(() => {
-      if (cancelled) return;
+      if (cancelled || controller.signal.aborted) return;
       (async () => {
         for (const { idx, chapter } of targets) {
-          if (cancelled) return;
+          if (cancelled || controller.signal.aborted) return;
           try {
-            await ensureRef.current(bookId, idx, { background: true });
+            await ensureRef.current(bookId, idx, {
+              background: true,
+              signal: controller.signal,
+            });
           } catch (error) {
             console.warn('[ReaderScreen] resolve drawer title failed', {
               bookId,
@@ -927,6 +936,8 @@ export default function ReaderScreen() {
     }, 600);
     return () => {
       cancelled = true;
+      controller.abort();
+      unlink();
       clearTimeout(timer);
     };
   }, [
@@ -937,6 +948,8 @@ export default function ReaderScreen() {
     drawerTab,
     drawerVisibleIndices,
     drawerVisibleKey,
+    readerFocused,
+    taskSignal,
   ]);
 
   const chapter = chapters[chapterIndex];
@@ -1415,7 +1428,7 @@ export default function ReaderScreen() {
   // 在线书：当前章正文尚未抓取时按需拉取并缓存，复用现成的 loading / error 态。
   // 本地书章节已带正文，直接置为 ready。effect 以 chapter.id 为键，换章会自动重跑。
   React.useEffect(() => {
-    if (!chapter) return;
+    if (!readerFocused || taskSignal.aborted || !chapter) return;
     const tracker = contentRequestTrackerRef.current!;
     const hasUsableCachedContent = hasUsableChapterContent(
       chapter,
@@ -1431,13 +1444,20 @@ export default function ReaderScreen() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
+    const unlink = forwardAbort(taskSignal, controller);
     const requestToken = tracker.start();
     setLoadErrorKind('chapter');
     setStatus('loading');
     ensureRef
-      .current(bookId, chapterIndex)
+      .current(bookId, chapterIndex, { signal: controller.signal })
       .then(filled => {
-        if (cancelled || !tracker.isLatest(requestToken)) return;
+        if (
+          cancelled ||
+          controller.signal.aborted ||
+          !tracker.isLatest(requestToken)
+        )
+          return;
         if (filled && filled.content) {
           setStatus('ready');
         } else {
@@ -1445,6 +1465,7 @@ export default function ReaderScreen() {
         }
       })
       .catch(error => {
+        if (controller.signal.aborted || isAbortError(error)) return;
         console.warn('[ReaderScreen] ensure chapter failed', {
           bookId,
           chapterIndex,
@@ -1455,6 +1476,8 @@ export default function ReaderScreen() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
+      unlink();
       tracker.reset();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1467,20 +1490,34 @@ export default function ReaderScreen() {
     chapterIndex,
     contentReloadKey,
     isOnline,
+    readerFocused,
+    taskSignal,
   ]);
 
   React.useEffect(() => {
-    if (status !== 'ready' || !isOnline || !chapter) return;
+    if (
+      !readerFocused ||
+      taskSignal.aborted ||
+      status !== 'ready' ||
+      !isOnline ||
+      !chapter
+    )
+      return;
     let cancelled = false;
+    const controller = new AbortController();
+    const unlink = forwardAbort(taskSignal, controller);
     // 先让当前章完成首屏渲染，再顺序低优先级抓后续三章；串行可避免后台缓存
     // 抢占书源/WebView，用户主动切章时则由请求合并逻辑直接复用在途结果。
     const timer = setTimeout(() => {
       (async () => {
         const indices = getForwardPrefetchIndices(chapterIndex, total);
         for (const index of indices) {
-          if (cancelled) return;
+          if (cancelled || controller.signal.aborted) return;
           try {
-            await ensureRef.current(bookId, index, { background: true });
+            await ensureRef.current(bookId, index, {
+              background: true,
+              signal: controller.signal,
+            });
           } catch (error) {
             console.info('[ReaderScreen] background prefetch skipped', {
               bookId,
@@ -1493,12 +1530,29 @@ export default function ReaderScreen() {
     }, 300);
     return () => {
       cancelled = true;
+      controller.abort();
+      unlink();
       clearTimeout(timer);
     };
-  }, [bookId, chapter, chapterIndex, isOnline, status, total]);
+  }, [
+    bookId,
+    chapter,
+    chapterIndex,
+    isOnline,
+    status,
+    total,
+    readerFocused,
+    taskSignal,
+  ]);
 
   React.useEffect(() => {
-    if (status !== 'ready' || settings.pageMode !== 'page') return;
+    if (
+      !readerFocused ||
+      taskSignal.aborted ||
+      status !== 'ready' ||
+      settings.pageMode !== 'page'
+    )
+      return;
     const neighborIndices = [
       ...(chapterIndex > 0 ? [chapterIndex - 1] : []),
       ...getForwardPrefetchIndices(chapterIndex, total),
@@ -1514,6 +1568,7 @@ export default function ReaderScreen() {
     // 用户一开始拖动就推进 epoch，后续分片会立即停止，不再阻塞当前页码回调。
     const preparationEpoch = ++pagePreparationEpochRef.current;
     const shouldCancel = () =>
+      taskSignal.aborted ||
       pagePreparationEpochRef.current !== preparationEpoch;
     let task:
       | ReturnType<typeof InteractionManager.runAfterInteractions>
@@ -1601,6 +1656,8 @@ export default function ReaderScreen() {
       task?.cancel();
     };
   }, [
+    readerFocused,
+    taskSignal,
     bodyFont,
     book?.source?.name,
     chapterIndex,
@@ -1704,7 +1761,8 @@ export default function ReaderScreen() {
   );
 
   const loadCurrentChapterNextPage = React.useCallback(() => {
-    if (!chapter?.nextPageUrl) return false;
+    if (!readerFocused || taskSignal.aborted || !chapter?.nextPageUrl)
+      return false;
     if (status === 'loading' || chapterPageLoadInFlightRef.current) return true;
     chapterPageLoadInFlightRef.current = true;
     activePageSessionRef.current = null;
@@ -1722,9 +1780,9 @@ export default function ReaderScreen() {
     pendingScrollPageRef.current = null;
     // 分页章续载只追加正文，不切换目录章节；加载完成后用旧正文末尾偏移定位到新分页开头。
     loadNextPageRef
-      .current(bookId, chapterIndex)
+      .current(bookId, chapterIndex, { signal: taskSignal })
       .then(filled => {
-        if (!tracker.isLatest(requestToken)) return;
+        if (taskSignal.aborted || !tracker.isLatest(requestToken)) return;
         if (filled?.content) {
           currentOffsetRef.current = resumePosition;
           pendingScrollPositionRef.current = resumePosition;
@@ -1734,6 +1792,7 @@ export default function ReaderScreen() {
         }
       })
       .catch(error => {
+        if (taskSignal.aborted || isAbortError(error)) return;
         console.warn('[ReaderScreen] load chapter next page failed', {
           bookId,
           chapterIndex,
@@ -1748,6 +1807,8 @@ export default function ReaderScreen() {
       });
     return true;
   }, [
+    readerFocused,
+    taskSignal,
     bookId,
     chapter?.nextPageUrl,
     chapter?.title,
@@ -2877,6 +2938,24 @@ export default function ReaderScreen() {
           <Text style={{ color: display.theme.sub, fontSize: 13 }}>
             正在准备章节…
           </Text>
+          {/* 加载时正文点击区和工具栏都未显示，必须提供独立返回入口，避免慢书源困住用户。 */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="取消加载并返回"
+            onPress={handleBack}
+            style={[
+              styles.retryBtn,
+              {
+                borderWidth: 1,
+                borderColor: display.theme.hair,
+                marginTop: 18,
+              },
+            ]}
+          >
+            <Text style={{ color: display.theme.text, fontSize: 13 }}>
+              取消加载并返回
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -2963,6 +3042,19 @@ export default function ReaderScreen() {
             >
               <Text style={{ color: display.theme.text, fontSize: 13 }}>
                 查看目录
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="加载失败返回上一页"
+              onPress={handleBack}
+              style={[
+                styles.retryBtn,
+                { borderWidth: 1, borderColor: display.theme.hair },
+              ]}
+            >
+              <Text style={{ color: display.theme.text, fontSize: 13 }}>
+                返回
               </Text>
             </Pressable>
           </View>

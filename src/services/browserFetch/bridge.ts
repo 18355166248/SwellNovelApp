@@ -1,3 +1,4 @@
+import { abortError, throwIfAborted } from '../../utils/abort';
 /**
  * 隐藏 WebView 取正文桥（逻辑层，平台无关，无 react-native-webview 依赖）。
  *
@@ -10,13 +11,15 @@
 
 import { HEADING_RE } from '../source/contentGuards';
 import { stripContentNoise } from '../source/contentNoise';
-import { devInfo } from '../../utils/devLog';
 
 /** 抽正文脚本回传的消息类型。 */
 export const CONTENT_MESSAGE = 'nvl-content';
 export type BrowserFetchPriority = 'high' | 'normal' | 'low';
 
 export interface FetchJob {
+  signal?: AbortSignal;
+  cancelled?: boolean;
+  cancel?: () => void;
   id: string;
   url: string;
   script: (id: string) => string;
@@ -29,6 +32,7 @@ export interface FetchJob {
 }
 
 export interface BrowserFetchOptions {
+  signal?: AbortSignal;
   timeout?: number;
   waitMs?: number;
   priority?: BrowserFetchPriority;
@@ -51,7 +55,10 @@ const buffer: FetchJob[] = []; // WebView 尚未挂载前的缓冲
 /** 由 WebViewFetcher 挂载时注册其入队函数；把挂载前缓冲的任务补投。 */
 export function registerBrowserFetcher(fn: Enqueue): void {
   enqueueImpl = fn;
-  while (buffer.length) fn(buffer.shift()!);
+  while (buffer.length) {
+    const job = buffer.shift()!;
+    if (!job.cancelled) fn(job);
+  }
 }
 
 export function unregisterBrowserFetcher(): void {
@@ -74,6 +81,7 @@ export function fetchRenderedContent(
     normalized.timeout ?? 25000,
     'WebView 取正文超时',
     normalized.priority ?? 'normal',
+    normalized.signal,
   );
 }
 
@@ -94,6 +102,7 @@ export async function fetchRenderedChapterPage(
     normalized.timeout ?? 25000,
     'WebView 取章节分页超时',
     normalized.priority ?? 'normal',
+    normalized.signal,
   );
   return parseRenderedChapterPagePayload(payload, url);
 }
@@ -155,6 +164,7 @@ export function fetchRenderedHtml(
     normalized.timeout ?? 45000,
     'WebView 取页面超时',
     normalized.priority ?? 'normal',
+    normalized.signal,
   );
 }
 
@@ -177,6 +187,7 @@ export function fetchWebViewHttpText(
     normalized.timeout ?? 45000,
     'WebView 网络请求超时',
     normalized.priority ?? 'normal',
+    normalized.signal,
   );
 }
 
@@ -187,14 +198,31 @@ function fetchRendered(
   timeout: number,
   timeoutMessage: string,
   priority: BrowserFetchPriority,
+  signal?: AbortSignal,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    throwIfAborted(signal);
     const id = `c${++seq}`;
+    let settled = false;
+    const finish = (error?: Error, value?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+      if (error) reject(error);
+      else resolve(value || '');
+    };
+    const cancelJob = (error: Error) => {
+      job.cancelled = true;
+      const index = buffer.indexOf(job);
+      if (index >= 0) buffer.splice(index, 1);
+      // 不只 reject Promise，还通知宿主释放当前 WebView 和队列位置。
+      job.cancel?.();
+      finish(error);
+    };
+    const cancel = () => cancelJob(abortError());
     const timer = setTimeout(
-      () => {
-        console.warn('[browserFetch] timeout', { id, url, timeout });
-        reject(new Error(timeoutMessage));
-      },
+      () => cancelJob(new Error(timeoutMessage)),
       timeout,
     );
     const job: FetchJob = {
@@ -205,29 +233,13 @@ function fetchRendered(
       timeoutMs: timeout,
       timeoutMessage,
       priority,
-      resolve: t => {
-        clearTimeout(timer);
-        devInfo('[browserFetch] done', { id, url, length: t.length });
-        resolve(t);
-      },
-      reject: e => {
-        clearTimeout(timer);
-        console.warn('[browserFetch] failed', { id, url, error: e.message });
-        reject(e);
-      },
+      signal,
+      resolve: value => finish(undefined, value),
+      reject: error => finish(error),
     };
-    devInfo('[browserFetch] enqueue', {
-      id,
-      url,
-      waitMs,
-      timeout,
-      priority,
-    });
+    signal?.addEventListener('abort', cancel);
     if (enqueueImpl) enqueueImpl(job);
-    else {
-      buffer.push(job);
-      devInfo('[browserFetch] buffered', { id, buffered: buffer.length });
-    }
+    else buffer.push(job);
   });
 }
 

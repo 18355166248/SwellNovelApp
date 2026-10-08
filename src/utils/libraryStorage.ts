@@ -9,6 +9,7 @@
  */
 
 import RNFS from 'react-native-fs';
+import { throwIfAborted } from './abort';
 import { Book, Bookmark, Chapter, ReadingHistory } from '../store/types/book';
 import { ReaderSettings } from '../store/types/reader';
 import { ReadingStats, emptyReadingStats } from '../store/types/stats';
@@ -172,12 +173,18 @@ export const saveLibraryMeta = async (meta: LibraryMeta) => {
 /** 懒加载单本书的章节；无正文文件时返回 null。 */
 export const loadBookChapters = async (
   bookId: string,
+  signal?: AbortSignal,
 ): Promise<Chapter[] | null> => {
+  throwIfAborted(signal);
   const path = bookChaptersPath(bookId);
   if (!(await RNFS.exists(path))) {
     return null;
   }
-  return JSON.parse(await RNFS.readFile(path, 'utf8')) as Chapter[];
+  throwIfAborted(signal);
+  const serialized = await RNFS.readFile(path, 'utf8');
+  // RNFS 读取无法中断，但返回后必须先检查，避免已离开的页面仍解析整本 10MB 正文。
+  throwIfAborted(signal);
+  return JSON.parse(serialized) as Chapter[];
 };
 
 export const saveBookChapters = async (bookId: string, chapters: Chapter[]) => {

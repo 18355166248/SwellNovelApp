@@ -26,6 +26,7 @@ export interface FetchJob {
 }
 
 export interface BrowserFetchOptions {
+  signal?: AbortSignal;
   timeout?: number;
   waitMs?: number;
   priority?: BrowserFetchPriority;
@@ -50,7 +51,9 @@ export async function fetchRenderedHtml(
 ): Promise<string> {
   const timeout =
     typeof options === 'number' ? options : options.timeout ?? 15000;
-  return fetchHtml(url, timeout);
+  return fetchHtml(url, timeout, {
+    signal: typeof options === 'number' ? undefined : options.signal,
+  });
 }
 
 export async function fetchWebViewHttpText(
@@ -137,7 +140,9 @@ function extractTextFromHtml(html: string): string {
       }
     }
     if (!best || bestLen < 100) {
-      for (const el of Array.from(doc.querySelectorAll('div,article,section'))) {
+      for (const el of Array.from(
+        doc.querySelectorAll('div,article,section'),
+      )) {
         const len = (el.textContent || '').trim().length;
         if (
           len > 200 &&

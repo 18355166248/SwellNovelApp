@@ -93,9 +93,15 @@ const xuanhuangeSource: BookSource = {
     };
   },
 
-  async parseCatalog(info: ParsedBookInfo): Promise<ParsedChapter[]> {
+  async parseCatalog(
+    info: ParsedBookInfo,
+    options: ParseChapterOptions = {},
+  ): Promise<ParsedChapter[]> {
     const url = info.catalogUrl || catalogUrl(info.sourceBookId);
-    const html = await fetchRenderedHtml(url, CATALOG_FETCH);
+    const html = await fetchRenderedHtml(url, {
+      ...CATALOG_FETCH,
+      signal: options.signal,
+    });
     const first = recognizeBookHtml(html, url);
     if (first.chapters.length === 0) {
       throw new Error('玄幻阁目录解析失败：未识别到章节，请稍后重试');
@@ -103,7 +109,7 @@ const xuanhuangeSource: BookSource = {
     // 目录按每页若干章分页；expandRecognizedCatalog 逐页抓取并要求每页都成功，
     // 避免只导入第一页就让用户以为整本已加入。
     const expanded = await expandRecognizedCatalog(first, pageUrl =>
-      fetchRenderedHtml(pageUrl, CATALOG_FETCH),
+      fetchRenderedHtml(pageUrl, { ...CATALOG_FETCH, signal: options.signal }),
     );
     return expanded.chapters.map(chapter => ({
       title: chapter.title,
@@ -116,17 +122,22 @@ const xuanhuangeSource: BookSource = {
     options: ParseChapterOptions = {},
   ): Promise<ParsedChapterContent> {
     const priority = options.priority ?? 'normal';
-    const firstPage = await fetchRenderedChapterPage(url, { priority });
+    const firstPage = await fetchRenderedChapterPage(url, {
+      priority,
+      signal: options.signal,
+    });
     const firstContent = cleanRenderedText(firstPage.content);
     if (isInvalidOnlineChapterContent(firstContent)) {
       throw new Error('玄幻阁正文解析失败：内容不完整');
     }
     // 一章被拆成多个网页子页时一次读完，阅读器拿到的就是完整章节。
     const merged = await collectChapterPages({
+      signal: options.signal,
       firstPageUrl: url,
       firstContent,
       firstNextPageUrl: firstPage.nextPageUrl,
-      fetchPage: pageUrl => fetchRenderedChapterPage(pageUrl, { priority }),
+      fetchPage: pageUrl =>
+        fetchRenderedChapterPage(pageUrl, { priority, signal: options.signal }),
       cleanPage: raw => cleanRenderedText(raw),
     });
     return {

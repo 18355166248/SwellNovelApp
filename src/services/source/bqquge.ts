@@ -42,10 +42,12 @@ function plain(html: string) {
     ),
   ).trim();
 }
-async function page(url: string) {
+async function page(url: string, signal?: AbortSignal) {
   const current = route(url);
   if (!current?.chapterId) throw new Error('章节地址无效');
-  const html = removeNonContentElements(await fetchHtml(url, 12000));
+  const html = removeNonContentElements(
+    await fetchHtml(url, 12000, { signal }),
+  );
   const rawBody = findDivBlock(html, 'class', 'con')?.inner;
   const body = rawBody && removeMarkedAdBlocks(rawBody);
   const title =
@@ -124,9 +126,11 @@ export const bqqugeSource: BookSource = {
       ),
     };
   },
-  async parseCatalog(info) {
+  async parseCatalog(info, options = {}) {
     const html = removeNonContentElements(
-      await fetchHtml(this.detailUrl(info.sourceBookId), 12000),
+      await fetchHtml(this.detailUrl(info.sourceBookId), 12000, {
+        signal: options.signal,
+      }),
     );
     // 最新章节和推荐区都含阅读链接，只接受明确的全文目录容器，保留上/下篇真实标题。
     const rawCatalog = findDivBlock(html, 'id', 'list')?.inner;
@@ -173,14 +177,15 @@ export const bqqugeSource: BookSource = {
       throw new Error('完整目录缺少网站最新章');
     return chapters;
   },
-  async parseChapterContent(url) {
-    const first = await page(url);
+  async parseChapterContent(url, options = {}) {
+    const first = await page(url, options.signal);
     if (isBlockedText(first.content)) throw new Error('正文无效');
     const merged = await collectChapterPages({
       firstPageUrl: url,
       firstContent: first.content,
       firstNextPageUrl: first.nextPageUrl,
-      fetchPage: page,
+      signal: options.signal,
+      fetchPage: pageUrl => page(pageUrl, options.signal),
       cleanPage: text => text,
     });
     // 字数校验在子页合并之后进行；短公告仅在结构、同书导航和已取完全部页均确认后放行。

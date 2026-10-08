@@ -27,6 +27,7 @@ const MOBILE_UA =
 export function WebViewFetcher() {
   const ref = React.useRef<any>(null);
   const [activated, setActivated] = React.useState(false);
+  const [generation, setGeneration] = React.useState(0);
   const [job, setJob] = React.useState<FetchJob | null>(null);
   const jobRef = React.useRef<FetchJob | null>(null);
   jobRef.current = job;
@@ -38,7 +39,9 @@ export function WebViewFetcher() {
 
   const pump = React.useCallback(() => {
     if (jobRef.current || queue.current.length === 0) return;
-    const next = queue.current.shift()!;
+    while (queue.current[0]?.cancelled) queue.current.shift();
+    const next = queue.current.shift();
+    if (!next) return;
     console.info('[WebViewFetcher] start job', {
       id: next.id,
       url: next.url,
@@ -52,6 +55,19 @@ export function WebViewFetcher() {
 
   React.useEffect(() => {
     registerBrowserFetcher(j => {
+      if (j.cancelled || j.signal?.aborted) return;
+      j.cancel = () => {
+        queue.current = queue.current.filter(item => item.id !== j.id);
+        if (jobRef.current?.id !== j.id) return;
+        if (injectTimerRef.current) clearTimeout(injectTimerRef.current);
+        if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
+        ref.current?.stopLoading?.();
+        jobRef.current = null;
+        setJob(null);
+        // 取消时销毁旧网页运行环境，防止离开阅读后页面脚本仍继续执行；Cookie 由共享存储保留。
+        setGeneration(value => value + 1);
+        pump();
+      };
       // 当前阅读章节使用 high 优先级，目录浮层标题解析使用 low；
       // WebView 只有一个实例，按优先级排队可以避免后台目录解析阻塞用户点击章节。
       if (j.priority === 'high') queue.current.unshift(j);
@@ -138,6 +154,7 @@ export function WebViewFetcher() {
   return (
     <View style={styles.hiddenHost} pointerEvents="none">
       <WebView
+        key={generation}
         ref={ref}
         originWhitelist={['*']}
         userAgent={MOBILE_UA}
@@ -153,7 +170,7 @@ export function WebViewFetcher() {
         }}
         onLoadEnd={() => {
           const cur = jobRef.current;
-          if (!cur) return;
+          if (!cur || cur.id !== job?.id || cur.cancelled) return;
           // 留足时间让 CF 挑战/JS 渲染完成，再按任务类型抽正文或 HTML；过早读取会拿到挑战页。
           if (injectTimerRef.current) clearTimeout(injectTimerRef.current);
           console.info('[WebViewFetcher] load end, wait inject', {
@@ -168,6 +185,7 @@ export function WebViewFetcher() {
           }, cur.waitMs);
         }}
         onError={(e: any) => {
+          if (jobRef.current?.id !== job?.id) return;
           failCurrentJob(
             e?.nativeEvent?.description ||
               e?.nativeEvent?.domain ||
@@ -175,6 +193,7 @@ export function WebViewFetcher() {
           );
         }}
         onHttpError={(e: any) => {
+          if (jobRef.current?.id !== job?.id) return;
           failCurrentJob(
             `HTTP ${e?.nativeEvent?.statusCode || ''}`.trim() ||
               'WebView 页面请求失败',

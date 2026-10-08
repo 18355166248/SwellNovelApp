@@ -12,6 +12,7 @@ import {
   useAddRecognizedBook,
   useCacheWholeBook,
   useLoadNextChapterPage,
+  useEnsureChapterContent,
   useCheckFollowedBooks,
 } from '../src/store/hooks/useOnlineBook';
 import {
@@ -602,4 +603,31 @@ describe('启动追更只检查过期书籍', () => {
       content.mockRestore();
     }
   });
+});
+
+it('加载中返回会取消底层正文，迟到结果不缓存，重新打开可以发起新请求', async () => {
+  const book = incomingBook();
+  const original = chapter(book.id, 'pending-chapter', 1);
+  mockStore.set(booksAtom, [book]);
+  mockStore.set(chaptersAtom, { [book.id]: [original] });
+  const late = deferred<{ content: string }>();
+  const parse = jest
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+    .mockReturnValueOnce(late.promise);
+  const ensure = useEnsureChapterContent();
+  const controller = new AbortController();
+  const pending = ensure(book.id, 0, { signal: controller.signal });
+  await Promise.resolve();
+  const sourceSignal = parse.mock.calls[0][1]!.signal!;
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  expect(sourceSignal.aborted).toBe(true);
+  const content = '新的有效正文。'.repeat(100);
+  parse.mockResolvedValueOnce({ content, complete: true });
+  await expect(ensure(book.id, 0)).resolves.toMatchObject({ content });
+  late.resolve({ content: '旧的迟到正文。'.repeat(100) });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(mockStore.get(chaptersAtom)[book.id][0].content).toBe(content);
+  expect(parse).toHaveBeenCalledTimes(2);
 });

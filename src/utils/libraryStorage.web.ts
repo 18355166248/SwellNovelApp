@@ -8,6 +8,7 @@
  * 无 IndexedDB 的环境（隐私模式 / SSR / 测试）回退到 localStorage 按书分键。
  */
 
+import { throwIfAborted } from './abort';
 import { Book, Bookmark, Chapter, ReadingHistory } from '../store/types/book';
 import { ReaderSettings } from '../store/types/reader';
 import { ReadingStats, emptyReadingStats } from '../store/types/stats';
@@ -208,9 +209,13 @@ export const saveLibraryMeta = async (meta: LibraryMeta) => {
 /** 懒加载单本书的章节；无正文时返回 null。 */
 export const loadBookChapters = async (
   bookId: string,
+  signal?: AbortSignal,
 ): Promise<Chapter[] | null> => {
+  throwIfAborted(signal);
   if (hasIDB()) {
-    return idbGet(bookId);
+    const chapters = await idbGet(bookId);
+    throwIfAborted(signal);
+    return chapters;
   }
   const raw = window.localStorage.getItem(bookChaptersKey(bookId));
   return raw ? (JSON.parse(raw) as Chapter[]) : null;

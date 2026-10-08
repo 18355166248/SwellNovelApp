@@ -1,3 +1,4 @@
+import { throwIfAborted } from '../../utils/abort';
 /**
  * 网页分页章节的合并。
  *
@@ -34,6 +35,7 @@ export interface ChapterPageResult {
 }
 
 export interface CollectChapterPagesOptions {
+  signal?: AbortSignal;
   firstPageUrl?: string;
   /** 已抓到并清洗过的首个子页正文。 */
   firstContent: string;
@@ -62,7 +64,9 @@ export async function collectChapterPages({
   cleanPage,
   maxPages = MAX_CHAPTER_PAGES,
   onError,
+  signal,
 }: CollectChapterPagesOptions): Promise<ChapterPageResult> {
+  throwIfAborted(signal);
   let content = firstContent;
   let cursor = firstNextPageUrl;
   let guard = 0;
@@ -71,6 +75,7 @@ export async function collectChapterPages({
     firstPageUrl ? [chapterPageIdentity(firstPageUrl)] : [],
   );
   while (cursor && guard < maxPages) {
+    throwIfAborted(signal);
     const identity = chapterPageIdentity(cursor);
     if (visited.has(identity)) break;
     visited.add(identity);
@@ -78,6 +83,7 @@ export async function collectChapterPages({
     const pageUrl = cursor;
     try {
       const page = await fetchPage(pageUrl);
+      throwIfAborted(signal);
       // 子页是整章的一部分，尾页天然可能很短，不能套用整章字数门槛；
       // 这里只挡空白页和广告/拦截页，整章长度由首页校验保证。
       const text = cleanPage(page.content);
@@ -86,6 +92,8 @@ export async function collectChapterPages({
       loadedPageUrls.push(pageUrl);
       cursor = page.nextPageUrl;
     } catch (error) {
+      // 取消不能降级成“部分成功”，否则离开页面后还会写入半章缓存。
+      throwIfAborted(signal);
       onError?.(pageUrl, error);
       break;
     }

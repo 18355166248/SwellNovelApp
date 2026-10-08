@@ -25,10 +25,21 @@ import { startReadingSession } from '../src/utils/readingSession';
 jest.setTimeout(15000);
 jest.mock('../src/utils/devLog', () => ({ devInfo: jest.fn() }));
 
+const mockNavigationListeners = new Map<string, Set<() => void>>();
 const mockNavigation = {
+  addListener: jest.fn((event: string, callback: () => void) => {
+    const listeners =
+      mockNavigationListeners.get(event) ?? new Set<() => void>();
+    listeners.add(callback);
+    mockNavigationListeners.set(event, listeners);
+    return () => {
+      listeners.delete(callback);
+    };
+  }),
   setOptions: jest.fn(),
   navigate: jest.fn(),
   goBack: jest.fn(),
+  canGoBack: () => true,
 };
 const mockEnsureChapter = jest.fn();
 const mockLoadNextPage = jest.fn();
@@ -157,6 +168,7 @@ describe('ReaderScreen paging interactions', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockReaderFocused = true;
+    mockNavigationListeners.clear();
     (startReadingSession as jest.Mock).mockClear();
     mockEnsureChapter
       .mockReset()
@@ -199,6 +211,31 @@ describe('ReaderScreen paging interactions', () => {
     );
     expect(session).toHaveBeenCalledTimes(count);
     expect(resumedStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('原生返回过渡开始就取消正文加载，不等待页面卸载', async () => {
+    let finish!: (chapter: Chapter) => void;
+    mockEnsureChapter.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    await mount(0, true, [makeChapter(0, '')], { pageMode: 'scroll' });
+    const signal = mockEnsureChapter.mock.calls[0][2].signal as AbortSignal;
+    expect(
+      tree.root.findAllByProps({ accessibilityLabel: '取消加载并返回' }).length,
+    ).toBeGreaterThan(0);
+    expect(signal.aborted).toBe(false);
+    await act(() => {
+      mockNavigationListeners
+        .get('beforeRemove')!
+        .forEach(callback => callback());
+    });
+    expect(signal.aborted).toBe(true);
+    // 模拟不支持取消的旧解析器迟到成功；返回过渡期间不能重新激活阅读状态。
+    await act(() => finish(makeChapter(0)));
+    expect(startReadingSession).not.toHaveBeenCalled();
   });
 
   it('does not start reading time for an uncached chapter while loading', async () => {
