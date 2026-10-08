@@ -1,0 +1,51 @@
+__tests__/BookDetailScreen.test.tsx
+  s_eb24a7f9a7cdb4::t_43a374b6595769 91
+  s_eb24a7f9a7cdb4::t_fafcd8aebee957 1-28,30-90,92-107
+  s_0aa467594d1940::t_93196a30c148f6 29
+src/screens/bookDetail/BookCatalogModal.tsx
+  s_eb24a7f9a7cdb4::t_ec0cf795308df0 1-100,102-128,130-187
+  s_eb24a7f9a7cdb4::t_b659b49451ad72 129
+  s_eb24a7f9a7cdb4::t_43a374b6595769 101
+src/screens/ReaderScreen.tsx
+  s_eb24a7f9a7cdb4::t_dcde395c9c3d8e 83,847,1324-1328,1332-1334,1405-1406
+  s_eb24a7f9a7cdb4::t_b659b49451ad72 1329-1331
+  s_eb24a7f9a7cdb4::t_5229b4e2cea3c8 1397-1398,1452-1453
+__tests__/bookDescription.test.ts
+  s_eb24a7f9a7cdb4::t_b131f23505580f 4-25
+__tests__/ReaderScreen.paging.test.tsx
+  s_eb24a7f9a7cdb4::t_9fb3788e4090f5 47,53-55,174,189-201,204-208
+  s_eb24a7f9a7cdb4::t_b659b49451ad72 202-203
+  s_eb24a7f9a7cdb4::t_8848c75bc8656f 209-210
+src/screens/BookDetailScreen.tsx
+  s_eb24a7f9a7cdb4::t_d84f17ae4ce7d5 34,89,592-593,692-702
+  s_0aa467594d1940::t_dcbc79e5c9b3b4 703
+src/utils/bookDescription.ts
+  s_eb24a7f9a7cdb4::t_b131f23505580f 1-2
+  s_eb24a7f9a7cdb4::t_d84f17ae4ce7d5 17-24,26-28
+src/services/source/mingzw.ts
+  s_eb24a7f9a7cdb4::t_e4a63fd727219f 270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "84382a482e382281957f6e0cf4790d40229e0d80",
+  "prompts": {},
+  "sessions": {
+    "s_0aa467594d1940": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11a5a-cc09-7f92-bc8a-572f22ffab61",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    },
+    "s_eb24a7f9a7cdb4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b36-1ab6-79b1-88bc-aed52257f634",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
