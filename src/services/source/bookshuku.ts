@@ -749,9 +749,15 @@ export const bookshukuSource: BookSource = {
   name: 'TXT图书下载网',
   host: HOST,
   homeUrl: `${ORIGIN}/`,
+  // 网页详情只展示最新 10 章；导入须复用完整目录与正文适配，不能保存这个预览。
+  preferDirectImport: true,
 
   matchUrl(url: string) {
-    return /(^|\.)bookshuku\.org/i.test(url);
+    try {
+      return /(^|\.)bookshuku\.org$/i.test(new URL(url).hostname);
+    } catch {
+      return false;
+    }
   },
 
   extractId(url: string) {

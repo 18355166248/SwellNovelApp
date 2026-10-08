@@ -1,0 +1,42 @@
+[
+  {
+    "url": "http://www.xuanhuange.info/",
+    "resolve": "23.224.86.145 (observed xuanyge.com origin)",
+    "exit": 47,
+    "http": 301,
+    "effective": "http://www.xuanhuange.info/",
+    "ip": "23.224.86.145",
+    "total": 1.429922,
+    "error": "curl: (47) Maximum (3) redirects followed\n"
+  },
+  {
+    "url": "http://wap.xuanhuange.info/",
+    "resolve": "23.224.86.145 (observed xuanyge.com origin)",
+    "exit": 47,
+    "http": 301,
+    "effective": "http://www.xuanhuange.info/",
+    "ip": "23.224.86.145",
+    "total": 1.429937,
+    "error": "curl: (47) Maximum (3) redirects followed\n"
+  },
+  {
+    "url": "http://wap.xuanhuange.info/wapbook-170446/",
+    "resolve": "23.224.86.145 (observed xuanyge.com origin)",
+    "exit": 47,
+    "http": 301,
+    "effective": "http://www.xuanhuange.info/wapbook-170446/",
+    "ip": "23.224.86.145",
+    "total": 2.173151,
+    "error": "curl: (47) Maximum (3) redirects followed\n"
+  },
+  {
+    "url": "http://wap.xuanhuange.info/info-170446/",
+    "resolve": "23.224.86.145 (observed xuanyge.com origin)",
+    "exit": 47,
+    "http": 301,
+    "effective": "http://www.xuanhuange.info/info-170446/",
+    "ip": "23.224.86.145",
+    "total": 1.456537,
+    "error": "curl: (47) Maximum (3) redirects followed\n"
+  }
+]

@@ -1,0 +1,41 @@
+{
+  "checkedAt": "2026-10-08T09:32:52.454734+00:00",
+  "transport": "curl direct/proxy reachability only; TLS validation enabled",
+  "results": [
+    {
+      "url": "https://tw.mingzw.net/mzwbook/42628.html",
+      "httpStatus": 0,
+      "exitCode": 28,
+      "ms": 15036,
+      "error": "curl: (28) Connection timed out after 15005 milliseconds"
+    },
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-170446/",
+      "httpStatus": 0,
+      "exitCode": 28,
+      "ms": 15037,
+      "error": "curl: (28) Connection timed out after 15005 milliseconds"
+    },
+    {
+      "url": "https://wap.xuanhuange.info/wapbook-170446/",
+      "httpStatus": 0,
+      "exitCode": 28,
+      "ms": 15036,
+      "error": "curl: (28) Connection timed out after 15005 milliseconds"
+    },
+    {
+      "url": "http://101.43.11.224:11008/proxy/http/wap.xuanhuange.info/wapbook-170446/",
+      "httpStatus": 403,
+      "exitCode": 0,
+      "ms": 59,
+      "error": ""
+    },
+    {
+      "url": "http://101.43.11.224:11008/proxy/https/wap.xuanhuange.info/wapbook-170446/",
+      "httpStatus": 403,
+      "exitCode": 0,
+      "ms": 56,
+      "error": ""
+    }
+  ]
+}

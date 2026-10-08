@@ -199,7 +199,8 @@ function sanitizeChapterTitleCandidate(title?: string): string | undefined {
     .replace(/[>»›]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!normalized || normalized.length > 40) return undefined;
+  // 正常目录标题可能带作者备注；与目录识别保持同一上限，避免正文缓存时把长标题改成“章节”。
+  if (!normalized || normalized.length > 200) return undefined;
   if (KNOWN_BOOK_TITLES.includes(normalized)) return undefined;
   if (isBadChapterTitle(normalized)) return undefined;
   if (/^(目录|首页|上一章|下一章|返回书页)$/.test(normalized)) return undefined;

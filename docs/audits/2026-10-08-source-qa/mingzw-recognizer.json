@@ -1,0 +1,67 @@
+{
+  "checkedAt": "2026-10-08T10:44:15.030Z",
+  "transport": "Saved public catalog HTML, App HTML parser and injected JS in JSDOM; not native WebView",
+  "results": [
+    {
+      "id": "42628",
+      "title": "都重生了誰考公務員啊",
+      "author": "柳岸花又明",
+      "cover": "",
+      "htmlCount": 782,
+      "domCount": 782,
+      "orderedChaptersEqual": true,
+      "first": {
+        "title": "第1章、戒不掉的肌肉反應",
+        "url": "https://tw.mingzw.net/mzwread/42628_12277709.html"
+      },
+      "last": {
+        "title": "第786章、郁金香沒有她的浴巾香",
+        "url": "https://tw.mingzw.net/mzwread/42628_14663272.html"
+      },
+      "numbers": {
+        "entries": 782,
+        "maxNumber": 786,
+        "coveredNumbers": 778,
+        "numberedEntries": 778,
+        "unnumberedEntries": 4,
+        "mergedExtraNumbers": 0,
+        "repeatedNumberEntries": 0,
+        "unmatchedNumbers": [304, 378, 450, 451, 452, 453, 466, 771]
+      }
+    },
+    {
+      "id": "17482",
+      "title": "凡人修仙傳",
+      "author": "忘語",
+      "cover": "",
+      "htmlCount": 2455,
+      "domCount": 2455,
+      "orderedChaptersEqual": true,
+      "first": {
+        "title": "第一章 山邊小村",
+        "url": "https://tw.mingzw.net/mzwread/17482_941273.html"
+      },
+      "last": {
+        "title": "感言",
+        "url": "https://tw.mingzw.net/mzwread/17482_6405354.html"
+      },
+      "numbers": {
+        "entries": 2455,
+        "maxNumber": 2446,
+        "coveredNumbers": 2378,
+        "numberedEntries": 2423,
+        "unnumberedEntries": 32,
+        "mergedExtraNumbers": 0,
+        "repeatedNumberEntries": 45,
+        "unmatchedNumbers": [
+          133, 183, 233, 310, 486, 488, 600, 623, 624, 625, 626, 888, 889, 1047,
+          1085, 1098, 1159, 1212, 1358, 1392, 1439, 1604, 1623, 1696, 1761,
+          1769, 1776, 1777, 1778, 1805, 1808, 1829, 1834, 1875, 1876, 1883,
+          1884, 1888, 1906, 1950, 1955, 1956, 1957, 1958, 1966, 1967, 1968,
+          1969, 1971, 2036, 2055, 2066, 2093, 2120, 2121, 2148, 2149, 2159,
+          2180, 2181, 2182, 2208, 2209, 2306, 2311, 2337, 2344, 2385
+        ]
+      }
+    }
+  ]
+}

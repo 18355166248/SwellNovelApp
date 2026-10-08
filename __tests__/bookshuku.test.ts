@@ -162,6 +162,14 @@ describe('bookshukuSource', () => {
       bookshukuSource.matchUrl('http://wap.bookshuku.org/bookinfo/160297.html'),
     ).toBe(true);
     expect(bookshukuSource.matchUrl('http://example.com/x')).toBe(false);
+    expect(
+      bookshukuSource.matchUrl(
+        'https://bookshuku.org.evil.test/bookinfo/19.html',
+      ),
+    ).toBe(false);
+    expect(
+      bookshukuSource.matchUrl('https://example.com/?site=wap.bookshuku.org'),
+    ).toBe(false);
   });
 
   it('parseBookInfo 解析书名/作者/封面/简介/状态', async () => {

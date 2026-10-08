@@ -1,0 +1,110 @@
+{
+  "checkedAt": "2026-10-08T18:25:50+0800",
+  "transport": "Mac curl, mobile UA, strict TLS",
+  "results": [
+    {
+      "url": "http://tw.mingzw.net/",
+      "exit": 28,
+      "http": 0,
+      "effective": "http://tw.mingzw.net/",
+      "ip": "",
+      "dns": 0.008054,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.008742,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to tw.mingzw.net port 80 after 8008 ms: Timeout was reached"
+    },
+    {
+      "url": "https://tw.mingzw.net/",
+      "exit": 28,
+      "http": 0,
+      "effective": "https://tw.mingzw.net/",
+      "ip": "",
+      "dns": 0.008232,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.009161,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to tw.mingzw.net port 443 after 8009 ms: Timeout was reached"
+    },
+    {
+      "url": "http://www.mingzw.net/",
+      "exit": 28,
+      "http": 0,
+      "effective": "http://www.mingzw.net/",
+      "ip": "",
+      "dns": 0.007959,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.008821,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to www.mingzw.net port 80 after 8008 ms: Timeout was reached"
+    },
+    {
+      "url": "https://www.mingzw.net/",
+      "exit": 28,
+      "http": 0,
+      "effective": "https://www.mingzw.net/",
+      "ip": "",
+      "dns": 0.008141,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.006832,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to www.mingzw.net port 443 after 8006 ms: Timeout was reached"
+    },
+    {
+      "url": "http://wap.xuanhuange.info/",
+      "exit": 28,
+      "http": 0,
+      "effective": "http://wap.xuanhuange.info/",
+      "ip": "",
+      "dns": 0.008134,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.009603,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 80 after 8009 ms: Timeout was reached"
+    },
+    {
+      "url": "https://wap.xuanhuange.info/",
+      "exit": 28,
+      "http": 0,
+      "effective": "https://wap.xuanhuange.info/",
+      "ip": "",
+      "dns": 0.008139,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.009066,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 443 after 8009 ms: Timeout was reached"
+    },
+    {
+      "url": "http://www.xuanhuange.info/",
+      "exit": 28,
+      "http": 0,
+      "effective": "http://www.xuanhuange.info/",
+      "ip": "",
+      "dns": 0.008233,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.007375,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to www.xuanhuange.info port 80 after 8007 ms: Timeout was reached"
+    },
+    {
+      "url": "https://www.xuanhuange.info/",
+      "exit": 28,
+      "http": 0,
+      "effective": "https://www.xuanhuange.info/",
+      "ip": "",
+      "dns": 0.008258,
+      "connect": 0.0,
+      "tls": 0.0,
+      "total": 8.007118,
+      "ssl": 0,
+      "error": "curl: (28) Failed to connect to www.xuanhuange.info port 443 after 8007 ms: Timeout was reached"
+    }
+  ]
+}

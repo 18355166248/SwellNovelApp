@@ -255,19 +255,30 @@ export async function searchNovels(
 
   // 引擎命中一个站点不代表它能成功入库。书源列表同时查找其他入口，
   // 给失效或超时的候选提供替代；与引擎并行，不再额外累加搜索等待时间。
+  let catalogActive = true;
+  const acceptCatalogResults = (catalog: NovelSearchResult[]) => {
+    if (catalogActive && !options.isCancelled?.() && catalog.length) {
+      collected.push(...catalog);
+      publish();
+    }
+  };
   const catalogRequest = withinDeadline(
-    searchSourceCatalogs(kw, { timeoutMs: CATALOG_TIMEOUT_MS }),
+    searchSourceCatalogs(kw, {
+      timeoutMs: CATALOG_TIMEOUT_MS,
+      onResults: acceptCatalogResults,
+    }),
     CATALOG_TIMEOUT_MS,
-  ).then(
-    catalog => {
-      if (!options.isCancelled?.() && catalog.length) {
-        collected.push(...catalog);
-        publish();
-      }
-      return false;
-    },
-    () => true,
-  );
+  )
+    .then(
+      catalog => {
+        acceptCatalogResults(catalog);
+        return false;
+      },
+      () => true,
+    )
+    .finally(() => {
+      catalogActive = false;
+    });
 
   await Promise.all(
     SOURCES.map(async source => {

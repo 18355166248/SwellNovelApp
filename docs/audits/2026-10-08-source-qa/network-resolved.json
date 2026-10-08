@@ -1,0 +1,80 @@
+[
+  {
+    "url": "http://tw.mingzw.net/",
+    "resolve": "204.12.242.220",
+    "exit": 28,
+    "http": 301,
+    "effective": "https://tw.mingzw.net/",
+    "ip": "204.12.242.220",
+    "connect": 0.219502,
+    "tls": 0.0,
+    "total": 8.445784,
+    "ssl": 0,
+    "error": "curl: (28) Failed to connect to tw.mingzw.net port 443 after 8002 ms: Timeout was reached"
+  },
+  {
+    "url": "https://tw.mingzw.net/",
+    "resolve": "204.12.242.220",
+    "exit": 0,
+    "http": 200,
+    "effective": "https://tw.mingzw.net/",
+    "ip": "204.12.242.220",
+    "connect": 0.223801,
+    "tls": 0.463255,
+    "total": 1.35695,
+    "ssl": 0,
+    "error": ""
+  },
+  {
+    "url": "https://tw.mingzw.net/mzwbook/42628.html",
+    "resolve": "204.12.242.220",
+    "exit": 0,
+    "http": 200,
+    "effective": "https://tw.mingzw.net/mzwbook/42628.html",
+    "ip": "204.12.242.220",
+    "connect": 0.224064,
+    "tls": 0.463094,
+    "total": 1.142277,
+    "ssl": 0,
+    "error": ""
+  },
+  {
+    "url": "http://www.mingzw.net/",
+    "resolve": "204.12.242.220",
+    "exit": 28,
+    "http": 301,
+    "effective": "https://www.mingzw.net/",
+    "ip": "204.12.242.220",
+    "connect": 0.224837,
+    "tls": 0.0,
+    "total": 8.460796,
+    "ssl": 0,
+    "error": "curl: (28) Failed to connect to www.mingzw.net port 443 after 8006 ms: Timeout was reached"
+  },
+  {
+    "url": "https://www.mingzw.net/",
+    "resolve": "204.12.242.220",
+    "exit": 0,
+    "http": 200,
+    "effective": "https://www.mingzw.net/",
+    "ip": "204.12.242.220",
+    "connect": 0.223951,
+    "tls": 0.463516,
+    "total": 1.371605,
+    "ssl": 0,
+    "error": ""
+  },
+  {
+    "url": "https://www.mingzw.net/mzwbook/42628.html",
+    "resolve": "204.12.242.220",
+    "exit": 0,
+    "http": 200,
+    "effective": "https://www.mingzw.net/mzwbook/42628.html",
+    "ip": "204.12.242.220",
+    "connect": 0.222136,
+    "tls": 0.461954,
+    "total": 1.127234,
+    "ssl": 0,
+    "error": ""
+  }
+]

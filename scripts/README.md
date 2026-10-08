@@ -1,13 +1,33 @@
 # 打包脚本说明
 
+## 书源真实网络抽查
+
+需要 Node.js 20.3+ 和 curl。使用 App 当前的代理选择、解码及书源解析器，验证目录地址去重、章号统计和首/中/尾正文；只输出元数据、字数、页数与请求结果，不保存正文、不修改书架。
+
+```bash
+npm run verify:sources -- --search=都重生了谁考公务员啊 --output=/tmp/source-qa.json https://www.bqquge.org/19 http://wap.bookshuku.org/bookinfo/132737.html
+```
+
+单请求最多 15 秒、单本最多 60 秒。退出码 2 表示存在失败样本。curl 传输不是 iOS 网络验收；需要 WebView 的回退会明确报“需要原生 WebView”，不得将它算作已通过。真实网络会变化，回归测试使用 `npm run test:ci`，原生导入及网页识别还须在 iOS 验证。
+
+排查本机 DNS 与蜂窝网差异时，可只为本次诊断请求使用加密 DNS：
+
+```bash
+npm run verify:sources -- --doh-url=https://cloudflare-dns.com/dns-query --output=/tmp/mingzw-qa.json https://tw.mingzw.net/mzwbook/42628.html
+```
+
+该参数不改变系统 DNS，不固定站点 IP，仍校验证书；诊断请求成功不代表 App 已自动使用该 DNS，也不代表真机验收通过。
+
 ## Android 打包
 
 ### 首次打包前准备
 
 1. **生成签名密钥**（仅首次需要）:
+
    ```powershell
    keytool -genkeypair -v -storetype PKCS12 -keystore android\app\my-release-key.keystore -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000
    ```
+
    按提示输入密码等信息，请妥善保管密钥文件。
 
 2. **配置签名信息**:
@@ -22,6 +42,7 @@
 ### 打包命令
 
 **方式一：使用 npm 脚本**
+
 ```bash
 # 打包 APK
 npm run build:android:apk
@@ -31,6 +52,7 @@ npm run build:android:aab
 ```
 
 **方式二：直接运行脚本**
+
 ```powershell
 # 打包 APK
 .\scripts\build-android.ps1 apk
@@ -61,11 +83,13 @@ npm run build:android:aab
 ### 打包步骤
 
 **方式一：使用 npm 脚本**
+
 ```bash
 npm run build:ios
 ```
 
 **方式二：直接运行脚本**
+
 ```bash
 chmod +x scripts/build-ios.sh
 ./scripts/build-ios.sh
@@ -76,6 +100,7 @@ chmod +x scripts/build-ios.sh
 由于 iOS 打包需要配置签名和证书，推荐在 Xcode 中手动操作：
 
 1. **安装依赖**:
+
    ```bash
    cd ios
    bundle exec pod install
@@ -83,6 +108,7 @@ chmod +x scripts/build-ios.sh
    ```
 
 2. **打开 Xcode**:
+
    ```bash
    open ios/SwellNovalApp.xcworkspace
    ```
@@ -119,6 +145,7 @@ A: 不可以，必须在 macOS 上使用 Xcode 进行打包。
 
 **Q: 打包时提示签名错误？**  
 A: 请确保：
+
 - 已登录 Apple Developer 账号
 - 在 Xcode 中正确配置了 Signing & Capabilities
 - 证书和描述文件有效

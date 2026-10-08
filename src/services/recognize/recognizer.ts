@@ -32,6 +32,33 @@ export const RECOGNIZE_MESSAGE = 'nvl-recognize';
 /** 判定为目录页所需的最小章节锚点数，低于此认为不是书籍页。 */
 export const MIN_CHAPTERS = 5;
 
+// 已知站点优先按同书正文路由识别，不能只靠“第N章”漏掉感言，也不能收进推荐区其他书。
+const CATALOG_ROUTES = [
+  {
+    host: '(^|\\.)bookshuku\\.org$',
+    book: '/(?:bookinfo|read)/(\\d+)',
+    chapter: '^/read/(\\d+)_(\\d+)\\.html$',
+  },
+  {
+    host: '(^|\\.)mingzw\\.net$',
+    book: '/(?:mibook|mzwbook|mclist|mzwchapter)/(\\d+)',
+    chapter: '^/(?:miread|mzwread)/(?:[^/]*_)?(\\d+)_(\\d+)\\.html$',
+  },
+  {
+    host: '(^|\\.)xuanhuange\\.info$',
+    book: '/(?:info|wapbook)-(\\d+)',
+    chapter: '^/read/(\\d+)/(\\d+)\\.html$',
+  },
+  {
+    host: '(^|\\.)bqquge\\.org$',
+    book: '^/(\\d+)(?:/|$)',
+    chapter: '^/(\\d+)/(\\d+)/?$',
+  },
+];
+const MAX_CHAPTER_TITLE_LENGTH = 200;
+const NAV_TITLE_RE =
+  /^(?:目录|目錄|首页|首頁|上一[章页頁]|下一[章页頁]|返回书页|返回書頁)$/;
+
 /**
  * 已知站点的详情页本身不展示章节，需要先换算到目录页再执行通用识别。
  * 只转换同站、可从路径确定书号的路由，避免根据页面文案猜测并跳到广告链接。
@@ -54,6 +81,7 @@ export function getRecognitionTargetUrl(url: string): string {
 /**
  * 注入页面执行的识别脚本（纯字符串，DOM-only）。结果经 window.ReactNativeWebView
  * .postMessage 回传。末尾的 `true;` 是 iOS injectedJavaScript 的要求。
+ * 模板字符串中的正则反斜杠需要双写；TS 编译不会检查生成脚本的语法，须运行注入脚本测试。
  */
 export const RECOGNIZER_JS = `(function(){
   var requestId = window.__nvlRecognizeRequestId || '';
@@ -86,16 +114,34 @@ export const RECOGNIZER_JS = `(function(){
   }
   try {
     var reChap = /第\\s*[0-9零一二三四五六七八九十百千两]+\\s*[章节回卷]/;
+    var catalogRoutes = ${JSON.stringify(CATALOG_ROUTES)};
+    var navTitle = new RegExp(${JSON.stringify(NAV_TITLE_RE.source)});
+    function chapterIdentity(href, title) {
+      if (!title || title.length > ${MAX_CHAPTER_TITLE_LENGTH} || navTitle.test(title)) return '';
+      try {
+        var base = new URL(location.href), target = new URL(href, location.href);
+        if (!/^https?:$/.test(target.protocol)) return '';
+        for (var r = 0; r < catalogRoutes.length; r++) {
+          var rule = catalogRoutes[r], host = new RegExp(rule.host, 'i');
+          if (!host.test(base.hostname)) continue;
+          var book = new RegExp(rule.book, 'i').exec(base.pathname);
+          // 首页/搜索结果没有当前书号，不能退回按章名拼出一本推荐区假书。
+          if (!book) return '';
+          var chapter = new RegExp(rule.chapter, 'i').exec(target.pathname);
+          return host.test(target.hostname) && chapter && chapter[1] === book[1] ? rule.host + ':' + book[1] + ':' + chapter[2] : '';
+        }
+        return reChap.test(title) ? target.href : '';
+      } catch(ignore) { return ''; }
+    }
     var seen = {}, chapters = [], pageSeen = {}, pageUrls = [];
     var as = document.querySelectorAll('a[href]');
     for (var i = 0; i < as.length; i++) {
       var a = as[i];
       var t = (a.textContent || '').replace(/\\s+/g, ' ').trim();
-      if (!t || t.length > 40 || !reChap.test(t)) continue;
       var href = a.href;
-      if (!href || href.indexOf('javascript:') === 0) continue;
-      if (seen[href]) continue;
-      seen[href] = 1;
+      var identity = href && chapterIdentity(href, t);
+      if (!identity || seen[identity]) continue;
+      seen[identity] = 1;
       chapters.push({ title: t, url: href });
     }
     // 常见小说站把目录拆成“1 2 3 … 下一页”形式。先定位“下一页”所在的分页栏，
@@ -103,13 +149,13 @@ export const RECOGNIZER_JS = `(function(){
     function pagerText(v){ return /^[0-9]{1,3}$/.test(v) || /^(上一页|下一页|上页|下页|首页|尾页|末页)$/.test(v); }
     var pagerRoot = null;
     for (var n = 0; n < as.length && !pagerRoot; n++) {
-      var nt = (as[n].textContent || '').replace(/\s+/g, ' ').trim();
+      var nt = (as[n].textContent || '').replace(/\\s+/g, ' ').trim();
       if (!/^(下一页|下页|尾页|末页)$/.test(nt)) continue;
       var parent = as[n].parentElement, depth = 0;
       while (parent && depth < 5) {
         var links = parent.querySelectorAll('a[href]'), candidates = 0;
         for (var q = 0; q < links.length; q++) {
-          var qt = (links[q].textContent || '').replace(/\s+/g, ' ').trim();
+          var qt = (links[q].textContent || '').replace(/\\s+/g, ' ').trim();
           if (pagerText(qt)) candidates++;
         }
         if (candidates >= 2) { pagerRoot = parent; break; }
@@ -121,8 +167,8 @@ export const RECOGNIZER_JS = `(function(){
     function relatedPagerLink(href){
       try {
         var target = new URL(href, location.href);
-        var basePath = location.pathname.replace(/\/$/, '');
-        var path = target.pathname.replace(/\/$/, '');
+        var basePath = location.pathname.replace(/\\/$/, '');
+        var path = target.pathname.replace(/\\/$/, '');
         return target.host === location.host && (
           path === basePath ||
           path.indexOf(basePath + '-') === 0 ||
@@ -134,7 +180,7 @@ export const RECOGNIZER_JS = `(function(){
     var pagerLinks = pagerRoot ? pagerRoot.querySelectorAll('a[href]') : [];
     for (var p = 0; p < pagerLinks.length; p++) {
       var pa = pagerLinks[p];
-      var pt = (pa.textContent || '').replace(/\s+/g, ' ').trim();
+      var pt = (pa.textContent || '').replace(/\\s+/g, ' ').trim();
       var ph = pa.href;
       if (!ph || ph === location.href || pageSeen[ph] || !pagerText(pt) || !relatedPagerLink(ph)) continue;
       pageSeen[ph] = 1;
@@ -157,6 +203,8 @@ export const RECOGNIZER_JS = `(function(){
       } catch(ignore) {}
     }
     if (templateLink && totalPages > 1 && totalPages <= 200) {
+      // 明确知道总页数时按页码重新生成，不能把先遇到的尾页排在第二页之后。
+      pageUrls = []; pageSeen = {};
       for (var pn = 1; pn <= totalPages; pn++) {
         var generated = templateLink.origin + templateLink.prefix + pn + templateLink.suffix;
         if (pn === currentPage || generated === location.href || pageSeen[generated]) continue;
@@ -166,11 +214,17 @@ export const RECOGNIZER_JS = `(function(){
     }
     function meta(sel){ var m = document.querySelector(sel); return m ? (m.getAttribute('content') || '').trim() : ''; }
     var title = meta('meta[property="og:novel:book_name"]') || meta('meta[property="og:title"]');
+    // 明智屋当前 h1 是站点 Logo；网页导入也必须读取 novel-name，封面限定本书编号。
+    var mingBook = /(^|\\.)mingzw\\.net$/i.test(location.hostname) && /\\/(?:mibook|mzwbook|mclist|mzwchapter)\\/(\\d+)/.exec(location.pathname);
+    if (!title && mingBook) { var novelName = document.querySelector('.novel-name'); title = novelName ? (novelName.textContent || '').trim().replace(/^《(.+)》$/, '$1') : ''; }
     if (!title) { var h = document.querySelector('h1'); title = h ? (h.textContent || '').trim() : ''; }
     if (!title) title = (document.title || '').split(/[-_|]/)[0].trim();
     var author = meta('meta[property="og:novel:author"]') || meta('meta[name="author"]');
+    if (!author && mingBook) { var authorLink = document.querySelector('a[title^="作者:"]') || document.querySelector('a[title^="作者："]'); author = authorLink ? (authorLink.textContent || '').trim() : ''; }
+    if (!author && mingBook) { var labels = document.querySelectorAll('dt'); for (var ai = 0; ai < labels.length; ai++) { if (/^作者\\s*[：:]?$/.test((labels[ai].textContent || '').trim()) && labels[ai].nextElementSibling) { author = (labels[ai].nextElementSibling.textContent || '').trim(); break; } } }
     if (!author) { var bt = document.body.innerText || ''; var am = bt.match(/作者[：:\\s]*([^\\n\\r，,。]{1,20})/); author = am ? am[1].trim() : ''; }
     var cover = meta('meta[property="og:image"]');
+    if (!cover && mingBook) { var bookImage = document.querySelector('img[src*="/images/mzwid/' + mingBook[1] + '."]'); cover = bookImage ? new URL(bookImage.getAttribute('src'), location.href).href : ''; }
     var payload = {
       type: '${RECOGNIZE_MESSAGE}', ok: true,
       isDetail: chapters.length >= ${MIN_CHAPTERS},
@@ -186,6 +240,38 @@ export const RECOGNIZER_JS = `(function(){
 })(); true;`;
 
 const CHAPTER_TITLE_RE = /第\s*[0-9零一二三四五六七八九十百千两]+\s*[章节回卷]/;
+
+// 章节号是已知站点的稳定身份；镜像域名和 miread/mzwread 别名不能生成重复目录项。
+function catalogChapterIdentity(
+  baseUrl: string,
+  url: string,
+  title: string,
+): string {
+  if (
+    !title ||
+    title.length > MAX_CHAPTER_TITLE_LENGTH ||
+    NAV_TITLE_RE.test(title)
+  )
+    return '';
+  try {
+    const base = new URL(baseUrl);
+    const target = new URL(url);
+    for (const rule of CATALOG_ROUTES) {
+      const host = new RegExp(rule.host, 'i');
+      if (!host.test(base.hostname)) continue;
+      const book = new RegExp(rule.book, 'i').exec(base.pathname);
+      // 首页/搜索结果没有当前书号，不能混入推荐区的章节。
+      if (!book) return '';
+      const chapter = new RegExp(rule.chapter, 'i').exec(target.pathname);
+      return host.test(target.hostname) && chapter && chapter[1] === book[1]
+        ? `${rule.host}:${book[1]}:${chapter[2]}`
+        : '';
+    }
+    return CHAPTER_TITLE_RE.test(title) ? target.href : '';
+  } catch {
+    return '';
+  }
+}
 
 function resolveHref(base: string, href: string): string {
   try {
@@ -213,10 +299,10 @@ export function parseRecognizedChaptersHtml(
       .replace(/&amp;/gi, '&')
       .replace(/\s+/g, ' ')
       .trim();
-    if (!title || title.length > 80 || !CHAPTER_TITLE_RE.test(title)) continue;
     const url = resolveHref(baseUrl, match[1]);
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
+    const identity = url && catalogChapterIdentity(baseUrl, url, title);
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
     chapters.push({ title, url });
   }
   return chapters;
@@ -293,10 +379,32 @@ function htmlMeta(html: string, property: string): string {
  */
 export function recognizeBookHtml(html: string, url: string): RecognizedBook {
   const chapters = parseRecognizedChaptersHtml(html, url);
+  let host = '';
+  let mingBookId = '';
+  try {
+    const parsed = new URL(url);
+    host = parsed.host;
+    if (/(^|\.)mingzw\.net$/i.test(parsed.hostname))
+      mingBookId =
+        /\/(?:mibook|mzwbook|mclist|mzwchapter)\/(\d+)/.exec(
+          parsed.pathname,
+        )?.[1] || '';
+  } catch {
+    // URL 已由地址栏校验；此处仅为兜底，目录仍可按相对地址解析。
+  }
+  // 与 DOM 注入路径保持一致，避免隐藏 WebView 回退后把站名、Logo 当成书籍信息。
+  const mingTitle = mingBookId
+    ? htmlText(
+        /<[^>]+class=["'][^"']*\bnovel-name\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i.exec(
+          html,
+        )?.[1] || '',
+      ).replace(/^《(.+)》$/, '$1')
+    : '';
   const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] || '';
   const title =
     htmlMeta(html, 'og:novel:book_name') ||
     htmlMeta(html, 'og:title') ||
+    mingTitle ||
     htmlText(h1) ||
     htmlText(/<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] || '')
       .split(/[-_|]/)[0]
@@ -304,14 +412,23 @@ export function recognizeBookHtml(html: string, url: string): RecognizedBook {
   const author =
     htmlMeta(html, 'og:novel:author') ||
     htmlMeta(html, 'author') ||
+    (mingBookId
+      ? htmlText(
+          /作者\s*[：:]\s*(?:<[^>]+>\s*)*<a[^>]*>([^<]+)<\/a>/.exec(
+            html,
+          )?.[1] || '',
+        )
+      : '') ||
     htmlText(/作者[：:\s]*([^<\n\r，,。]{1,20})/i.exec(html)?.[1] || '');
-  const cover = htmlMeta(html, 'og:image');
-  let host = '';
-  try {
-    host = new URL(url).host;
-  } catch {
-    // URL 已由地址栏校验；此处仅为兜底，目录仍可按相对地址解析。
-  }
+  const mingCover = mingBookId
+    ? new RegExp(
+        `<img[^>]+src=["']([^"']*/images/mzwid/${mingBookId}\\.[^"']+)["']`,
+        'i',
+      ).exec(html)?.[1]
+    : '';
+  const cover =
+    htmlMeta(html, 'og:image') ||
+    (mingCover ? new URL(mingCover, url).href : '');
   return {
     ok: true,
     isDetail: chapters.length >= MIN_CHAPTERS,
@@ -341,21 +458,48 @@ export async function expandRecognizedCatalog(
   );
   if (pages.length === 0) return book;
 
-  const chapters = [...book.chapters];
-  const seen = new Set(chapters.map(chapter => chapter.url));
-  for (let index = 0; index < pages.length; index += 1) {
-    const pageUrl = pages[index];
+  // DOM 回传的分页链接按页面出现顺序排列，可能是“下一页、尾页、中间页”；
+  // 仅在全部 URL 能归属于同一分页模板时排序，也把当前页放回它原本的位置。
+  const orderedPages = orderCatalogPages([currentUrl, ...pages]);
+  const chapters: RecognizedChapter[] = [];
+  const seen = new Set<string>();
+  let fetchedPages = 0;
+  for (const pageUrl of orderedPages) {
+    if (pageUrl === currentUrl) {
+      for (const chapter of book.chapters) {
+        const identity = catalogChapterIdentity(
+          book.url,
+          chapter.url,
+          chapter.title,
+        );
+        if (identity && !seen.has(identity)) {
+          seen.add(identity);
+          chapters.push(chapter);
+        }
+      }
+      continue;
+    }
+    fetchedPages++;
     let pageChapters: RecognizedChapter[] = [];
     let lastError = '';
     // 免费站目录页会偶发先返回广告页/空 DOM；单次失败不能让已解析的十几页目录白费。
     // 重试之间留出短暂间隔，让 WebView 完成上一次跳转和 Cookie 写入后再请求同一页。
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      onProgress?.(index + 1, pages.length, attempt);
+      onProgress?.(fetchedPages, pages.length, attempt);
       try {
         const html = await fetchPageHtml(pageUrl);
         pageChapters = parseRecognizedChaptersHtml(html, pageUrl);
-        if (pageChapters.length > 0) break;
-        lastError = '未识别到章节';
+        if (
+          pageChapters.some(
+            chapter =>
+              !seen.has(
+                catalogChapterIdentity(book.url, chapter.url, chapter.title),
+              ),
+          )
+        )
+          break;
+        pageChapters = [];
+        lastError = '未识别到新章节，目录分页可能失效';
       } catch (error) {
         lastError = error instanceof Error ? error.message : '页面加载失败';
       }
@@ -365,17 +509,58 @@ export async function expandRecognizedCatalog(
     }
     if (pageChapters.length === 0) {
       throw new Error(
-        `目录第 ${index + 2} 页加载失败（已重试 3 次）：${lastError}`,
+        `目录分页加载失败（已重试 3 次）：${lastError}（${pageUrl}）`,
       );
     }
     pageChapters.forEach(chapter => {
-      if (!seen.has(chapter.url)) {
-        seen.add(chapter.url);
+      const identity = catalogChapterIdentity(
+        book.url,
+        chapter.url,
+        chapter.title,
+      );
+      if (identity && !seen.has(identity)) {
+        seen.add(identity);
         chapters.push(chapter);
       }
     });
   }
   return { ...book, chapters, pageUrls: [] };
+}
+
+function orderCatalogPages(urls: string[]): string[] {
+  for (const candidate of urls) {
+    const template = new URL(candidate);
+    const match = /^(.*[_-])(\d+)(\/|\.html?)?$/i.exec(template.pathname);
+    if (!match) continue;
+    const prefix = match[1];
+    const suffix = match[3] || '';
+    const firstPath = `${prefix.slice(0, -1)}${suffix}`;
+    const numbers = urls.map(url => {
+      const parsed = new URL(url);
+      if (
+        parsed.origin !== template.origin ||
+        parsed.search !== template.search
+      )
+        return null;
+      if (parsed.pathname === firstPath) return 1;
+      if (
+        !parsed.pathname.startsWith(prefix) ||
+        !parsed.pathname.endsWith(suffix)
+      )
+        return null;
+      const value = parsed.pathname.slice(
+        prefix.length,
+        suffix ? -suffix.length : undefined,
+      );
+      return /^\d+$/.test(value) ? Number(value) : null;
+    });
+    if (numbers.some(number => number === null)) continue;
+    return urls
+      .map((url, index) => ({ url, number: numbers[index]! }))
+      .sort((a, b) => a.number - b.number)
+      .map(item => item.url);
+  }
+  return urls;
 }
 
 /** 把地址栏输入解析成要加载的 URL：像网址则直连，否则走 Bing 搜索。 */

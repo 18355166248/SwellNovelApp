@@ -126,20 +126,39 @@ export async function fetchSourceRecommendations(): Promise<
  */
 export async function searchSourceCatalogs(
   keyword: string,
-  options: { timeoutMs?: number } = {},
+  options: {
+    timeoutMs?: number;
+    onResults?: (results: SourceRecommendation[]) => void;
+  } = {},
 ): Promise<SourceRecommendation[]> {
   const normalized = normalizeSearchText(keyword);
   if (!normalized) return [];
+  const matching = (items: SourceRecommendation[]) =>
+    unique(items).filter(
+      item =>
+        resolveSource(item.url) &&
+        (normalizeSearchText(item.title).includes(normalized) ||
+          normalizeSearchText(item.author ?? '').includes(normalized)),
+    );
+  const searchOne = async (
+    url: string,
+    parse: (html: string) => SourceRecommendation[],
+  ) => {
+    const items = matching(
+      parse(
+        await fetchHtml(url, options.timeoutMs, {
+          preferLocalProxy: true,
+        }),
+      ),
+    );
+    // 代理失败后还可能直连重试；先回传已成功的站点，避免慢站耗尽总时限后丢掉快站结果。
+    if (items.length) options.onResults?.(items);
+    return items;
+  };
   const groups = await Promise.allSettled([
-    fetchHtml(BOOKSHUKU_LIST_URL, options.timeoutMs, {
-      preferLocalProxy: true,
-    }).then(parseBookshukuRecommendations),
-    fetchHtml(MINGZW_HOME_URL, options.timeoutMs, {
-      preferLocalProxy: true,
-    }).then(parseMingzwRecommendations),
-    fetchHtml(BQ_HOME_URL, options.timeoutMs, {
-      preferLocalProxy: true,
-    }).then(parseBqqugeRecommendations),
+    searchOne(BOOKSHUKU_LIST_URL, parseBookshukuRecommendations),
+    searchOne(MINGZW_HOME_URL, parseMingzwRecommendations),
+    searchOne(BQ_HOME_URL, parseBqqugeRecommendations),
   ]);
   // 搜索必须区分“没有匹配”和“所有站点都不可用”；单站失败则仍保留另一站结果。
   if (groups.every(group => group.status === 'rejected')) {
@@ -147,12 +166,5 @@ export async function searchSourceCatalogs(
   }
   return unique(
     groups.flatMap(group => (group.status === 'fulfilled' ? group.value : [])),
-  )
-    .filter(
-      item =>
-        resolveSource(item.url) &&
-        (normalizeSearchText(item.title).includes(normalized) ||
-          normalizeSearchText(item.author ?? '').includes(normalized)),
-    )
-    .slice(0, 15);
+  ).slice(0, 15);
 }

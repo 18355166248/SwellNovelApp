@@ -61,6 +61,31 @@ const mockCatalogFetch = fetchHtml as jest.MockedFunction<typeof fetchHtml>;
 describe('书源列表搜索', () => {
   beforeEach(() => mockCatalogFetch.mockReset());
 
+  it('慢站未完成时立即发布其他站点的有效结果', async () => {
+    let finishSlow!: (value: string) => void;
+    mockCatalogFetch.mockImplementation(async url => {
+      if (url.includes('mingzw'))
+        return new Promise(resolve => {
+          finishSlow = resolve;
+        });
+      if (url.includes('bqquge'))
+        return '<a href="/19">都重生了谁考公务员啊</a>';
+      throw new Error('offline');
+    });
+    const onResults = jest.fn();
+    const request = searchSourceCatalogs('都重生了谁考公务员啊', { onResults });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(onResults).toHaveBeenCalledWith([
+      {
+        url: 'https://www.bqquge.org/19',
+        title: '都重生了谁考公务员啊',
+        sourceName: '笔趣阁（bqquge）',
+      },
+    ]);
+    finishSlow('<html></html>');
+    expect(await request).toHaveLength(1);
+  });
+
   it('按作者匹配，单个站点失败仍保留有效书目', async () => {
     mockCatalogFetch.mockImplementation(async url => {
       if (url.includes('bookshuku'))

@@ -535,21 +535,29 @@ it('bookshuku 同路径的 query 子页不会误判成已读章首页', async ()
   jest.runOnlyPendingTimers();
 });
 
-it('浏览器识别可直连笔趣阁后重取专用目录，保留注册书源和分页能力', async () => {
-  const book = {
-    ...incomingBook('bqquge:1'),
-    source: { name: 'bqquge', bookUrl: 'https://www.bqquge.org/1' },
-  };
-  jest.mocked(addOnlineBook).mockResolvedValue(result(book, [1, 2, 3]));
-  const added = await useAddRecognizedBook()({
-    ...recognized([1]),
-    host: 'www.bqquge.org',
-    url: 'https://www.bqquge.org/1',
-  });
-  expect(addOnlineBook).toHaveBeenCalledWith('https://www.bqquge.org/1');
-  expect(added.source?.name).toBe('bqquge');
-  expect(mockStore.get(chaptersAtom)[added.id]).toHaveLength(3);
-});
+it.each([
+  ['bqquge', 'https://www.bqquge.org/1'],
+  ['mingzw', 'https://tw.mingzw.net/mzwchapter/1.html'],
+])(
+  '浏览器识别 %s 后重取专用目录，保留注册书源和正文能力',
+  async (source, url) => {
+    const book = {
+      ...incomingBook(`${source}:1`),
+      cover: 'https://covers.test/book.jpg',
+      source: { name: source, bookUrl: url },
+    };
+    jest.mocked(addOnlineBook).mockResolvedValue(result(book, [1, 2, 3]));
+    const added = await useAddRecognizedBook()({
+      ...recognized([1]),
+      host: new URL(url).host,
+      url,
+    });
+    expect(addOnlineBook).toHaveBeenCalledWith(url);
+    expect(added.source?.name).toBe(source);
+    expect(added.cover).toBe('https://covers.test/book.jpg');
+    expect(mockStore.get(chaptersAtom)[added.id]).toHaveLength(3);
+  },
+);
 
 describe('启动追更只检查过期书籍', () => {
   it('跳过今天已检查和回收站书籍，不下载新章正文', async () => {
@@ -630,4 +638,63 @@ it('加载中返回会取消底层正文，迟到结果不缓存，重新打开�
   await Promise.resolve();
   expect(mockStore.get(chaptersAtom)[book.id][0].content).toBe(content);
   expect(parse).toHaveBeenCalledTimes(2);
+});
+
+it('目录长标题在正文加载与缓存后保持原样，不降级为“章节”', async () => {
+  const book = incomingBook();
+  const title = `第446章 清明时节雨纷纷（${'感谢读者支持'.repeat(10)}）`;
+  mockStore.set(booksAtom, [book]);
+  mockStore.set(chaptersAtom, {
+    [book.id]: [{ ...chapter(book.id, 'long-title', 1), title }],
+  });
+  jest
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+    .mockResolvedValue({
+      content: '完整正文。'.repeat(100),
+      complete: true,
+    });
+  const loaded = await useEnsureChapterContent()(book.id, 0);
+  expect(loaded?.title).toBe(title);
+  expect(mockStore.get(chaptersAtom)[book.id][0].title).toBe(title);
+});
+
+it('TXT 详情页只有最新章节时，网页导入重取完整目录及正规书籍信息', async () => {
+  const url = 'http://wap.bookshuku.org/bookinfo/149463.html';
+  const book = {
+    ...incomingBook('bookshuku:149463'),
+    title: '都重生了谁考公务员啊',
+    source: {
+      name: 'bookshuku',
+      bookUrl: 'http://wap.bookshuku.org/read/149463.html',
+    },
+  };
+  const complete = result(
+    book,
+    Array.from({ length: 954 }, (_, index) => index + 1),
+  );
+  jest.mocked(addOnlineBook).mockResolvedValueOnce(complete);
+  const added = await useAddRecognizedBook()({
+    ...recognized(),
+    url,
+    host: 'wap.bookshuku.org',
+    title: 'SEO 下载标题',
+    chapters: recognized().chapters.slice(-2),
+  });
+  expect(addOnlineBook).toHaveBeenCalledWith(url);
+  expect(added.title).toBe(book.title);
+  expect(added.source?.name).toBe('bookshuku');
+  expect(mockStore.get(chaptersAtom)[added.id]).toHaveLength(954);
+});
+
+it('TXT 完整目录校验失败时，不退回保存网页里的最新少量章', async () => {
+  jest.mocked(addOnlineBook).mockRejectedValueOnce(new Error('目录解析不完整'));
+  await expect(
+    useAddRecognizedBook()({
+      ...recognized(),
+      url: 'http://wap.bookshuku.org/bookinfo/149463.html',
+      host: 'wap.bookshuku.org',
+    }),
+  ).rejects.toThrow('目录解析不完整');
+  expect(mockStore.get(booksAtom)).toEqual([]);
+  expect(saveBookChapters).not.toHaveBeenCalled();
 });

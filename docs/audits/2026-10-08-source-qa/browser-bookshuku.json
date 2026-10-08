@@ -1,0 +1,121 @@
+{
+  "checkedAt": "2026-10-08T09:40:36.567Z",
+  "transport": "App fetchHtml with curl transport; native WebView unavailable",
+  "results": [
+    {
+      "url": "http://wap.bookshuku.org/bookinfo/149463.html",
+      "source": "bookshuku",
+      "status": "passed",
+      "samples": [
+        {
+          "index": 0,
+          "title": "第1章、戒不掉的肌肉反应",
+          "url": "http://wap.bookshuku.org/read/149463_1.html",
+          "status": "passed",
+          "chars": 2636,
+          "complete": true,
+          "parsedTitle": "第1章、戒不掉的肌肉反应"
+        },
+        {
+          "index": 477,
+          "title": "第453章、箭在弦上也不发",
+          "url": "http://wap.bookshuku.org/read/149463_478.html",
+          "status": "passed",
+          "chars": 2270,
+          "complete": true,
+          "parsedTitle": "第453章、箭在弦上也不发"
+        },
+        {
+          "index": 953,
+          "title": "第887章、和宋时微的拥抱",
+          "url": "http://wap.bookshuku.org/read/149463_954.html",
+          "status": "passed",
+          "chars": 3073,
+          "complete": true,
+          "parsedTitle": "第887章、和宋时微的拥抱"
+        }
+      ],
+      "title": "都重生了谁考公务员啊",
+      "author": "柳岸花又明",
+      "catalog": {
+        "count": 954,
+        "first": {
+          "url": "http://wap.bookshuku.org/read/149463_1.html",
+          "title": "第1章、戒不掉的肌肉反应"
+        },
+        "last": {
+          "url": "http://wap.bookshuku.org/read/149463_954.html",
+          "title": "第887章、和宋时微的拥抱"
+        },
+        "numbers": {
+          "entries": 954,
+          "maxNumber": 887,
+          "coveredNumbers": 887,
+          "numberedEntries": 887,
+          "unnumberedEntries": 67,
+          "mergedExtraNumbers": 0,
+          "repeatedNumberEntries": 0,
+          "unmatchedNumbers": []
+        }
+      },
+      "ms": 13542,
+      "requests": [
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/bookinfo/149463.html",
+          "status": 200,
+          "ms": 1785
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463.html",
+          "status": 200,
+          "ms": 2807
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_1.html",
+          "status": 200,
+          "ms": 871
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_1_2.html",
+          "status": 200,
+          "ms": 756
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_1_3.html",
+          "status": 200,
+          "ms": 794
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_478.html",
+          "status": 200,
+          "ms": 1358
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_478_2.html",
+          "status": 200,
+          "ms": 937
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_478_3.html",
+          "status": 200,
+          "ms": 1804
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_954.html",
+          "status": 200,
+          "ms": 728
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_954_2.html",
+          "status": 200,
+          "ms": 857
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/149463_954_3.html",
+          "status": 200,
+          "ms": 816
+        }
+      ]
+    }
+  ]
+}

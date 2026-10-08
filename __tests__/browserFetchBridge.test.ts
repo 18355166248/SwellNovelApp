@@ -1,9 +1,18 @@
 import {
   chapterPageExtractorJs,
+  extractorJs,
+  htmlExtractorJs,
   parseRenderedChapterPagePayload,
 } from '../src/services/browserFetch/bridge';
 
 describe('browser chapter page extraction', () => {
+  it.each([extractorJs, chapterPageExtractorJs, htmlExtractorJs])(
+    '注入脚本 %p 的生成结果语法有效',
+    createScript => {
+      // eslint-disable-next-line no-new-func
+      expect(() => Function(createScript('syntax-test'))).not.toThrow();
+    },
+  );
   const current = 'http://wap.xuanhuange.info/read/170446/100.html';
 
   it('保留同站点的明确下一页链接', () => {
@@ -18,15 +27,17 @@ describe('browser chapter page extraction', () => {
       ),
     ).toEqual({
       content: '正文内容',
-      nextPageUrl:
-        'http://wap.xuanhuange.info/read/170446/100_2.html',
+      nextPageUrl: 'http://wap.xuanhuange.info/read/170446/100_2.html',
     });
   });
 
   it('拒绝下一章、跨站链接和当前页循环', () => {
     const cases = [
       { nextPageUrl: '/read/170446/101.html', nextPageLabel: '下一章' },
-      { nextPageUrl: 'https://example.com/100_2.html', nextPageLabel: '下一页' },
+      {
+        nextPageUrl: 'https://example.com/100_2.html',
+        nextPageLabel: '下一页',
+      },
       { nextPageUrl: current, nextPageLabel: '下一页' },
     ];
     for (const value of cases) {

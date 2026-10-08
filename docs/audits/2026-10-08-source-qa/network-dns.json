@@ -1,0 +1,150 @@
+[
+  {
+    "host": "tw.mingzw.net",
+    "provider": "cloudflare",
+    "status": 0,
+    "answer": [
+      {
+        "name": "tw.mingzw.net",
+        "type": 1,
+        "TTL": 3600,
+        "data": "204.12.242.220"
+      }
+    ],
+    "error": ""
+  },
+  {
+    "host": "tw.mingzw.net",
+    "provider": "google",
+    "status": 0,
+    "answer": [
+      {
+        "name": "tw.mingzw.net.",
+        "type": 1,
+        "TTL": 2208,
+        "data": "204.12.242.220"
+      }
+    ],
+    "error": ""
+  },
+  {
+    "host": "www.mingzw.net",
+    "provider": "cloudflare",
+    "status": 0,
+    "answer": [
+      {
+        "name": "www.mingzw.net",
+        "type": 5,
+        "TTL": 964,
+        "data": "mingzw.net."
+      },
+      {
+        "name": "mingzw.net",
+        "type": 1,
+        "TTL": 964,
+        "data": "204.12.242.220"
+      }
+    ],
+    "error": ""
+  },
+  {
+    "host": "www.mingzw.net",
+    "provider": "google",
+    "status": 0,
+    "answer": [
+      {
+        "name": "www.mingzw.net.",
+        "type": 5,
+        "TTL": 2978,
+        "data": "mingzw.net."
+      },
+      {
+        "name": "mingzw.net.",
+        "type": 1,
+        "TTL": 3475,
+        "data": "204.12.242.220"
+      }
+    ],
+    "error": ""
+  },
+  {
+    "host": "wap.xuanhuange.info",
+    "provider": "cloudflare",
+    "status": 0,
+    "answer": [
+      {
+        "name": "wap.xuanhuange.info",
+        "type": 5,
+        "TTL": 600,
+        "data": "xuanyge.com.bbqcdn.com."
+      },
+      {
+        "name": "xuanyge.com.bbqcdn.com",
+        "type": 1,
+        "TTL": 600,
+        "data": "172.247.2.131"
+      }
+    ],
+    "error": ""
+  },
+  {
+    "host": "wap.xuanhuange.info",
+    "provider": "google",
+    "status": 0,
+    "answer": [
+      {
+        "name": "wap.xuanhuange.info.",
+        "type": 5,
+        "TTL": 600,
+        "data": "xuanyge.com.bbqcdn.com."
+      },
+      {
+        "name": "xuanyge.com.bbqcdn.com.",
+        "type": 1,
+        "TTL": 600,
+        "data": "172.247.2.131"
+      }
+    ],
+    "error": ""
+  },
+  {
+    "host": "www.xuanhuange.info",
+    "provider": "cloudflare",
+    "status": 0,
+    "answer": [
+      {
+        "name": "www.xuanhuange.info",
+        "type": 5,
+        "TTL": 395,
+        "data": "xuanyge.com.bbqcdn.com."
+      },
+      {
+        "name": "xuanyge.com.bbqcdn.com",
+        "type": 1,
+        "TTL": 395,
+        "data": "172.247.2.131"
+      }
+    ],
+    "error": ""
+  },
+  {
+    "host": "www.xuanhuange.info",
+    "provider": "google",
+    "status": 0,
+    "answer": [
+      {
+        "name": "www.xuanhuange.info.",
+        "type": 5,
+        "TTL": 600,
+        "data": "xuanyge.com.bbqcdn.com."
+      },
+      {
+        "name": "xuanyge.com.bbqcdn.com.",
+        "type": 1,
+        "TTL": 600,
+        "data": "172.247.2.131"
+      }
+    ],
+    "error": ""
+  }
+]

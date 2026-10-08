@@ -5,6 +5,7 @@ const DIGITS: Record<string, number> = {
   一: 1,
   二: 2,
   两: 2,
+  兩: 2,
   三: 3,
   四: 4,
   五: 5,
@@ -16,7 +17,7 @@ const DIGITS: Record<string, number> = {
 function numberOf(value: string): number | null {
   const text = value.replace(/[０-９]/g, c => String(c.charCodeAt(0) - 0xff10));
   if (/^\d+$/.test(text)) return Number(text);
-  if (!/[十百千万]/.test(text)) {
+  if (!/[十百千万萬]/.test(text)) {
     const digits = [...text].map(c => DIGITS[c]);
     return digits.every(n => n !== undefined) ? Number(digits.join('')) : null;
   }
@@ -29,7 +30,10 @@ function numberOf(value: string): number | null {
       continue;
     }
     const unit = (
-      { 十: 10, 百: 100, 千: 1000, 万: 10000 } as Record<string, number>
+      { 十: 10, 百: 100, 千: 1000, 万: 10000, 萬: 10000 } as Record<
+        string,
+        number
+      >
     )[c];
     if (!unit) return null;
     if (unit === 10000) {
@@ -45,10 +49,15 @@ export function catalogNumberSummary(chapters: { title: string }[]) {
   let numberedEntries = 0,
     mergedExtraNumbers = 0,
     maxNumber = 0;
+  // 繁体书源会使用「兩千」「萬」「節」；统计漏认会制造假缺章，但不能据此改动原目录。
   const pattern =
-    /^第\s*([\d０-９零〇一二两三四五六七八九十百千万]+)(?:\s*[-~～—至]\s*([\d０-９零〇一二两三四五六七八九十百千万]+))?\s*[章节回]/;
+    /^第\s*([\d０-９零〇一二两兩三四五六七八九十百千万萬]+)(?:\s*[-~～—至]\s*([\d０-９零〇一二两兩三四五六七八九十百千万萬]+))?\s*[章节節回]/;
   for (const chapter of chapters) {
-    const match = pattern.exec(chapter.title.trim());
+    // 部分目录把卷名并入章标题；只去掉开头明确的卷前缀，避免把章名中的数字计入。
+    const title = chapter.title
+      .trim()
+      .replace(/^第[^\s]+卷\s+.*?\s+(?=第)/, '');
+    const match = pattern.exec(title);
     if (!match) continue;
     const start = numberOf(match[1]),
       end = match[2] ? numberOf(match[2]) : start;

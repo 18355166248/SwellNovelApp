@@ -17,12 +17,25 @@ const SEGMENT_PAGE = `
   <a href="/mzwread/17482_1.html">第一章 七玄门</a>
   <a href="/mzwread/17482_2.html">第二章 青牛镇</a>
   <a href="/miread/frxxz_17482_3.html">第三章 山中人</a>`;
+const SECOND_SEGMENT_PAGE = '<a href="/mzwread/17482_4.html">第四章 新旅程</a>';
 
 const LONG_ARTICLE =
   '这是一段完整的章节正文，用来确认嵌套广告不会截断后面的内容。'.repeat(12);
 
 describe('mingzwSource', () => {
   beforeEach(() => mockFetchHtml.mockReset());
+
+  it('设备可用时不强制走代理，避免代理故障拖住蜂窝网的正常读取', async () => {
+    mockFetchHtml.mockResolvedValue(BOOK_PAGE);
+    const info = await mingzwSource.parseBookInfo(
+      'https://tw.mingzw.net/mzwbook/17482.html',
+    );
+    expect(info.title).toBe('凡人修仙传');
+    expect(mockFetchHtml).toHaveBeenCalledTimes(1);
+    const options = mockFetchHtml.mock.calls[0][2];
+    expect(options?.preferLocalProxy).not.toBe(true);
+    expect(options?.requireLocalProxy).not.toBe(true);
+  });
 
   it('目录分段最多三路并发，乱序返回仍按章节顺序合并', async () => {
     let active = 0;
@@ -76,7 +89,7 @@ describe('mingzwSource', () => {
       if (url.endsWith('/mzwbook/17482.html')) return BOOK_PAGE;
       if (url.endsWith('/mzwchapter/17482.html')) return CATALOG_PAGE;
       if (/\/mclist\/17482_(?:0_100|100_200)\.html$/.test(url))
-        return SEGMENT_PAGE;
+        return url.includes('_100_200') ? SECOND_SEGMENT_PAGE : SEGMENT_PAGE;
       throw new Error(`unexpected url ${url}`);
     });
 
@@ -104,6 +117,10 @@ describe('mingzwSource', () => {
         title: '第三章 山中人',
         url: 'https://tw.mingzw.net/miread/frxxz_17482_3.html',
       },
+      {
+        title: '第四章 新旅程',
+        url: 'https://tw.mingzw.net/mzwread/17482_4.html',
+      },
     ]);
   });
 
@@ -120,10 +137,13 @@ describe('mingzwSource', () => {
         return CATALOG_PAGE + '<a href="/mclist/999_0_100.html">推荐书</a>';
       if (url.includes('tw.mingzw.net') && url.includes('_100_200'))
         return '<h1>广告页</h1>';
-      return SEGMENT_PAGE + '<a href="/mzwread/999_1.html">第一章 其他书</a>';
+      return (
+        (url.includes('_100_200') ? SECOND_SEGMENT_PAGE : SEGMENT_PAGE) +
+        '<a href="/mzwread/999_1.html">第一章 其他书</a>'
+      );
     });
     const chapters = await mingzwSource.parseCatalog(info);
-    expect(chapters).toHaveLength(3);
+    expect(chapters).toHaveLength(4);
     expect(chapters.every(chapter => chapter.url.includes('17482_'))).toBe(
       true,
     );
@@ -147,10 +167,41 @@ describe('mingzwSource', () => {
     );
   });
 
+  it('非空但重复的分段、缺失的中间分段均拒绝入库', async () => {
+    mockFetchHtml.mockImplementation(async url =>
+      url.includes('/mzwchapter/') ? CATALOG_PAGE : SEGMENT_PAGE,
+    );
+    await expect(mingzwSource.parseCatalog(info)).rejects.toThrow(
+      '目录分段重复',
+    );
+    mockFetchHtml.mockResolvedValue(
+      CATALOG_PAGE.replace(/_100_200/g, '_200_300'),
+    );
+    await expect(mingzwSource.parseCatalog(info)).rejects.toThrow(
+      '目录分段不连续',
+    );
+  });
+
   it('短书直接使用完整目录页的章节，无需多抓取不存在的分段页', async () => {
     mockFetchHtml.mockResolvedValue(SEGMENT_PAGE);
     expect(await mingzwSource.parseCatalog(info)).toHaveLength(3);
     expect(mockFetchHtml).toHaveBeenCalledTimes(1);
+  });
+
+  it('保留无章号感言、序章和带空格标题，去除两种路由的同章重复项', async () => {
+    mockFetchHtml.mockResolvedValue(`
+      <a href="/mzwread/17482_1.html">序章</a>
+      <a href="/miread/_17482_1.html">序章</a>
+      <a href="/mzwread/17482_2.html">第 1 章 开始</a>
+      <a href="/mzwread/17482_3.html">上架感言：新旅程</a>
+      <a href="/mzwread/17482_4.html">下一章</a>
+      <a href="https://evil.test/mzwread/17482_5.html">第二章 广告</a>`);
+    const chapters = await mingzwSource.parseCatalog(info);
+    expect(chapters.map(chapter => chapter.title)).toEqual([
+      '序章',
+      '第 1 章 开始',
+      '上架感言：新旅程',
+    ]);
   });
 
   it('parseChapterContent 保留正文容器嵌套 div 后的完整内容', async () => {
@@ -189,8 +240,63 @@ describe('mingzwSource', () => {
     expect(content).toBe(LONG_ARTICLE);
     expect(mockFetchHtml).toHaveBeenCalledWith(
       'https://www.mingzw.net/mzwread/17482_3.html',
-      30000,
-      { preferLocalProxy: true, requireLocalProxy: true },
+      15000,
+      { signal: undefined },
     );
   });
+});
+
+it('兼容实际繁体详情布局：跳过 h1 Logo，读取 novel-name、独立封面和嵌套简介', async () => {
+  mockFetchHtml.mockReset();
+  mockFetchHtml.mockResolvedValue(`<title>測試小說最新章節,測試小說全本在線閱讀-明智屋</title>
+    <h1 class="logo"><a>明智屋小說網</a></h1>
+    <i class="status ">連載</i><i class="novel-name">《測試小說》</i>
+    <div class="pic"><img src="/images/mzwid/42628.jpg"></div>
+    <dl><dt>作者:</dt><dd><a href="/mzwlist/作者.html">測試作者</a></dd></dl>
+    <div class="desc"><div class="title">作品介紹:</div><div class="content">這是書籍簡介。<div>簡介的後半段也需要保留。</div></div></div>`);
+  const info = await mingzwSource.parseBookInfo(
+    'https://tw.mingzw.net/mzwbook/42628.html',
+  );
+  expect(info).toMatchObject({
+    title: '測試小說',
+    author: '測試作者',
+    cover: 'https://tw.mingzw.net/images/mzwid/42628.jpg',
+    status: '連載',
+  });
+  expect(info.description).toContain('這是書籍簡介。');
+  expect(info.description).toContain('簡介的後半段也需要保留。');
+  expect(info.description).not.toContain('作品介紹:');
+});
+
+it('没有正文标题时兼容繁体 title 中的最新章節', async () => {
+  mockFetchHtml.mockReset();
+  mockFetchHtml.mockResolvedValue(
+    '<h1 class="logo">明智屋</h1><title>測試小說最新章節,明智屋</title>',
+  );
+  expect(
+    (
+      await mingzwSource.parseBookInfo(
+        'https://tw.mingzw.net/mzwbook/42628.html',
+      )
+    ).title,
+  ).toBe('測試小說');
+});
+
+it('当前 contents 正文保留全文，剔除书名回显、标点导航和完整站点水印后的推荐书单', async () => {
+  mockFetchHtml.mockReset();
+  mockFetchHtml.mockResolvedValue(`<div class="contents">
+    _測試小說_<p/>&larr;&rarr;：、、、、<p/>
+    ${LONG_ARTICLE}<p/>正文提到新書推薦，但還有後半段。<p/>這是章節的真正結尾。<p/>
+    新書推薦：、、、、 ( 明智屋中文 wWw.MinGzw.Net 沒有彈窗,更新及時 )
+    <div><a href="/mzwbook/99.html">其他小說推薦</a></div><div>上一章 下一章</div>
+  </div>`);
+  const result = await mingzwSource.parseChapterContent(
+    'https://tw.mingzw.net/mzwread/42628_1.html',
+  );
+  const content = typeof result === 'string' ? result : result.content;
+  expect(content.startsWith(LONG_ARTICLE)).toBe(true);
+  expect(content).toContain('正文提到新書推薦，但還有後半段。');
+  expect(content.endsWith('這是章節的真正結尾。')).toBe(true);
+  expect(content).not.toContain('其他小說推薦');
+  expect(content).not.toContain('明智屋中文');
 });

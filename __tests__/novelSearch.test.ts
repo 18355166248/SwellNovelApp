@@ -45,6 +45,31 @@ describe.each([
   ['原生', searchNovels],
   ['Web', searchNovelsWeb],
 ])('%s 搜索策略', (_, search) => {
+  it('书源列表总等待超时后仍保留早到结果，忽略迟到回调', async () => {
+    jest.useFakeTimers();
+    try {
+      const found = {
+        url: 'https://www.bqquge.org/19',
+        title: '都重生了谁考公务员啊',
+        sourceName: '笔趣阁（bqquge）',
+      };
+      let deliver!: (items: (typeof found)[]) => void;
+      mockCatalog.mockImplementation((_keyword, options) => {
+        deliver = options!.onResults!;
+        deliver([found]);
+        return new Promise(() => {});
+      });
+      const onResults = jest.fn();
+      const request = search(found.title, { onResults });
+      await jest.advanceTimersByTimeAsync(5001);
+      expect(await request).toEqual([found]);
+      const calls = onResults.mock.calls.length;
+      deliver([{ ...found, url: 'https://www.bqquge.org/20' }]);
+      expect(onResults).toHaveBeenCalledTimes(calls);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
   it('精确已核验书名先展示，同时继续查其他书源，兼容书名号和空格', async () => {
     const onResults = jest.fn();
     mockFetch.mockImplementation(async url =>

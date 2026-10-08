@@ -43,3 +43,25 @@ it('坏范围与卷标题不展开，完整顺序不报告章号缺失', () => {
     ),
   ).toMatchObject({ maxNumber: 3, unmatchedNumbers: [], unnumberedEntries: 3 });
 });
+
+it('繁体兩、萬、節正常统计，避免明智屋目录出现假缺章', () => {
+  expect(
+    catalogNumberSummary(
+      ['第一章', '第兩章', '第三節', '第四章'].map(title => ({ title })),
+    ),
+  ).toMatchObject({ maxNumber: 4, unmatchedNumbers: [], unnumberedEntries: 0 });
+  expect(
+    catalogNumberSummary(
+      ['第兩千兩百章', '第一萬零一章'].map(title => ({ title })),
+    ),
+  ).toMatchObject({
+    maxNumber: 10001,
+    coveredNumbers: 2,
+    unnumberedEntries: 0,
+  });
+  expect(
+    catalogNumberSummary([
+      { title: '第十一卷 真仙降臨 第兩千四百四十六章 飛升仙界(大結局）' },
+    ]),
+  ).toMatchObject({ maxNumber: 2446, coveredNumbers: 1, unnumberedEntries: 0 });
+});
