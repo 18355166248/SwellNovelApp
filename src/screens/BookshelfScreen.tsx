@@ -9,11 +9,9 @@ import {
   Pressable,
   Platform,
   TextInput,
-  ImageBackground,
-  type ImageSourcePropType,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Text, Icon, LinearGradient, BookCoverImage } from '../components';
+import { Text, Icon, BookCover, BOOK_COVER_ASPECT_RATIO } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -30,7 +28,6 @@ import { useAutomaticFollowCheck } from '../store/hooks/useAutomaticFollowCheck'
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
 import { pickTxtFile } from '../utils/importBook';
-import { paletteForId, COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -66,62 +63,6 @@ function bookAccessibilityLabel(book: Book) {
   return `${book.title}，${book.author}，${
     progress >= 100 ? '已读完' : `已读 ${progress}%`
   }${updateLabel}`;
-}
-
-function coverTitleFontSize(title: string, base: number) {
-  return title.length >= 3 ? base - 2 : base;
-}
-
-const BOOK_COVER_ARTWORKS: Array<{
-  source: ImageSourcePropType;
-  ink: string;
-}> = [
-  { source: require('../assets/book-covers/cover-lychee.jpg'), ink: '#f2e4cf' },
-  {
-    source: require('../assets/book-covers/cover-botanical.jpg'),
-    ink: '#292822',
-  },
-  {
-    source: require('../assets/book-covers/cover-night-boat.jpg'),
-    ink: '#f1e2c7',
-  },
-  {
-    source: require('../assets/book-covers/cover-bookshop.jpg'),
-    ink: '#292822',
-  },
-  {
-    source: require('../assets/book-covers/cover-sunset-courtyard.jpg'),
-    ink: '#f2dfc8',
-  },
-  {
-    source: require('../assets/book-covers/cover-blue-alley.jpg'),
-    ink: '#eee1cb',
-  },
-];
-
-function coverArtworkForId(id: string) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) % Number.MAX_SAFE_INTEGER;
-  }
-  return BOOK_COVER_ARTWORKS[hash % BOOK_COVER_ARTWORKS.length];
-}
-
-function isShortChineseText(value: string) {
-  const characters = Array.from(value.trim());
-  return (
-    characters.length > 0 &&
-    characters.length <= 8 &&
-    characters.filter(character => /[\u3400-\u9fff]/.test(character)).length /
-      characters.length >=
-      0.7
-  );
-}
-
-function verticalCoverText(value: string) {
-  return isShortChineseText(value)
-    ? Array.from(value.trim()).join('\n')
-    : value;
 }
 
 function isToday(timestamp?: number) {
@@ -679,13 +620,6 @@ export default function BookshelfScreen() {
         ) : gridView ? (
           <View style={styles.grid}>
             {shown.map(b => {
-              const artwork = coverArtworkForId(b.id);
-              const verticalTitle = isShortChineseText(b.title);
-              const longVerticalTitle =
-                verticalTitle && Array.from(b.title.trim()).length >= 6;
-              const coverTitleSize = longVerticalTitle
-                ? 15
-                : coverTitleFontSize(b.title, 19);
               const badge =
                 (b.unreadUpdates || 0) > 0
                   ? {
@@ -721,61 +655,50 @@ export default function BookshelfScreen() {
                   onLongPress={() => enterSelection(b.id)}
                   delayLongPress={350}
                 >
-                  <ImageBackground
-                    source={artwork.source}
-                    resizeMode="cover"
-                    style={[styles.cover, theme.shadows.sm]}
-                    imageStyle={styles.coverImage}
-                  >
+                  <View style={[styles.shelfCard, theme.shadows.sm]}>
+                    <BookCover
+                      id={b.id}
+                      uri={b.cover}
+                      title={b.title}
+                      author={b.author}
+                      style={styles.gridCover}
+                    />
                     <View
                       style={[
-                        styles.coverTitleLayer,
-                        longVerticalTitle && styles.coverTitleLayerLong,
+                        styles.coverProgress,
+                        {
+                          backgroundColor: theme.colors.surface,
+                          borderTopColor: theme.colors.border,
+                        },
                       ]}
                     >
-                      <Text
-                        style={[
-                          styles.coverText,
-                          !verticalTitle && styles.coverTextHorizontal,
-                          {
-                            color: artwork.ink,
-                            fontSize: coverTitleSize,
-                            lineHeight: coverTitleSize + 3,
-                          },
-                        ]}
-                        numberOfLines={verticalTitle ? 8 : 3}
-                        maxFontSizeMultiplier={1}
-                      >
-                        {verticalCoverText(b.title)}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.coverAuthor,
-                          longVerticalTitle && styles.coverAuthorBeside,
-                          { color: artwork.ink },
-                        ]}
-                        numberOfLines={5}
-                        maxFontSizeMultiplier={1}
-                      >
-                        {verticalCoverText(
-                          b.author === '本地导入' ? b.author : `${b.author}著`,
+                      <View style={styles.coverProgressRow}>
+                        <Text
+                          style={[
+                            styles.coverProgressText,
+                            { color: theme.colors.textSecondary },
+                          ]}
+                          numberOfLines={1}
+                          maxFontSizeMultiplier={1}
+                        >
+                          读至 {Math.round(b.progress)}%
+                        </Text>
+                        {badge && (
+                          <Text
+                            style={[styles.badgeText, { color: badge.color }]}
+                            numberOfLines={1}
+                            maxFontSizeMultiplier={1}
+                          >
+                            {badge.label}
+                          </Text>
                         )}
-                      </Text>
-                    </View>
-                    <BookCoverImage uri={b.cover} title={b.title} />
-                    <LinearGradient
-                      colors={['rgba(9,12,12,.02)', 'rgba(9,12,12,.28)']}
-                      style={styles.coverShade}
-                      pointerEvents="none"
-                    />
-                    <View style={styles.coverProgress}>
-                      <Text
-                        style={styles.coverProgressText}
-                        maxFontSizeMultiplier={1}
+                      </View>
+                      <View
+                        style={[
+                          styles.coverProgressTrack,
+                          { backgroundColor: theme.colors.border },
+                        ]}
                       >
-                        读至 {Math.round(b.progress)}%
-                      </Text>
-                      <View style={styles.coverProgressTrack}>
                         <View
                           style={[
                             styles.coverProgressFill,
@@ -790,20 +713,7 @@ export default function BookshelfScreen() {
                         />
                       </View>
                     </View>
-                    {badge && (
-                      <View
-                        style={[styles.badge, { backgroundColor: badge.color }]}
-                      >
-                        <Text
-                          style={styles.badgeText}
-                          numberOfLines={1}
-                          maxFontSizeMultiplier={1}
-                        >
-                          {badge.label}
-                        </Text>
-                      </View>
-                    )}
-                  </ImageBackground>
+                  </View>
                   {selectionMode ? (
                     <View
                       style={[
@@ -838,12 +748,10 @@ export default function BookshelfScreen() {
                 onPress={openBookFinder}
               >
                 <View
-                  style={[
-                    styles.cover,
-                    styles.addTile,
-                    { borderColor: theme.colors.border },
-                  ]}
+                  style={[styles.addTile, { borderColor: theme.colors.border }]}
                 >
+                  <View style={styles.cover} />
+                  <View style={styles.addTileFooter} />
                   <View style={styles.addTileContent}>
                     <Icon
                       name="add"
@@ -892,29 +800,14 @@ export default function BookshelfScreen() {
                 onLongPress={() => enterSelection(b.id)}
                 delayLongPress={350}
               >
-                <LinearGradient
-                  colors={[paletteForId(b.id).from, paletteForId(b.id).to]}
-                  {...COVER_GRADIENT_DIRECTION}
+                <BookCover
+                  id={b.id}
+                  uri={b.cover}
+                  title={b.title}
+                  author={b.author}
+                  compact
                   style={styles.listCover}
-                >
-                  <View style={styles.listCoverTitleLayer}>
-                    <Text
-                      style={[
-                        styles.listCoverText,
-                        {
-                          color: paletteForId(b.id).ink,
-                          fontSize: coverTitleFontSize(b.title, 12),
-                          lineHeight: coverTitleFontSize(b.title, 12) + 3,
-                        },
-                      ]}
-                      numberOfLines={2}
-                      maxFontSizeMultiplier={1}
-                    >
-                      {b.title}
-                    </Text>
-                  </View>
-                  <BookCoverImage uri={b.cover} title={b.title} />
-                </LinearGradient>
+                />
                 <View style={styles.listInfo}>
                   <Text variant="h3" numberOfLines={1}>
                     {b.title}
@@ -1068,7 +961,7 @@ export default function BookshelfScreen() {
   );
 }
 
-const COVER_HEIGHT_RATIO = 2.06;
+const COVER_FOOTER_HEIGHT = 42;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -1192,100 +1085,51 @@ const styles = StyleSheet.create({
     rowGap: 16,
   },
   gridItem: { width: '30.5%', position: 'relative' },
+  shelfCard: { borderRadius: 8, overflow: 'hidden' },
   cover: {
     width: '100%',
-    aspectRatio: 1 / COVER_HEIGHT_RATIO,
-    borderRadius: 7,
+    aspectRatio: BOOK_COVER_ASPECT_RATIO,
     overflow: 'hidden',
   },
-  coverImage: { borderRadius: 7 },
-  coverShade: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  coverTitleLayer: {
-    alignItems: 'flex-start',
-    bottom: 45,
-    left: 13,
-    position: 'absolute',
-    right: 10,
-    top: 24,
-  },
-  coverTitleLayerLong: {
-    flexDirection: 'row',
-  },
-  badge: {
-    alignItems: 'center',
-    borderBottomLeftRadius: 7,
-    borderTopRightRadius: 7,
-    height: 22,
-    justifyContent: 'center',
-    minWidth: 39,
-    paddingHorizontal: 7,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    zIndex: 2,
-    elevation: 2,
-  },
+  gridCover: { borderRadius: 0 },
   badgeText: {
-    color: '#fff',
-    fontSize: 10,
-    lineHeight: 13,
-    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
-  },
-  coverText: {
-    fontFamily: SERIF_FONT,
-    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
-    letterSpacing: 0.2,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,.12)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 1,
-  },
-  coverTextHorizontal: {
-    alignSelf: 'stretch',
-    marginTop: 34,
-  },
-  coverAuthor: {
-    fontFamily: SERIF_FONT,
+    flexShrink: 1,
     fontSize: 9,
-    lineHeight: 11,
-    marginTop: 6,
-    opacity: 0.82,
-    textAlign: 'center',
-  },
-  coverAuthorBeside: {
-    alignSelf: 'flex-end',
-    marginLeft: 7,
-    marginTop: 0,
+    lineHeight: 14,
+    textAlign: 'right',
+    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
   coverProgress: {
-    bottom: 10,
-    left: 10,
-    position: 'absolute',
-    right: 10,
+    height: COVER_FOOTER_HEIGHT,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+  },
+  coverProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 4,
   },
   coverProgressText: {
-    color: '#f6f1e9',
-    fontSize: 10.5,
+    flexShrink: 0,
+    fontSize: 10,
     fontWeight: '500',
     lineHeight: 14,
-    textShadowColor: 'rgba(0,0,0,.42)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
   coverProgressTrack: {
-    backgroundColor: 'rgba(255,255,255,.2)',
     borderRadius: 2,
     height: 3,
-    marginTop: 5,
+    marginTop: 7,
     overflow: 'hidden',
   },
   coverProgressFill: {
     borderRadius: 2,
     height: '100%',
   },
+  addTileFooter: { height: COVER_FOOTER_HEIGHT },
   addTile: {
+    borderRadius: 8,
     borderWidth: 1.5,
     borderStyle: 'dashed',
   },
@@ -1315,22 +1159,9 @@ const styles = StyleSheet.create({
   },
   listCover: {
     width: 52,
-    height: 70,
+    aspectRatio: BOOK_COVER_ASPECT_RATIO,
     borderRadius: 5,
     overflow: 'hidden',
-  },
-  listCoverTitleLayer: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 7,
-  },
-  listCoverText: {
-    fontFamily: SERIF_FONT,
-    fontSize: 12,
-    lineHeight: 15,
-    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
-    textAlign: 'center',
   },
   listInfo: {
     flex: 1,

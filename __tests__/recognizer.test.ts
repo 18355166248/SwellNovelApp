@@ -39,6 +39,42 @@ const PAGE_TWO = `
   <a href="/book/9/11.html">第十一章 山门</a>
   <a href="/book/9/12.html">第十二章 夜谈</a>`;
 
+it.each([
+  [
+    '<div class="bookdetail"><img src="/files/cover/book.jpg"></div>',
+    'https://www.bqquge.org/files/cover/book.jpg',
+  ],
+  [
+    '<div class="cover"><img src="//img.bookshuku.org/Cover/19.jpg"></div>',
+    'https://img.bookshuku.org/Cover/19.jpg',
+  ],
+  [
+    '<div id="fmimg"><img src="placeholder.jpg" data-src="/real.jpg?a=1&amp;b=2"></div>',
+    'https://www.bqquge.org/real.jpg?a=1&b=2',
+  ],
+  [
+    '<meta property="og:image" content="/meta.jpg"><div class="cover"><img src="/other.jpg"></div>',
+    'https://www.bqquge.org/meta.jpg',
+  ],
+  [
+    '<img src="/advertisement.jpg"><script>var fake=\'<div class="cover"><img src="/fake.jpg"></div>\';</script>',
+    '',
+  ],
+  ['<div class="cover"><img src="javascript:alert(1)"></div>', ''],
+])('网页和 HTML 回退路径统一提取实际封面：%s', (markup, cover) => {
+  const url = 'https://www.bqquge.org/19';
+  const html = `<h1>测试书籍</h1>${markup}`;
+  expect(recognizeBookHtml(html, url).cover).toBe(cover);
+  const dom = new JSDOM(html, { url, runScripts: 'outside-only' });
+  const posted = jest.fn();
+  Object.defineProperty(dom.window, 'ReactNativeWebView', {
+    value: { postMessage: posted },
+  });
+  dom.window.eval(RECOGNIZER_JS);
+  expect(JSON.parse(posted.mock.calls[0][0]).cover).toBe(cover);
+  dom.window.close();
+});
+
 describe('browser catalog recognizer', () => {
   it.each([
     ['bookshuku.org', '/bookinfo/19.html', '/read/19_', '.html'],

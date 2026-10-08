@@ -13,7 +13,6 @@ import {
   TextInput,
   Pressable,
   ScrollView,
-  Image,
   ActivityIndicator,
   Platform,
 } from 'react-native';
@@ -23,7 +22,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
 import { useTheme } from '../theme/ThemeContext';
-import { Icon } from '../components';
+import { Icon, BookCover } from '../components';
 import { useAddRecognizedBook } from '../store';
 import {
   RECOGNIZER_JS,
@@ -748,16 +747,14 @@ export default function InAppBrowserScreen() {
           ]}
         >
           <View style={styles.sheetInfo}>
-            {recognized.cover ? (
-              <Image source={{ uri: recognized.cover }} style={styles.cover} />
-            ) : (
-              <View
-                style={[
-                  styles.cover,
-                  { backgroundColor: theme.colors.background },
-                ]}
-              />
-            )}
+            <BookCover
+              id={recognized.url}
+              uri={recognized.cover}
+              title={recognized.title || '未命名书籍'}
+              author={recognized.author}
+              compact
+              style={styles.cover}
+            />
             <View style={{ flex: 1 }}>
               <Text
                 numberOfLines={1}
@@ -966,7 +963,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
   },
   sheetInfo: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  cover: { width: 44, height: 59, borderRadius: 4 },
+  cover: { width: 44, borderRadius: 4 },
   sheetGhost: { padding: 6 },
   sheetAdd: {
     alignItems: 'center',

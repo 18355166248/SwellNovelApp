@@ -9,7 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Text, Icon, LinearGradient, BookCoverImage } from '../components';
+import { Text, Icon, LinearGradient, BookCover } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
 import {
   useNavigation,
@@ -37,7 +37,6 @@ import { getSourceById } from '../services/source/registry';
 import { isCompleteOnlineChapterCacheUsable } from '../services/source/contentQuality';
 import {
   DETAIL_HERO_GRADIENT,
-  paletteForId,
   COVER_GRADIENT_DIRECTION,
 } from '../theme/readerThemes';
 
@@ -59,10 +58,6 @@ function relativeTime(ts?: number) {
   return `${Math.floor(hr / 24)} 天前更新`;
 }
 
-function coverTitleFontSize(title: string, base: number) {
-  return title.length >= 3 ? base - 2 : base;
-}
-
 export default function BookDetailScreen() {
   const { theme } = useTheme();
   const navigation = useNavigation<NavigationProp>();
@@ -79,7 +74,6 @@ export default function BookDetailScreen() {
   const cacheWholeBook = useCacheWholeBook();
   const checkBookUpdate = useCheckBookUpdate();
   const toggleBookFollow = useToggleBookFollow();
-  const palette = paletteForId(bookId);
   const bottomActionOffset = Math.max(insets.bottom, 34) + 18;
 
   // 在线书专属：检查更新 / 缓存全本的进行态与结果提示。
@@ -278,31 +272,15 @@ export default function BookDetailScreen() {
               </Pressable>
             </View>
             <View style={styles.heroBody}>
-              <LinearGradient
-                colors={[palette.from, palette.to]}
-                {...COVER_GRADIENT_DIRECTION}
-                style={[styles.heroCover, styles.heroCoverShadow]}
-              >
-                <Text
-                  numberOfLines={2}
-                  maxFontSizeMultiplier={1}
-                  style={[
-                    styles.heroCoverText,
-                    {
-                      color: palette.ink,
-                      fontSize: coverTitleFontSize(book.title, 17),
-                      lineHeight: coverTitleFontSize(book.title, 17) + 4,
-                    },
-                  ]}
-                >
-                  {book.title}
-                </Text>
-                <BookCoverImage
+              <View style={styles.heroCoverShadow}>
+                <BookCover
+                  id={book.id}
                   uri={book.cover}
                   title={book.title}
-                  style={styles.heroCoverImage}
+                  author={book.author}
+                  style={styles.heroCover}
                 />
-              </LinearGradient>
+              </View>
               <View style={styles.heroInfo}>
                 <Text style={styles.heroTitle} numberOfLines={2}>
                   {book.title}
@@ -935,15 +913,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   heroBody: { flexDirection: 'row', gap: 16, marginTop: 16 },
-  heroCover: {
-    width: 82,
-    height: 112,
-    borderRadius: 7,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  heroCover: { width: 96 },
   // 对齐设计稿封面投影 0 12px 28px -8px rgba(0,0,0,.5)
   heroCoverShadow: {
     shadowColor: '#000',
@@ -951,14 +921,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 14,
     elevation: 10,
-  },
-  heroCoverText: {
-    fontFamily: SERIF_FONT,
-    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
-    textAlign: 'center',
-  },
-  heroCoverImage: {
-    borderRadius: 7,
   },
   heroInfo: { flex: 1, paddingTop: 2 },
   heroTitle: {

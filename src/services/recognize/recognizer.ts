@@ -6,7 +6,10 @@
  * 浏览器渲染后的结果，因此天然规避 CORS、Cloudflare JS 挑战、以及 JS 动态渲染。
  * 通用启发式：命中一批“第N章”式锚点即判为目录页；不依赖具体站点结构，未知站也能认。
  */
-
+import {
+  findDivBlock,
+  removeNonContentElements,
+} from '../source/htmlContainers';
 export interface RecognizedChapter {
   title: string;
   url: string;
@@ -224,7 +227,10 @@ export const RECOGNIZER_JS = `(function(){
     if (!author && mingBook) { var labels = document.querySelectorAll('dt'); for (var ai = 0; ai < labels.length; ai++) { if (/^作者\\s*[：:]?$/.test((labels[ai].textContent || '').trim()) && labels[ai].nextElementSibling) { author = (labels[ai].nextElementSibling.textContent || '').trim(); break; } } }
     if (!author) { var bt = document.body.innerText || ''; var am = bt.match(/作者[：:\\s]*([^\\n\\r，,。]{1,20})/); author = am ? am[1].trim() : ''; }
     var cover = meta('meta[property="og:image"]');
-    if (!cover && mingBook) { var bookImage = document.querySelector('img[src*="/images/mzwid/' + mingBook[1] + '."]'); cover = bookImage ? new URL(bookImage.getAttribute('src'), location.href).href : ''; }
+    if (!cover && mingBook) { var bookImage = document.querySelector('img[src*="/images/mzwid/' + mingBook[1] + '."]'); cover = bookImage ? bookImage.getAttribute('src') : ''; }
+    // 笔趣阁、书库不一定提供 og:image，只读取明确封面容器，不能取整页第一张广告/Logo。
+    if (!cover) { var coverImage = document.querySelector('.bookdetail > img') || document.querySelector('.cover > img') || document.querySelector('.book-cover > img') || document.querySelector('#fmimg > img'); cover = coverImage ? (coverImage.getAttribute('data-src') || coverImage.getAttribute('src') || '') : ''; }
+    try { var coverUrl = cover ? new URL(cover, location.href) : null; cover = coverUrl && /^https?:$/.test(coverUrl.protocol) ? coverUrl.href : ''; } catch(ignore) { cover = ''; }
     var payload = {
       type: '${RECOGNIZE_MESSAGE}', ok: true,
       isDetail: chapters.length >= ${MIN_CHAPTERS},
@@ -426,9 +432,32 @@ export function recognizeBookHtml(html: string, url: string): RecognizedBook {
         'i',
       ).exec(html)?.[1]
     : '';
-  const cover =
-    htmlMeta(html, 'og:image') ||
-    (mingCover ? new URL(mingCover, url).href : '');
+  // 与可见网页采用相同的容器优先级；先去脚本，避免广告字符串伪装成封面节点。
+  const cleanHtml = removeNonContentElements(html);
+  const coverBlocks = [
+    findDivBlock(cleanHtml, 'class', 'bookdetail'),
+    findDivBlock(cleanHtml, 'class', 'cover'),
+    findDivBlock(cleanHtml, 'class', 'book-cover'),
+    findDivBlock(cleanHtml, 'id', 'fmimg'),
+  ];
+  const containerCover = coverBlocks
+    .map(block => {
+      const image = /<img\b[^>]*>/i.exec(block?.inner || '')?.[0] || '';
+      return htmlText(
+        /\bdata-src\s*=\s*["']([^"']+)["']/i.exec(image)?.[1] ||
+          /\bsrc\s*=\s*["']([^"']+)["']/i.exec(image)?.[1] ||
+          '',
+      );
+    })
+    .find(Boolean);
+  const rawCover = htmlMeta(html, 'og:image') || mingCover || containerCover;
+  let cover = '';
+  try {
+    const coverUrl = rawCover ? new URL(rawCover, url) : null;
+    if (coverUrl && /^https?:$/.test(coverUrl.protocol)) cover = coverUrl.href;
+  } catch {
+    // 坏封面地址不能导致整本书识别失败，展示组件会退回定制封面。
+  }
   return {
     ok: true,
     isDetail: chapters.length >= MIN_CHAPTERS,
