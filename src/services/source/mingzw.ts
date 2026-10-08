@@ -267,7 +267,7 @@ export const mingzwSource: BookSource = {
       author: decodeEntities(author),
       cover,
       description: description
-        ? sanitizeBookDescription(decodeEntities(stripTags(description)).trim())
+        ? sanitizeBookDescription(description)
         : undefined,
       status,
       // 当前站点的完整目录入口是 mzwchapter；详情页只展示最新章节。

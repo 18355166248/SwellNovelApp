@@ -31,6 +31,7 @@ import {
 } from '../store';
 import { resumeChapterIndex } from '../utils/chapters';
 import { sanitizeBookDescription } from '../utils/bookDescription';
+import BookCatalogModal from './bookDetail/BookCatalogModal';
 import { isBadBookshukuCatalog } from '../utils/bookCatalogQuality';
 import { catalogNumberSummary } from '../utils/catalogNumberSummary';
 import { getSourceById } from '../services/source/registry';
@@ -85,6 +86,7 @@ export default function BookDetailScreen() {
   });
   const [onlineMsg, setOnlineMsg] = React.useState('');
   const [showDeletePrompt, setShowDeletePrompt] = React.useState(false);
+  const [catalogOpen, setCatalogOpen] = React.useState(false);
   // 缓存全本可中断：离开页面或点“停止”时 abort，避免后台继续抓取。
   const cacheAbortRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => cacheAbortRef.current?.abort(), []);
@@ -587,12 +589,8 @@ export default function BookDetailScreen() {
               accessibilityLabel="打开完整目录"
               accessibilityState={{ disabled: !catalogReady }}
               onPress={() => {
-                // 目录入口也要先恢复本书的续读章，避免复用上一册的全局章节索引。
-                openChapter(book.id, resumeIdx, { updateProgress: false });
-                navigation.navigate('Reader', {
-                  bookId: book.id,
-                  openDrawer: true,
-                });
+                // 查看目录不进入阅读器，不触发正文抓取、预取或改写全局续读状态。
+                setCatalogOpen(true);
               }}
               style={[styles.tocMore, { opacity: catalogReady ? 1 : 0.45 }]}
             >
@@ -690,6 +688,18 @@ export default function BookDetailScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {catalogOpen && (
+        <BookCatalogModal
+          chapters={chapters}
+          currentIndex={resumeIdx}
+          onClose={() => setCatalogOpen(false)}
+          onSelect={idx => {
+            setCatalogOpen(false);
+            goReader(idx);
+          }}
+        />
+      )}
 
       {showDeletePrompt ? (
         <View

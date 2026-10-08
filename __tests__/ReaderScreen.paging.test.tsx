@@ -44,12 +44,15 @@ const mockNavigation = {
 const mockEnsureChapter = jest.fn();
 const mockLoadNextPage = jest.fn();
 let mockReaderFocused = true;
+let mockOpenDrawer = false;
 jest.mock('../src/utils/readingSession', () => ({
   startReadingSession: jest.fn(() => jest.fn()),
 }));
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => mockNavigation,
-  useRoute: () => ({ params: { bookId: 'paging-test' } }),
+  useRoute: () => ({
+    params: { bookId: 'paging-test', openDrawer: mockOpenDrawer },
+  }),
   useIsFocused: () => mockReaderFocused,
 }));
 jest.mock('react-native-safe-area-context', () => ({
@@ -168,6 +171,7 @@ describe('ReaderScreen paging interactions', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockReaderFocused = true;
+    mockOpenDrawer = false;
     mockNavigationListeners.clear();
     (startReadingSession as jest.Mock).mockClear();
     mockEnsureChapter
@@ -180,6 +184,28 @@ describe('ReaderScreen paging interactions', () => {
   afterEach(async () => {
     if (tree) await act(() => tree.unmount());
     jest.useRealTimers();
+  });
+
+  it('目录预览不请求当前章、可见标题或后续正文，选章后才加载', async () => {
+    mockOpenDrawer = true;
+    await mount(0, true, [makeChapter(0, ''), makeChapter(1, '')], {
+      pageMode: 'scroll',
+    });
+    await act(() => jest.advanceTimersByTime(2000));
+    expect(mockEnsureChapter).not.toHaveBeenCalled();
+    expect(mockLoadNextPage).not.toHaveBeenCalled();
+    expect(startReadingSession).not.toHaveBeenCalled();
+    const directory = tree.root.findByType(FlatList).props;
+    await act(() =>
+      directory.renderItem({ item: directory.data[1] }).props.onPress(),
+    );
+    expect(mockEnsureChapter).not.toHaveBeenCalled();
+    await act(() => jest.advanceTimersByTime(40));
+    expect(mockEnsureChapter).toHaveBeenCalledWith(
+      'paging-test',
+      1,
+      expect.any(Object),
+    );
   });
 
   it('pauses reading time in the directory and when another screen covers the reader', async () => {

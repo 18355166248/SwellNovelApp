@@ -80,10 +80,7 @@ import {
 } from '../theme/readerBackgroundAssets';
 import type { Chapter } from '../store/types/book';
 import { isBadChapterTitle } from '../services/source/contentGuards';
-import {
-  isOnlineChapterCacheUsable,
-  ONLINE_CONTENT_VERSION,
-} from '../services/source/contentQuality';
+import { isOnlineChapterCacheUsable } from '../services/source/contentQuality';
 import { SERIF_FONT } from '../theme/fonts';
 import { useReaderFontFamily } from '../services/fonts/useReaderFontFamily';
 import { FONTS, getFontDef } from '../theme/fontCatalog';
@@ -173,20 +170,6 @@ function displayChapterTitle(chapter: Chapter, index: number): string {
     return fallback;
   }
   return title || fallback;
-}
-
-function needsDrawerTitleResolve(chapter: Chapter): boolean {
-  const title = chapter.title.replace(/\s+/g, ' ').trim();
-  const suffix = title
-    .replace(/^第\s*(?:\d+|[零一二三四五六七八九十百千两万]+)\s*章\s*/, '')
-    .trim();
-  return (
-    chapter.contentVersion !== ONLINE_CONTENT_VERSION ||
-    /^第\s*\d+\s*章$/.test(title) ||
-    /^分节阅读\s*\d+$/.test(title) ||
-    isBadChapterTitle(title) ||
-    isBadChapterTitle(suffix)
-  );
 }
 
 const LINE_LABELS = ['紧凑', '适中', '宽松'];
@@ -649,26 +632,7 @@ export default function ReaderScreen() {
   const [drawerQuery, setDrawerQuery] = React.useState('');
   const [textSearchInput, setTextSearchInput] = React.useState('');
   const [textSearchQuery, setTextSearchQuery] = React.useState('');
-  const [drawerVisibleIndices, setDrawerVisibleIndices] = React.useState<
-    number[]
-  >([]);
   const drawerTocRef = React.useRef<FlatList<DrawerChapterItem>>(null);
-  const drawerViewabilityConfigRef = React.useRef({
-    itemVisiblePercentThreshold: 40,
-  });
-  const onDrawerViewableItemsChangedRef = React.useRef(
-    ({
-      viewableItems,
-    }: {
-      viewableItems: Array<{ item?: DrawerChapterItem }>;
-    }) => {
-      setDrawerVisibleIndices(
-        viewableItems
-          .map(item => item.item?.idx)
-          .filter((idx): idx is number => typeof idx === 'number'),
-      );
-    },
-  );
   const [status, setStatus] = React.useState<'ready' | 'loading' | 'error'>(
     'ready',
   );
@@ -758,7 +722,6 @@ export default function ReaderScreen() {
     ReturnType<typeof setTimeout> | undefined
   >(undefined);
   const pendingScrollPositionRef = React.useRef<number | null>(null);
-  const resolvingDrawerTitlesRef = React.useRef<Set<string>>(new Set());
   const contentRequestTrackerRef = React.useRef<ReturnType<
     typeof createLatestRequestTracker
   > | null>(null);
@@ -881,77 +844,7 @@ export default function ReaderScreen() {
     scrollDrawerToIndex,
   ]);
 
-  const drawerVisibleKey = drawerVisibleIndices.join(',');
-  React.useEffect(() => {
-    if (
-      !readerFocused ||
-      taskSignal.aborted ||
-      !drawerOpen ||
-      drawerTab !== 'toc' ||
-      book?.source?.name !== 'bookshuku' ||
-      drawerVisibleIndices.length === 0
-    ) {
-      return;
-    }
-    let cancelled = false;
-    const controller = new AbortController();
-    const unlink = forwardAbort(taskSignal, controller);
-    const targets = drawerVisibleIndices
-      .map(idx => ({ idx, chapter: chapters[idx] }))
-      .filter(
-        item =>
-          item.chapter?.sourceUrl &&
-          needsDrawerTitleResolve(item.chapter) &&
-          !resolvingDrawerTitlesRef.current.has(item.chapter.id),
-      )
-      .slice(0, 2);
-    if (targets.length === 0) return;
-
-    // 浮层目录只解析当前可见项的真实标题；分批串行，避免打开目录时一次性抓完整本。
-    targets.forEach(({ chapter }) =>
-      resolvingDrawerTitlesRef.current.add(chapter.id),
-    );
-    const timer = setTimeout(() => {
-      if (cancelled || controller.signal.aborted) return;
-      (async () => {
-        for (const { idx, chapter } of targets) {
-          if (cancelled || controller.signal.aborted) return;
-          try {
-            await ensureRef.current(bookId, idx, {
-              background: true,
-              signal: controller.signal,
-            });
-          } catch (error) {
-            console.warn('[ReaderScreen] resolve drawer title failed', {
-              bookId,
-              index: idx,
-              title: chapter.title,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          } finally {
-            resolvingDrawerTitlesRef.current.delete(chapter.id);
-          }
-        }
-      })();
-    }, 600);
-    return () => {
-      cancelled = true;
-      controller.abort();
-      unlink();
-      clearTimeout(timer);
-    };
-  }, [
-    book?.source?.name,
-    bookId,
-    chapters,
-    drawerOpen,
-    drawerTab,
-    drawerVisibleIndices,
-    drawerVisibleKey,
-    readerFocused,
-    taskSignal,
-  ]);
-
+  // 浏览目录只使用已有标题；正文解析与标题校正留到用户明确选章后执行。
   const chapter = chapters[chapterIndex];
   const chapterExcerpts = React.useMemo(
     () => excerpts.filter(item => item.chapterId === chapter?.id),
@@ -1428,7 +1321,17 @@ export default function ReaderScreen() {
   // 在线书：当前章正文尚未抓取时按需拉取并缓存，复用现成的 loading / error 态。
   // 本地书章节已带正文，直接置为 ready。effect 以 chapter.id 为键，换章会自动重跑。
   React.useEffect(() => {
-    if (!readerFocused || taskSignal.aborted || !chapter) return;
+    if (
+      !readerFocused ||
+      taskSignal.aborted ||
+      !readingEngaged ||
+      drawerOpen ||
+      // 目录选章先关闭浮层、稍后提交章节索引；过渡期间不能误请求旧章节。
+      (chapterSwitchTargetRef.current != null &&
+        chapterSwitchTargetRef.current !== chapterIndex) ||
+      !chapter
+    )
+      return;
     const tracker = contentRequestTrackerRef.current!;
     const hasUsableCachedContent = hasUsableChapterContent(
       chapter,
@@ -1491,12 +1394,16 @@ export default function ReaderScreen() {
     contentReloadKey,
     isOnline,
     readerFocused,
+    readingEngaged,
+    drawerOpen,
     taskSignal,
   ]);
 
   React.useEffect(() => {
     if (
       !readerFocused ||
+      !readingEngaged ||
+      drawerOpen ||
       taskSignal.aborted ||
       status !== 'ready' ||
       !isOnline ||
@@ -1542,6 +1449,8 @@ export default function ReaderScreen() {
     status,
     total,
     readerFocused,
+    readingEngaged,
+    drawerOpen,
     taskSignal,
   ]);
 
@@ -4603,8 +4512,6 @@ export default function ReaderScreen() {
                 windowSize={9}
                 removeClippedSubviews={Platform.OS !== 'web'}
                 keyboardShouldPersistTaps="handled"
-                viewabilityConfig={drawerViewabilityConfigRef.current}
-                onViewableItemsChanged={onDrawerViewableItemsChangedRef.current}
                 contentContainerStyle={{
                   paddingHorizontal: 6,
                   paddingBottom: 20,

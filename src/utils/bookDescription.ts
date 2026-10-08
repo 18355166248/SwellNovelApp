@@ -1,3 +1,5 @@
+import { decodeEntities, stripTags } from '../services/source/html';
+
 const PROMOTION_MARKERS = [
   /bookdown\s*小说下载网/i,
   /TXT图书下载网[^，。！？]{0,36}(?:最新|最快|最全|免费)/i,
@@ -12,9 +14,18 @@ const PROMOTION_MARKERS = [
 export function sanitizeBookDescription(value?: string): string | undefined {
   if (!value) return undefined;
 
-  let description = value
+  // 旧书架数据可能保存了原始或实体转义的 HTML；先还原段落，再清理横向空白，
+  // 不能用 \s+ 把有意义的换行压平，也无需为简介挂载 WebView。
+  let description = stripTags(
+    decodeEntities(value)
+      .replace(/\r\n?/g, '\n')
+      .replace(/<br\s*\/?\s*>/gi, '\n')
+      .replace(/<\/(?:p|div|section|li)\s*>/gi, '\n\n'),
+  )
     .replace(/\u00a0/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
     .replace(/^(?:内容)?简介\s*[：:]\s*/i, '');
 
