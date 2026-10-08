@@ -82,6 +82,13 @@ function decodeUnicode(
   return output.join('');
 }
 
+/** 已知 UTF-8 的章节存储块严格解码；保留块内 BOM，不误走整本 TXT 的编码猜测。 */
+export function decodeUtf8Bytes(bytes: Uint8Array): string {
+  const decoded = decodeUnicode(bytes, 'utf-8', true);
+  if (decoded == null) throw new Error('章节文件 UTF-8 编码损坏');
+  return decoded;
+}
+
 export function decodeBytes(bytes: Uint8Array): string {
   // 1) BOM 判定
   if (

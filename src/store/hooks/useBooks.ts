@@ -251,9 +251,10 @@ export const useBookChapters = (
   signal?: AbortSignal,
 ) => {
   const [chaptersMap, setChaptersMap] = useAtom(chaptersAtom);
+  const chapters = bookId ? chaptersMap[bookId] : undefined;
 
   useEffect(() => {
-    if (!bookId || signal?.aborted || chaptersMap[bookId]) {
+    if (!bookId || signal?.aborted || chapters) {
       return;
     }
     const controller = new AbortController();
@@ -276,10 +277,10 @@ export const useBookChapters = (
       controller.abort();
       unlink();
     };
-  }, [bookId, chaptersMap, setChaptersMap, signal]);
+    // 其它书的预取更新不能重启本书大文件读取，否则会反复读同一份正文。
+  }, [bookId, chapters, setChaptersMap, signal]);
 
-  if (!bookId) return [];
-  return chaptersMap[bookId] || [];
+  return chapters || [];
 };
 
 /**

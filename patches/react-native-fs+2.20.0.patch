@@ -1,0 +1,37 @@
+diff --git a/node_modules/react-native-fs/RNFSManager.m b/node_modules/react-native-fs/RNFSManager.m
+--- a/node_modules/react-native-fs/RNFSManager.m
++++ b/node_modules/react-native-fs/RNFSManager.m
+@@ -293,9 +293,10 @@
+   resolve(base64Content);
+ }
+ 
++// RN 新架构把数值参数按 NSInteger 转换；指针签名会让分块读取无法正常调用。
+ RCT_EXPORT_METHOD(read:(NSString *)filepath
+-                  length: (NSInteger *)length
+-                  position: (NSInteger *)position
++                  length: (NSInteger)length
++                  position: (NSInteger)position
+                   resolver:(RCTPromiseResolveBlock)resolve
+                   rejecter:(RCTPromiseRejectBlock)reject)
+ {
+@@ -324,15 +325,17 @@
+     }
+ 
+     // Seek to the position if there is one.
+-    [file seekToFileOffset: (int)position];
++    [file seekToFileOffset: (unsigned long long)position];
+ 
+     NSData *content;
+-    if ((int)length > 0) {
+-        content = [file readDataOfLength: (int)length];
++    if (length > 0) {
++        content = [file readDataOfLength: (NSUInteger)length];
+     } else {
+         content = [file readDataToEndOfFile];
+     }
+ 
++    // 每个分块及时关闭句柄，整本大书会读取数百次，不能积累到系统句柄上限。
++    [file closeFile];
+     NSString *base64Content = [content base64EncodedStringWithOptions:NSDataBase64EncodingEndLineWithLineFeed];
+ 
+     resolve(base64Content);

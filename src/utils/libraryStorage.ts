@@ -10,6 +10,7 @@
 
 import RNFS from 'react-native-fs';
 import { throwIfAborted } from './abort';
+import { readChapterFile } from './readChapterFile';
 import { Book, Bookmark, Chapter, ReadingHistory } from '../store/types/book';
 import { ReaderSettings } from '../store/types/reader';
 import { ReadingStats, emptyReadingStats } from '../store/types/stats';
@@ -181,10 +182,8 @@ export const loadBookChapters = async (
     return null;
   }
   throwIfAborted(signal);
-  const serialized = await RNFS.readFile(path, 'utf8');
-  // RNFS 读取无法中断，但返回后必须先检查，避免已离开的页面仍解析整本 10MB 正文。
-  throwIfAborted(signal);
-  return JSON.parse(serialized) as Chapter[];
+  // 旧文件保持兼容；读取与解码均分块，离开时不会再被 RNFS 内部的整本解码阻塞。
+  return readChapterFile(path, signal);
 };
 
 export const saveBookChapters = async (bookId: string, chapters: Chapter[]) => {

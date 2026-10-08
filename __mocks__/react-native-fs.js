@@ -4,6 +4,8 @@ const RNFS = {
   CachesDirectoryPath: '/mock-caches',
   exists: jest.fn(async () => false),
   readFile: jest.fn(async () => ''),
+  stat: jest.fn(async () => ({ size: 0 })),
+  read: jest.fn(async () => ''),
   writeFile: jest.fn(async () => undefined),
   mkdir: jest.fn(async () => undefined),
   unlink: jest.fn(async () => undefined),
