@@ -1,0 +1,52 @@
+src/navigation/AppNavigator.tsx
+  s_0aa467594d1940::t_d51a0e972732ee 23-37,73-74,84,133-134,137,147,157,167,199-200,205-208,212-213,215-225,228-233
+__tests__/useAutomaticFollowCheck.test.tsx
+  s_0aa467594d1940::t_6062bb6f14edf0 1-16,19-33,36-39,42-89,91-108,123
+  s_0aa467594d1940::t_a1b7c62e6690b9 109-122
+  s_0aa467594d1940::t_46e7c3e4885441 17-18,34-35,40-41
+  s_0aa467594d1940::t_bf542a498dd583 90
+src/components/WebViewFetcher.tsx
+  s_0aa467594d1940::t_d51a0e972732ee 29,47-49,132-136
+  s_0aa467594d1940::t_b5a51be657f459 137
+__tests__/onlineBookImport.test.ts
+  s_0aa467594d1940::t_46e7c3e4885441 555-592
+  s_0aa467594d1940::t_994109d3605b95 15,552-554,593-605
+src/screens/BookshelfScreen.tsx
+  s_0aa467594d1940::t_46e7c3e4885441 551-553
+  s_0aa467594d1940::t_14adaa409ea18b 29,284-285,295-302,304-305,307,556-557,560,575
+App.tsx
+  s_0aa467594d1940::t_d51a0e972732ee 20-23
+  s_0aa467594d1940::t_db58ac04da6296 24
+__tests__/WebViewFetcher.test.tsx
+  s_0aa467594d1940::t_6062bb6f14edf0 1-6,8-36,38,41-51,53,56-65
+  s_0aa467594d1940::t_4317b23d1dd4b6 7
+  s_0aa467594d1940::t_c425d6a3b78f9e 37
+  s_0aa467594d1940::t_62106011124285 39-40
+  s_0aa467594d1940::t_447b3c628ab89a 52
+  s_0aa467594d1940::t_3cf5559111b95e 54-55
+src/store/hooks/useAutomaticFollowCheck.ts
+  s_0aa467594d1940::t_e4dcdd4acfcdb2 34-50,52-57
+  s_0aa467594d1940::t_90fc4eed67a8d1 1-15,17,19,21,23-33,51,58-67
+  s_0aa467594d1940::t_3b03723f0f6163 16,18,20,22
+docs/audits/2026-10-08-ios-startup.md
+  s_0aa467594d1940::t_e397be9fb5c5ab 28
+  s_0aa467594d1940::t_ae5602b3d25ca2 25,27
+  s_0aa467594d1940::t_bcd07e1c7df70f 1-2,4-24,26,29-35
+  s_0aa467594d1940::t_6c73aa1d42d502 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "4f8eeab6b0cc42460cc217a42483a8c2d88fa66f",
+  "prompts": {},
+  "sessions": {
+    "s_0aa467594d1940": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11a5a-cc09-7f92-bc8a-572f22ffab61",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
