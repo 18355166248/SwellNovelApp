@@ -1,0 +1,30 @@
+src/components/BookCoverImage.tsx
+  s_0aa467594d1940::t_344b57d9259935 1-5,7-33,35,37
+  s_0aa467594d1940::t_c3108ceab8f4ee 6
+  s_0aa467594d1940::t_05fb6d4532075e 34
+  s_0aa467594d1940::t_4796e6363916ec 36
+src/components/index.ts
+  s_0aa467594d1940::t_344b57d9259935 7
+src/screens/BookshelfScreen.tsx
+  s_0aa467594d1940::t_344b57d9259935 16,765-770,916
+__tests__/BookCoverImage.test.tsx
+  s_0aa467594d1940::t_35045d965e6e00 1-37
+src/screens/BookDetailScreen.tsx
+  s_0aa467594d1940::t_344b57d9259935 12,300-304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "78ab434d9eb76986048ba12e7e9ad7da8c37221b",
+  "prompts": {},
+  "sessions": {
+    "s_0aa467594d1940": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11a5a-cc09-7f92-bc8a-572f22ffab61",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
