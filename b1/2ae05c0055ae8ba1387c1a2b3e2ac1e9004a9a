@@ -1,0 +1,99 @@
+src/services/http/fetchHtml.web.ts
+  s_0aa467594d1940::t_02c62f7694788a 1,37,39,41,46-47,51
+src/screens/BookDetailScreen.tsx
+  s_0aa467594d1940::t_a712eb1f7d6b3f 2,15-18,20,75-77,100-105,107
+  s_0aa467594d1940::t_78fc6fb32a76d3 1,19,106,124-125,135-136,161,168-171,174,183,186
+src/services/source/types.ts
+  s_0aa467594d1940::t_02c62f7694788a 40,66-67,69
+  s_0aa467594d1940::t_af6e2c7ab8c57f 68
+src/services/source/chapterPages.ts
+  s_0aa467594d1940::t_02c62f7694788a 1,38,67,69,78,86,95-96
+src/utils/libraryStorage.web.ts
+  s_0aa467594d1940::t_47de9172c0f148 11,212,214,216-218
+src/screens/ReaderScreen.tsx
+  s_0aa467594d1940::t_a712eb1f7d6b3f 1-2,432-433,444,887-888,897-898,915,918,920-921,923,939-940,951-952,1431,1447-1448,1453,1455-1460,1468,1479-1480,1493-1494,1498-1505,1507-1508,1515,1517-1518,1520,1533-1534,1537-1544,1546,1549-1555,1571,1659-1660,1764-1765,1783,1785,1795,1810-1811
+  s_0aa467594d1940::t_ceb8e9be96a52c 922,1519,1545,2941-2958,3047-3059
+src/services/http/fetchHtml.ts
+  s_0aa467594d1940::t_02c62f7694788a 1,27,72,79,81,111,113-114,120,127,129,131,155-156,164-165,180-182,187-188,194
+src/services/browserFetch/bridge.ts
+  s_0aa467594d1940::t_02c62f7694788a 1,20-22,35,58-61,84,105,167,190,201,204,206-223,225,236-238,240,242
+docs/audits/2026-10-08-ios-reader-load-cancellation.md
+  s_0aa467594d1940::t_79ac87e35617fa 42
+  s_0aa467594d1940::t_5b8eacc4a66cc8 1-41
+src/services/browserFetch/bridge.web.ts
+  s_0aa467594d1940::t_02c62f7694788a 29,54,56
+  s_0aa467594d1940::t_ac059b77fba91d 55
+src/utils/libraryStorage.ts
+  s_0aa467594d1940::t_f493d11df8480c 12,176,178,183-187
+__tests__/libraryStorage.native.test.ts
+  s_0aa467594d1940::t_532e4b725d4296 3,94-99,101-109
+  s_0aa467594d1940::t_e4f7fcc338df34 100
+  s_0aa467594d1940::t_7ec89d60c7bb2b 110
+src/store/hooks/useScreenTaskSignal.ts
+  s_0aa467594d1940::t_ca187d660d54f9 1-5,7-16,20,22,24-29,35-40
+  s_0aa467594d1940::t_532e4b725d4296 21,23,30-34
+  s_0aa467594d1940::t_7743a60b65201e 6,17-19
+src/utils/abort.ts
+  s_0aa467594d1940::t_ca187d660d54f9 1-14,42-44,46-113
+  s_0aa467594d1940::t_b82d0e6b53d936 15-17,19-21,26-41
+  s_b1adf365732e7c::t_c56ccf6bddd04d 18,22-25,45
+src/components/WebViewFetcher.tsx
+  s_0aa467594d1940::t_935d8c2a1f330c 30,42-44,58-63,65-70,157,173,188,196
+  s_0aa467594d1940::t_fb956f1bc45b70 64
+__tests__/onlineBookImport.test.ts
+  s_0aa467594d1940::t_532e4b725d4296 15,607-632
+  s_0aa467594d1940::t_c5e88246b032f8 633
+__tests__/WebViewFetcher.test.tsx
+  s_0aa467594d1940::t_b8ec15e87e98aa 66-68,70-81,83-89,91-95,101-105,107-115,117-119
+  s_0aa467594d1940::t_43896a13967669 69,96-100,106,116
+  s_0aa467594d1940::t_3748cee1b99f74 82,90
+__tests__/ReaderScreen.paging.test.tsx
+  s_0aa467594d1940::t_532e4b725d4296 30,38,42,171,216-221,223-229,235-238
+  s_0aa467594d1940::t_6b396625c4565b 31-32,35-37,230-234
+  s_0aa467594d1940::t_4df118f0c06d5f 28,33-34,222,239-240
+src/store/hooks/useOnlineBook.ts
+  s_0aa467594d1940::t_47de9172c0f148 86-87,92,97-98,233,511,749,753,767,1047,1049,1083
+  s_0aa467594d1940::t_02c62f7694788a 1-5,83-85,88-91,93-96,239,522,553-608,610-611,613-621,623-656,658-703,705-710,712-722,725-731,733-747,754-766,768-796,798-800,802-809,812-821,823-834,859-870,872-953,955-966,968-978,1081-1082,1131,1167
+  s_0aa467594d1940::t_9428c205551270 1044-1046,1048,1050,1078-1080,1084,1128-1130,1149-1150,1156-1166,1168,1173-1174
+src/store/hooks/useBooks.ts
+  s_0aa467594d1940::t_f493d11df8480c 6,249-252,256,259-261,263,272
+  s_0aa467594d1940::t_2a57d34a36bed4 273
+__tests__/fetchHtml.cancel.test.ts
+  s_0aa467594d1940::t_7e67dd0dcdde38 1-8,10-13,17-32,34-35,37-42
+  s_0aa467594d1940::t_6d12777791a8cd 9,14-16,33,36
+__tests__/abort.test.ts
+  s_0aa467594d1940::t_e3d9c68b3bf05a 1-31,33-36
+  s_0aa467594d1940::t_0ea94b73bd4b47 32
+src/services/source/bqquge.ts
+  s_0aa467594d1940::t_392ccc92b3020b 45,48-50,129,131-133,180-181,187-188
+src/services/source/mingzw.ts
+  s_0aa467594d1940::t_4b0d7bcf4d7aea 1,19,48-52,55,60,65,71,242-245,250,312,316,349-352,356,362
+src/services/source/xs23.ts
+  s_0aa467594d1940::t_2421358195a449 1,71,74,144,146,193-195,209,226-227,234-235
+src/services/source/xuanhuange.ts
+  s_0aa467594d1940::t_7c052b5a53ff47 96-99,101-104,112,125-128,135,139-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "b12ae05c0055ae8ba1387c1a2b3e2ac1e9004a9a",
+  "prompts": {},
+  "sessions": {
+    "s_0aa467594d1940": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11a5a-cc09-7f92-bc8a-572f22ffab61",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    },
+    "s_b1adf365732e7c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11a7b-1349-7111-b78d-49be6e8b7762",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
