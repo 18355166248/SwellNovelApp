@@ -12,6 +12,7 @@ import {
   useAddRecognizedBook,
   useCacheWholeBook,
   useLoadNextChapterPage,
+  useCheckFollowedBooks,
 } from '../src/store/hooks/useOnlineBook';
 import {
   addOnlineBook,
@@ -547,4 +548,58 @@ it('浏览器识别可直连笔趣阁后重取专用目录，保留注册书源�
   expect(addOnlineBook).toHaveBeenCalledWith('https://www.bqquge.org/1');
   expect(added.source?.name).toBe('bqquge');
   expect(mockStore.get(chaptersAtom)[added.id]).toHaveLength(3);
+});
+
+describe('启动追更只检查过期书籍', () => {
+  it('跳过今天已检查和回收站书籍，不下载新章正文', async () => {
+    const today = {
+      ...incomingBook('today'),
+      following: true,
+      lastUpdateCheckAt: Date.now(),
+    };
+    const stale = { ...incomingBook('stale'), following: true };
+    const deleted = {
+      ...incomingBook('deleted'),
+      following: true,
+      deletedAt: 1,
+    };
+    mockStore.set(booksAtom, [today, stale, deleted]);
+    mockStore.set(chaptersAtom, {
+      stale: [chapter('stale', 'stale-0', 1, true)],
+    });
+    const source = getSourceById('xuanhuange')!;
+    const catalog = jest.spyOn(source, 'parseCatalog').mockResolvedValue([
+      { title: '第1章', url: sourceUrl(1) },
+      { title: '第2章', url: sourceUrl(2) },
+    ]);
+    const content = jest.spyOn(source, 'parseChapterContent');
+    try {
+      const value = await useCheckFollowedBooks()({
+        onlyIfStale: true,
+        cacheNewChapters: false,
+      });
+      expect(value).toEqual({
+        checked: 1,
+        updated: 1,
+        failed: 0,
+        cached: 0,
+        cacheFailed: 0,
+      });
+      expect(catalog).toHaveBeenCalledTimes(1);
+      expect(content).not.toHaveBeenCalled();
+      expect(mockStore.get(chaptersAtom).stale[0].content).toBe(
+        chapter('stale', 'stale-0', 1, true).content,
+      );
+      expect(mockStore.get(chaptersAtom).stale[1].content).toBe('');
+      expect(mockStore.get(booksAtom)[0]).toBe(today);
+      // 手动检查不受当天限频限制，仍能检查所有有效追更书籍。
+      catalog.mockClear();
+      const manual = await useCheckFollowedBooks()();
+      expect(manual.checked).toBe(2);
+      expect(catalog).toHaveBeenCalledTimes(2);
+    } finally {
+      catalog.mockRestore();
+      content.mockRestore();
+    }
+  });
 });

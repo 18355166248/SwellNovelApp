@@ -26,6 +26,7 @@ import {
   useCheckFollowedBooks,
   libraryHydratedAtom,
 } from '../store';
+import { useAutomaticFollowCheck } from '../store/hooks/useAutomaticFollowCheck';
 import type { Book } from '../store/types/book';
 import { parseTxtChapters } from '../utils/txt';
 import { pickTxtFile } from '../utils/importBook';
@@ -184,18 +185,6 @@ export default function BookshelfScreen() {
   const importInFlightRef = React.useRef(false);
   const [followChecking, setFollowChecking] = React.useState(false);
   const [followMessage, setFollowMessage] = React.useState('');
-  const automaticCheckStartedRef = React.useRef(false);
-  const screenMountedRef = React.useRef(true);
-  const checkFollowedBooksRef = React.useRef(checkFollowedBooks);
-  checkFollowedBooksRef.current = checkFollowedBooks;
-
-  React.useEffect(() => {
-    screenMountedRef.current = true;
-    return () => {
-      screenMountedRef.current = false;
-    };
-  }, []);
-
   const handleImportTxt = React.useCallback(async () => {
     // 连点可早于 loading 的 React 提交，先同步加锁，防止弹出两个文件选择器并重复入库。
     if (importInFlightRef.current) return;
@@ -292,7 +281,8 @@ export default function BookshelfScreen() {
   }, [navigation]);
 
   const onCheckFollowed = async () => {
-    if (followChecking || followedCount === 0) return;
+    if (followChecking || automaticCheck.checking || followedCount === 0)
+      return;
     setFollowChecking(true);
     try {
       const result = await checkFollowedBooks({ cacheNewChapters: true });
@@ -302,30 +292,19 @@ export default function BookshelfScreen() {
     }
   };
 
+  const automaticCheck = useAutomaticFollowCheck(
+    libraryHydrated &&
+      followedCount > 0 &&
+      needsDailyFollowCheck &&
+      !followChecking,
+    // 启动只检查新章，不自动抓正文；手动“检查更新”仍保留新章缓存能力。
+    () => checkFollowedBooks({ onlyIfStale: true, cacheNewChapters: false }),
+  );
   React.useEffect(() => {
-    if (
-      !libraryHydrated ||
-      followedCount === 0 ||
-      !needsDailyFollowCheck ||
-      automaticCheckStartedRef.current
-    ) {
-      return;
+    if (automaticCheck.result && automaticCheck.result.updated > 0) {
+      setFollowMessage(formatFollowResult(automaticCheck.result));
     }
-
-    automaticCheckStartedRef.current = true;
-    setFollowChecking(true);
-    checkFollowedBooksRef
-      .current({ cacheNewChapters: true })
-      .then(result => {
-        // 自动检查保持安静：只有发现新章时才给出文字反馈，失败可由用户手动重试。
-        if (screenMountedRef.current && result.updated > 0) {
-          setFollowMessage(formatFollowResult(result));
-        }
-      })
-      .finally(() => {
-        if (screenMountedRef.current) setFollowChecking(false);
-      });
-  }, [followedCount, libraryHydrated, needsDailyFollowCheck]);
+  }, [automaticCheck.result]);
 
   return (
     <View
@@ -569,14 +548,16 @@ export default function BookshelfScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={
-              followChecking ? '正在检查追更' : `检查 ${followedCount} 本追更书`
+              followChecking || automaticCheck.checking
+                ? '正在检查追更'
+                : `检查 ${followedCount} 本追更书`
             }
             accessibilityState={{
-              disabled: followChecking,
-              busy: followChecking,
+              disabled: followChecking || automaticCheck.checking,
+              busy: followChecking || automaticCheck.checking,
             }}
             onPress={onCheckFollowed}
-            disabled={followChecking}
+            disabled={followChecking || automaticCheck.checking}
             style={[
               styles.followBar,
               {
@@ -591,7 +572,7 @@ export default function BookshelfScreen() {
               color={theme.colors.accentDark}
             />
             <Text style={[styles.followText, { color: theme.colors.text }]}>
-              {followChecking
+              {followChecking || automaticCheck.checking
                 ? '正在检查追更…'
                 : unreadUpdates > 0
                 ? `追更更新：${unreadUpdates} 章`

@@ -20,17 +20,21 @@ import { useTheme } from '../theme/ThemeContext';
 import { darkTheme } from '../theme/themes';
 import { Icon } from '../components';
 
-// Screens
-import BookshelfScreen from '../screens/BookshelfScreen';
-import DiscoverScreen from '../screens/DiscoverScreen';
-import SearchScreen from '../screens/SearchScreen';
-import MeScreen, { SettingsScreen, WebDavBackupScreen } from '../screens/MeScreen';
-import ReaderScreen from '../screens/ReaderScreen';
-import BookDetailScreen from '../screens/BookDetailScreen';
-import InAppBrowserScreen from '../screens/InAppBrowserScreen';
-import CacheManagementScreen from '../screens/CacheManagementScreen';
-import RecycleBinScreen from '../screens/RecycleBinScreen';
-import ReadingStatsScreen from '../screens/ReadingStatsScreen';
+// 页面首次进入时才加载模块，避免启动渲染导航配置就初始化阅读器、备份与浏览器依赖。
+const screens = {
+  Bookshelf: () => require('../screens/BookshelfScreen').default,
+  Discover: () => require('../screens/DiscoverScreen').default,
+  Search: () => require('../screens/SearchScreen').default,
+  Me: () => require('../screens/MeScreen').default,
+  Reader: () => require('../screens/ReaderScreen').default,
+  BookDetail: () => require('../screens/BookDetailScreen').default,
+  InAppBrowser: () => require('../screens/InAppBrowserScreen').default,
+  CacheManagement: () => require('../screens/CacheManagementScreen').default,
+  RecycleBin: () => require('../screens/RecycleBinScreen').default,
+  ReadingStats: () => require('../screens/ReadingStatsScreen').default,
+  Settings: () => require('../screens/MeScreen').SettingsScreen,
+  WebDavBackup: () => require('../screens/MeScreen').WebDavBackupScreen,
+};
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -66,9 +70,8 @@ const linking: LinkingOptions<RootStackParamList> = {
 function MainTabs({ navigation }: MainTabsProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const [activeTab, setActiveTab] = React.useState<keyof MainTabParamList>(
-    'Bookshelf',
-  );
+  const [activeTab, setActiveTab] =
+    React.useState<keyof MainTabParamList>('Bookshelf');
   const tabBottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 8 : 0);
   const tabContentHeight = 60;
   const isProfileTab = activeTab === 'Me';
@@ -78,8 +81,7 @@ function MainTabs({ navigation }: MainTabsProps) {
     // 离开后按全局明暗主题恢复，避免调用 RCTStatusBarManager 与原生配置冲突。
     navigation.setOptions({
       statusBarStyle:
-        isProfileTab ||
-        theme.colors.background === darkTheme.colors.background
+        isProfileTab || theme.colors.background === darkTheme.colors.background
           ? 'light'
           : 'dark',
     });
@@ -128,10 +130,11 @@ function MainTabs({ navigation }: MainTabsProps) {
             marginTop: 0,
             marginBottom: 2,
           },
-        }}>
+        }}
+      >
         <Tab.Screen
           name="Bookshelf"
-          component={BookshelfScreen}
+          getComponent={screens.Bookshelf}
           options={{
             tabBarLabel: '书架',
             tabBarIcon: ({ color, size }) => (
@@ -141,7 +144,7 @@ function MainTabs({ navigation }: MainTabsProps) {
         />
         <Tab.Screen
           name="Discover"
-          component={DiscoverScreen}
+          getComponent={screens.Discover}
           options={{
             tabBarLabel: '发现',
             tabBarIcon: ({ color, size }) => (
@@ -151,7 +154,7 @@ function MainTabs({ navigation }: MainTabsProps) {
         />
         <Tab.Screen
           name="Search"
-          component={SearchScreen}
+          getComponent={screens.Search}
           options={{
             tabBarLabel: '搜书',
             tabBarIcon: ({ color, size }) => (
@@ -161,7 +164,7 @@ function MainTabs({ navigation }: MainTabsProps) {
         />
         <Tab.Screen
           name="Me"
-          component={MeScreen}
+          getComponent={screens.Me}
           options={{
             tabBarLabel: '我的',
             tabBarIcon: ({ color, size }) => (
@@ -193,30 +196,42 @@ export default function AppNavigator() {
             notification: theme.colors.primary,
           },
           fonts: DefaultTheme.fonts,
-        }}>
+        }}
+      >
         <Stack.Navigator
           screenOptions={{
             headerShown: false,
             statusBarHidden: false,
-            statusBarStyle: theme.colors.background === darkTheme.colors.background
-              ? 'light'
-              : 'dark',
+            statusBarStyle:
+              theme.colors.background === darkTheme.colors.background
+                ? 'light'
+                : 'dark',
             contentStyle: {
               backgroundColor: theme.colors.background,
             },
-          }}>
+          }}
+        >
           <Stack.Screen name="MainTabs" component={MainTabs} />
-          <Stack.Screen name="BookDetail" component={BookDetailScreen} />
-          <Stack.Screen name="Reader" component={ReaderScreen} />
-          <Stack.Screen name="InAppBrowser" component={InAppBrowserScreen} />
-          <Stack.Screen name="Settings" component={SettingsScreen} />
-          <Stack.Screen name="WebDavBackup" component={WebDavBackupScreen} />
+          <Stack.Screen name="BookDetail" getComponent={screens.BookDetail} />
+          <Stack.Screen name="Reader" getComponent={screens.Reader} />
+          <Stack.Screen
+            name="InAppBrowser"
+            getComponent={screens.InAppBrowser}
+          />
+          <Stack.Screen name="Settings" getComponent={screens.Settings} />
+          <Stack.Screen
+            name="WebDavBackup"
+            getComponent={screens.WebDavBackup}
+          />
           <Stack.Screen
             name="CacheManagement"
-            component={CacheManagementScreen}
+            getComponent={screens.CacheManagement}
           />
-          <Stack.Screen name="RecycleBin" component={RecycleBinScreen} />
-          <Stack.Screen name="ReadingStats" component={ReadingStatsScreen} />
+          <Stack.Screen name="RecycleBin" getComponent={screens.RecycleBin} />
+          <Stack.Screen
+            name="ReadingStats"
+            getComponent={screens.ReadingStats}
+          />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

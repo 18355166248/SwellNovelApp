@@ -9,7 +9,6 @@
  */
 import React from 'react';
 import { View } from 'react-native';
-import { WebView as RNWebView } from 'react-native-webview';
 import {
   CONTENT_MESSAGE,
   registerBrowserFetcher,
@@ -18,16 +17,16 @@ import {
 } from '../services/browserFetch/bridge';
 import { isSameSiteNavigation } from '../services/browserFetch/navigationGuard';
 
-// react-native-webview 的 class 组件类型与 React 19 JSX 类型不完全兼容，以 any 渲染。
-const WebView = RNWebView as unknown as React.ComponentType<any>;
-
 // iOS 的 RNCWebView 会把 about:blank 走到 loadFileURL 分支并触发崩溃；空闲态用空 HTML 占位即可。
-const EMPTY_SOURCE = { html: '<!doctype html><html><head></head><body></body></html>' };
+const EMPTY_SOURCE = {
+  html: '<!doctype html><html><head></head><body></body></html>',
+};
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
 
 export function WebViewFetcher() {
   const ref = React.useRef<any>(null);
+  const [activated, setActivated] = React.useState(false);
   const [job, setJob] = React.useState<FetchJob | null>(null);
   const jobRef = React.useRef<FetchJob | null>(null);
   jobRef.current = job;
@@ -45,6 +44,9 @@ export function WebViewFetcher() {
       url: next.url,
       queue: queue.current.length,
     });
+    // 同步占用队首，防止注册时补投的多个任务在 React 提交前互相覆盖。
+    jobRef.current = next;
+    setActivated(true);
     setJob(next);
   }, []);
 
@@ -127,6 +129,12 @@ export function WebViewFetcher() {
     setJob(null);
   };
 
+  // WKWebView 会启动 WebKit 进程；首个实际请求到来前不创建，之后常驻以保留 Cookie。
+  if (!activated) return null;
+  // 延迟加载原生模块；React 19 的 class JSX 类型差异仅在此适配。
+  const WebView = require('react-native-webview')
+    .WebView as React.ComponentType<any>;
+
   return (
     <View style={styles.hiddenHost} pointerEvents="none">
       <WebView
@@ -137,7 +145,11 @@ export function WebViewFetcher() {
         onShouldStartLoadWithRequest={(request: { url?: string }) => {
           const current = jobRef.current;
           // 隐藏抓取器不需要离开目标站；拦截广告重定向，保证回传的是目录/正文 DOM。
-          return !current || !request.url || isSameSiteNavigation(current.url, request.url);
+          return (
+            !current ||
+            !request.url ||
+            isSameSiteNavigation(current.url, request.url)
+          );
         }}
         onLoadEnd={() => {
           const cur = jobRef.current;

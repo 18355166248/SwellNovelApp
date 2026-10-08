@@ -1293,11 +1293,19 @@ export const useCheckFollowedBooks = () => {
   const ensureChapterContent = useEnsureChapterContent();
   const loadNextChapterPage = useLoadNextChapterPage();
 
-  return async (options: { cacheNewChapters?: boolean } = {}) => {
+  return async (
+    options: { cacheNewChapters?: boolean; onlyIfStale?: boolean } = {},
+  ) => {
+    const todayStart = new Date().setHours(0, 0, 0, 0);
     const followed = store
       .get(booksAtom)
       // 回收站里的书已经从书架移除，不应继续消耗网络检查追更或缓存新章。
-      .filter(book => !book.deletedAt && book.source && book.following);
+      .filter(book => !book.deletedAt && book.source && book.following)
+      // 自动检查只处理当天尚未尝试的书，不能因为一本过期就重查整架。
+      .filter(
+        book =>
+          !options.onlyIfStale || (book.lastUpdateCheckAt || 0) < todayStart,
+      );
     let updated = 0;
     let failed = 0;
     let cached = 0;

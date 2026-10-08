@@ -14,9 +14,13 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { LibraryPersistence } from './src/store/LibraryPersistence';
 import { FullscreenController } from './src/components/FullscreenController';
 import { WebViewFetcher } from './src/components/WebViewFetcher';
-import { BookshukuSelfTest } from './src/dev/BookshukuSelfTest';
 import { AppLaunchSplash } from './src/components/AppLaunchSplash';
 import { LibraryReadyGate } from './src/components/LibraryReadyGate';
+
+// 自测模块也会引入完整书源解析链；正式包不在启动路径加载它。
+const BookshukuSelfTest = __DEV__
+  ? require('./src/dev/BookshukuSelfTest').BookshukuSelfTest
+  : () => null;
 
 function AppContent() {
   return (
