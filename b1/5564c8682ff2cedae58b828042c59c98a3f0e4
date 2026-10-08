@@ -1,0 +1,46 @@
+src/utils/readChapterFile.ts
+  s_0aa467594d1940::t_04b0cbea81e9a0 1-27,29-46,48-66
+  s_0aa467594d1940::t_826ea54cbd4062 28
+  s_0aa467594d1940::t_2d9d6e24f63c29 47
+docs/audits/2026-10-08-ios-local-book-loading.md
+  s_0aa467594d1940::t_269530eb4e5c24 1-33,35-47
+  s_0aa467594d1940::t_8bb1d77ec85cb2 34
+src/utils/decodeText.ts
+  s_0aa467594d1940::t_04b0cbea81e9a0 85-91
+src/utils/libraryStorage.ts
+  s_0aa467594d1940::t_04b0cbea81e9a0 13,185-186
+__tests__/jsonObjectArrayParser.test.ts
+  s_0aa467594d1940::t_0ffb950e3dba38 1-5,7-34,36-42
+  s_0aa467594d1940::t_ca8cc76ac22b26 6
+  s_0aa467594d1940::t_48e29866d70fd5 35
+src/store/hooks/useBooks.ts
+  s_0aa467594d1940::t_04b0cbea81e9a0 254,257,280-281,283
+__tests__/readChapterFile.test.ts
+  s_0aa467594d1940::t_f5415799bb5ae1 13
+  s_0aa467594d1940::t_0ffb950e3dba38 1-8,11-12,14,17-28,31-35,37-54,56-60,62,64-72
+  s_0aa467594d1940::t_da07fc33863280 9-10,15-16,29-30,36,55,61,63
+patches/react-native-fs+2.20.0.patch
+  s_0aa467594d1940::t_d50af8f4445ba3 1-37
+src/utils/jsonObjectArrayParser.ts
+  s_0aa467594d1940::t_04b0cbea81e9a0 1-59
+__mocks__/react-native-fs.js
+  s_0aa467594d1940::t_04b0cbea81e9a0 7-8
+__tests__/libraryStorage.native.test.ts
+  s_0aa467594d1940::t_0ffb950e3dba38 97-98,106-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "b15564c8682ff2cedae58b828042c59c98a3f0e4",
+  "prompts": {},
+  "sessions": {
+    "s_0aa467594d1940": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11a5a-cc09-7f92-bc8a-572f22ffab61",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
