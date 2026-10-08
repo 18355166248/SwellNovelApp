@@ -13,7 +13,7 @@ import {
   type ImageSourcePropType,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Text, Icon, LinearGradient } from '../components';
+import { Text, Icon, LinearGradient, BookCoverImage } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -727,10 +727,6 @@ export default function BookshelfScreen() {
                     style={[styles.cover, theme.shadows.sm]}
                     imageStyle={styles.coverImage}
                   >
-                    <LinearGradient
-                      colors={['rgba(9,12,12,.02)', 'rgba(9,12,12,.28)']}
-                      style={styles.coverShade}
-                    />
                     <View
                       style={[
                         styles.coverTitleLayer,
@@ -766,6 +762,12 @@ export default function BookshelfScreen() {
                         )}
                       </Text>
                     </View>
+                    <BookCoverImage uri={b.cover} title={b.title} />
+                    <LinearGradient
+                      colors={['rgba(9,12,12,.02)', 'rgba(9,12,12,.28)']}
+                      style={styles.coverShade}
+                      pointerEvents="none"
+                    />
                     <View style={styles.coverProgress}>
                       <Text
                         style={styles.coverProgressText}
@@ -911,6 +913,7 @@ export default function BookshelfScreen() {
                       {b.title}
                     </Text>
                   </View>
+                  <BookCoverImage uri={b.cover} title={b.title} />
                 </LinearGradient>
                 <View style={styles.listInfo}>
                   <Text variant="h3" numberOfLines={1}>

@@ -4,3 +4,4 @@ export { Text } from './Text';
 export { Input } from './Input';
 export { Icon } from './Icon';
 export { LinearGradient } from './LinearGradient';
+export { BookCoverImage } from './BookCoverImage';

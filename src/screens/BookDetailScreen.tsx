@@ -7,10 +7,9 @@ import {
   ScrollView,
   Pressable,
   Platform,
-  Image,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Text, Icon, LinearGradient } from '../components';
+import { Text, Icon, LinearGradient, BookCoverImage } from '../components';
 import { SERIF_FONT } from '../theme/fonts';
 import {
   useNavigation,
@@ -92,8 +91,6 @@ export default function BookDetailScreen() {
   });
   const [onlineMsg, setOnlineMsg] = React.useState('');
   const [showDeletePrompt, setShowDeletePrompt] = React.useState(false);
-  const [coverFailed, setCoverFailed] = React.useState(false);
-  React.useEffect(() => setCoverFailed(false), [book?.cover]);
   // 缓存全本可中断：离开页面或点“停止”时 abort，避免后台继续抓取。
   const cacheAbortRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => cacheAbortRef.current?.abort(), []);
@@ -300,15 +297,11 @@ export default function BookDetailScreen() {
                 >
                   {book.title}
                 </Text>
-                {book.cover && !coverFailed ? (
-                  <Image
-                    accessibilityLabel={`${book.title}封面`}
-                    source={{ uri: book.cover }}
-                    resizeMode="cover"
-                    onError={() => setCoverFailed(true)}
-                    style={styles.heroCoverImage}
-                  />
-                ) : null}
+                <BookCoverImage
+                  uri={book.cover}
+                  title={book.title}
+                  style={styles.heroCoverImage}
+                />
               </LinearGradient>
               <View style={styles.heroInfo}>
                 <Text style={styles.heroTitle} numberOfLines={2}>
@@ -965,7 +958,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   heroCoverImage: {
-    ...StyleSheet.absoluteFillObject,
     borderRadius: 7,
   },
   heroInfo: { flex: 1, paddingTop: 2 },
