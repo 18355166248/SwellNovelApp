@@ -3,11 +3,22 @@ import {
   recognizeBookHtml,
 } from '../src/services/recognize/recognizer';
 import { isRequestedBrowserNavigation } from '../src/services/browserFetch/navigationGuard';
+import { normalizedChapterIdentity } from '../src/utils/catalogRepair';
+import {
+  chapterPageIdentity,
+  collectChapterPages,
+} from '../src/services/source/chapterPages';
+import { mingzwSource } from '../src/services/source/mingzw';
+import { fetchHtml } from '../src/services/http/fetchHtml';
+
+jest.mock('../src/services/http/fetchHtml', () => ({ fetchHtml: jest.fn() }));
 
 // 使用项目实际安装的 RN URL，而非 Jest/Node 的标准 URL，覆盖真机与测试环境的差异。
 // eslint-disable-next-line @react-native/no-deep-imports
-const { URL: NativeURL } = require('react-native/Libraries/Blob/URL');
+const nativeUrlModule = require('react-native/Libraries/Blob/URL');
+const { URL: NativeURL, URLSearchParams: NativeParams } = nativeUrlModule;
 const standardURL = global.URL;
+const standardParams = global.URLSearchParams;
 const origin = 'http://wap.xuanhuange.info';
 const firstUrl = `${origin}/wapbook-192466/`;
 const secondUrl = `${origin}/wapbook-192466_2/`;
@@ -25,9 +36,57 @@ const pageTwo = `<h1>仙工开物</h1>
 
 beforeEach(() => {
   global.URL = NativeURL;
+  global.URLSearchParams = NativeParams;
 });
 afterEach(() => {
   global.URL = standardURL;
+  global.URLSearchParams = standardParams;
+  jest.clearAllMocks();
+});
+
+it('RN 环境章节身份保留含等号的参数值，不误合并不同链接', () => {
+  expect(
+    normalizedChapterIdentity('https://novel.test/read.php?id=1&token=a=b'),
+  ).toBe('url:novel.test/read.php?id=1&token=a%3Db');
+  expect(
+    normalizedChapterIdentity('https://novel.test/read.php?id=1&token=a=b'),
+  ).not.toBe(
+    normalizedChapterIdentity('https://novel.test/read.php?id=1&token=a'),
+  );
+});
+
+it('RN 环境正确规范分页协议、域名、锚点与参数顺序，换入口也能阻止循环', async () => {
+  const first = 'http://wap.novel.test/read.php?a=1&b=2';
+  const duplicate = 'https://www.novel.test/read.php?b=2&a=1#tail';
+  expect(chapterPageIdentity(first)).toBe(chapterPageIdentity(duplicate));
+  const fetchPage = jest.fn().mockRejectedValue(new Error('不应请求重复子页'));
+  const result = await collectChapterPages({
+    firstPageUrl: first,
+    firstContent: '已读正文',
+    firstNextPageUrl: duplicate,
+    fetchPage,
+    cleanPage: text => text,
+  });
+  expect(fetchPage).not.toHaveBeenCalled();
+  expect(result.content).toBe('已读正文');
+});
+
+it('RN 环境明智屋 .html 章节不被自动追加斜杠，分段目录能成功解析', async () => {
+  jest
+    .mocked(fetchHtml)
+    .mockResolvedValue(
+      '<a href="/mzwread/17482_1.html">第一章 七玄门</a><a href="/mzwread/17482_2.html">第二章 青牛镇</a>',
+    );
+  const chapters = await mingzwSource.parseCatalog({
+    sourceBookId: '17482',
+    title: '测试书',
+    author: '作者',
+    catalogUrl: 'https://tw.mingzw.net/mzwchapter/17482.html',
+  });
+  expect(chapters.map(c => c.url)).toEqual([
+    'https://tw.mingzw.net/mzwread/17482_1.html',
+    'https://tw.mingzw.net/mzwread/17482_2.html',
+  ]);
 });
 
 it('原生环境能解析玄幻阁分页的根相对章节链接及全部分页地址', () => {

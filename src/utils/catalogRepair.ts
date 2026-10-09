@@ -1,3 +1,8 @@
+// 章节身份涉及 query 值和 .html 路径，必须与网页的标准 URL 语义一致，避免真机误合并。
+import {
+  StandardURL as URL,
+  StandardURLSearchParams as URLSearchParams,
+} from './standardUrl';
 import type {
   Book,
   Bookmark,

@@ -19,6 +19,7 @@ const mockNavigation = {
 };
 const mockEnsureChapter = jest.fn();
 const mockCheckUpdate = jest.fn();
+const mockCacheWhole = jest.fn();
 let mockFocused = true;
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => mockNavigation,
@@ -38,6 +39,7 @@ jest.mock('../src/store', () => ({
   ...jest.requireActual('../src/store'),
   useEnsureChapterContent: () => mockEnsureChapter,
   useCheckBookUpdate: () => mockCheckUpdate,
+  useCacheWholeBook: () => mockCacheWhole,
 }));
 // 页面交互用例不发起资料网络请求；补资料的抓取/取消/合并由独立回归与真机验证。
 jest.mock('../src/store/hooks/useBookMetadataRepair', () => ({
@@ -150,6 +152,77 @@ it('browses, searches and closes the catalog without opening a reader or changin
     bookId: 'catalog-test',
   });
   expect(store.get(currentChapterIndexAtom)).toBe(19);
+  await act(() => tree.unmount());
+});
+
+it('同一帧连点缓存仅启动一个任务，第二次点击立即停止该任务', async () => {
+  jest.clearAllMocks();
+  mockFocused = true;
+  const store = createStore();
+  store.set(booksAtom, [
+    {
+      id: 'catalog-test',
+      title: '测试书',
+      author: '作者',
+      addedAt: 1,
+      updatedAt: 1,
+      progress: 0,
+      source: {
+        name: 'xuanhuange',
+        bookUrl: 'http://wap.xuanhuange.info/wapbook-192466/',
+      },
+    },
+  ]);
+  store.set(chaptersAtom, {
+    'catalog-test': [
+      {
+        id: 'c',
+        bookId: 'catalog-test',
+        title: '第1章',
+        order: 0,
+        content: '',
+        sourceUrl: 'http://wap.xuanhuange.info/wapbook-192466-1/',
+      },
+    ],
+  });
+  let finish!: (result: {
+    done: number;
+    total: number;
+    cancelled?: boolean;
+  }) => void;
+  mockCacheWhole.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  let tree!: Renderer.ReactTestRenderer;
+  await act(() => {
+    tree = Renderer.create(
+      <Provider store={store}>
+        <ThemeProvider>
+          <BookDetailScreen />
+        </ThemeProvider>
+      </Provider>,
+    );
+  });
+  const press = tree.root.findAllByProps({
+    accessibilityLabel: '缓存全本',
+  })[0].props.onPress;
+  let pending!: Promise<void>;
+  await act(() => {
+    pending = press();
+    press();
+  });
+  expect(mockCacheWhole).toHaveBeenCalledTimes(1);
+  expect(mockCacheWhole.mock.calls[0][2].aborted).toBe(true);
+  await act(async () => {
+    finish({ done: 0, total: 1, cancelled: true });
+    await pending;
+  });
+  expect(
+    tree.root.findAllByProps({ children: '已停止，缓存了 0/1 项正文' }).length,
+  ).toBeGreaterThan(0);
   await act(() => tree.unmount());
 });
 

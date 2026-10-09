@@ -1,4 +1,6 @@
 import { throwIfAborted } from '../../utils/abort';
+// RN 自带 URL 的属性不可写，规范入口时会退回原字符串，漏掉跨协议/域名的分页循环。
+import { StandardURL as URL } from '../../utils/standardUrl';
 /**
  * 网页分页章节的合并。
  *

@@ -132,7 +132,13 @@ export default function BookDetailScreen() {
   );
 
   const onCheckUpdate = async () => {
-    if (checking || caching.active || !supportsCatalogActions) return;
+    if (
+      checking ||
+      cacheAbortRef.current ||
+      taskSignal.aborted ||
+      !supportsCatalogActions
+    )
+      return;
     setChecking(true);
     setOnlineMsg(
       catalogNeedsRepair ? '正在修复目录…' : '正在逐页检查目录，请稍候…',
@@ -163,12 +169,14 @@ export default function BookDetailScreen() {
 
   const onCacheAll = async () => {
     // 已在缓存时，再次点击即停止。
-    if (caching.active) {
+    // state 要等下一次渲染才更新；同一帧连点也必须停止已有任务，不能启动第二个下载。
+    if (cacheAbortRef.current) {
       cacheAbortRef.current?.abort();
       return;
     }
     if (
       checking ||
+      taskSignal.aborted ||
       catalogNeedsRepair ||
       !supportsCatalogActions ||
       !supportsWholeBookCache ||
@@ -202,8 +210,10 @@ export default function BookDetailScreen() {
       setOnlineMsg('缓存失败，请检查网络后重试');
     } finally {
       unlink();
-      cacheAbortRef.current = null;
-      setCaching(prev => ({ ...prev, active: false }));
+      if (cacheAbortRef.current === controller) {
+        cacheAbortRef.current = null;
+        setCaching(prev => ({ ...prev, active: false }));
+      }
     }
   };
 

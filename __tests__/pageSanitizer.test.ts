@@ -141,6 +141,7 @@ it('新插入、延迟填充及广告脚本重写样式均重新隐藏；重复�
   expect(doc.querySelectorAll('#__nvl_clean_style')).toHaveLength(1);
 });
 
+// 本用例验证扫描范围，不测墙钟性能；JSDOM 构建 1500 项时允许与原生构建争用 CPU。
 it('只清理变动子树；修改单张广告不再次扫描整本长目录', async () => {
   const doc = page(
     `<div id="catalog">${Array.from(
@@ -172,7 +173,7 @@ it('只清理变动子树；修改单张广告不再次扫描整本长目录', a
     jest.clearAllTimers();
     jest.useRealTimers();
   }
-});
+}, 15000);
 
 it('阻止广告点击和脚本弹窗，正常 target=_blank 章节改为当前页', () => {
   const doc = page(

@@ -3,6 +3,7 @@
  */
 
 import { Book, Chapter } from '../store/types/book';
+import { StandardURL as URL } from './standardUrl';
 import { resolveSource } from '../services/source/registry';
 import type { ParsedChapter } from '../services/source/types';
 import { normalizedChapterIdentity } from './catalogRepair';

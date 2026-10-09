@@ -1,4 +1,6 @@
 import { throwIfAborted } from '../../utils/abort';
+// RN URL 会给 .html 地址追加斜杠，破坏章节号匹配；原生与 Web 共用标准路径语义。
+import { StandardURL as URL } from '../../utils/standardUrl';
 /**
  * 书源：明智屋中文网（www.mingzw.net，手机版）。
  *

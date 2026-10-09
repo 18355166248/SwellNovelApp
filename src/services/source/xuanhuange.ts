@@ -12,6 +12,7 @@
  * - 手机正文页 /wapbook-{id}-{cid}/，兼容旧 /read/{id}/{cid}.html；章内分页跟随页面实际“下一页”链接。
  */
 
+import { StandardURL as URL } from '../../utils/standardUrl';
 import {
   cleanRenderedText,
   fetchRenderedChapterPage,

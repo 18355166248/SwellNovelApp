@@ -129,6 +129,336 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+describe('正文缓存与目录变更竞争', () => {
+  it('旧 host 来源的完整缓存判定与阅读器一致，过期浏览器版本必须重抓', async () => {
+    const book = {
+      ...incomingBook(),
+      source: { name: 'wap.xuanhuange.info', bookUrl: catalogUrl },
+    };
+    const old = {
+      ...chapter(book.id, 'cached', 1, true),
+      browserContentVersion: BROWSER_CONTENT_VERSION - 1,
+    };
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [old] });
+    const parse = jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockResolvedValue({
+        content: '完整有效新正文。'.repeat(100),
+        complete: true,
+      });
+    expect(await useCacheWholeBook()(book.id)).toEqual({ done: 1, total: 1 });
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(mockStore.get(chaptersAtom)[book.id][0].browserContentVersion).toBe(
+      BROWSER_CONTENT_VERSION,
+    );
+  });
+
+  it('自动缓存新章期间目录再次重排，仍按新章身份完成后续缓存', async () => {
+    const book = { ...incomingBook(), following: true };
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, {
+      [book.id]: [chapter(book.id, 'a', 1, true)],
+    });
+    const source = getSourceById('xuanhuange')!;
+    jest
+      .spyOn(source, 'parseCatalog')
+      .mockResolvedValueOnce(
+        [1, 2, 3].map(n => ({ title: `第${n}章`, url: sourceUrl(n) })),
+      )
+      .mockResolvedValueOnce(
+        [1, 3, 2].map(n => ({ title: `第${n}章`, url: sourceUrl(n) })),
+      );
+    const response = deferred<{ content: string; complete: boolean }>();
+    const parse = jest
+      .spyOn(source, 'parseChapterContent')
+      .mockReturnValueOnce(response.promise)
+      .mockResolvedValue({
+        content: '完整有效正文。'.repeat(100),
+        complete: true,
+      });
+    const pending = useCheckFollowedBooks()({ cacheNewChapters: true });
+    for (let step = 0; step < 50 && !parse.mock.calls.length; step++)
+      await Promise.resolve();
+    expect(parse).toHaveBeenCalledTimes(1);
+    await useCheckBookUpdate()(book.id);
+    response.resolve({ content: '完整有效正文。'.repeat(100), complete: true });
+    expect(await pending).toMatchObject({ cached: 2, cacheFailed: 0 });
+    expect(parse.mock.calls.map(call => call[0])).toEqual([
+      sourceUrl(2),
+      sourceUrl(3),
+    ]);
+    expect(mockStore.get(chaptersAtom)[book.id].every(c => !!c.content)).toBe(
+      true,
+    );
+  });
+
+  it('全本缓存期间追加新章会纳入同一任务，不误报旧目录已全部缓存', async () => {
+    const book = incomingBook();
+    const a = chapter(book.id, 'a', 1);
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [a] });
+    const response = deferred<{ content: string; complete: boolean }>();
+    const parse = jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValueOnce(response.promise)
+      .mockResolvedValue({
+        content: '完整有效正文。'.repeat(100),
+        complete: true,
+      });
+    const pending = useCacheWholeBook()(book.id);
+    mockStore.set(chaptersAtom, { [book.id]: [a, chapter(book.id, 'new', 2)] });
+    response.resolve({ content: '完整有效正文。'.repeat(100), complete: true });
+    expect(await pending).toEqual({ done: 2, total: 2 });
+    expect(parse).toHaveBeenCalledTimes(2);
+  });
+
+  it('阅读首个子页与全本下载并发时，完整下载能扩展新缓存的首个子页', async () => {
+    const book = incomingBook();
+    const a = chapter(book.id, 'a', 1);
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [a] });
+    const response = deferred<{ content: string; complete: boolean }>();
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValueOnce(response.promise);
+    const pending = useCacheWholeBook()(book.id);
+    const first = '有效首个子页。'.repeat(100);
+    mockStore.set(chaptersAtom, {
+      [book.id]: [
+        {
+          ...a,
+          content: first,
+          contentVersion: ONLINE_CONTENT_VERSION,
+          contentComplete: false,
+          nextPageUrl: sourceUrl(1) + '2.html',
+        },
+      ],
+    });
+    response.resolve({ content: first + '\n完整尾页。', complete: true });
+    expect(await pending).toEqual({ done: 1, total: 1 });
+    expect(mockStore.get(chaptersAtom)[book.id][0]).toMatchObject({
+      content: first + '\n完整尾页。',
+      contentComplete: true,
+    });
+  });
+
+  it('阅读请求晚于完整缓存返回时不能把完整章降回首个子页', async () => {
+    const book = incomingBook();
+    const a = chapter(book.id, 'a', 1);
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [a] });
+    const response = deferred<{
+      content: string;
+      complete: boolean;
+      nextPageUrl?: string;
+    }>();
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValueOnce(response.promise);
+    const pending = useEnsureChapterContent()(book.id, 0);
+    await Promise.resolve();
+    const full = {
+      ...chapter(book.id, 'a', 1, true),
+      content: '完整首尾正文。'.repeat(100),
+    };
+    mockStore.set(chaptersAtom, { [book.id]: [full] });
+    response.resolve({
+      content: '完整首尾正文。'.repeat(50),
+      complete: false,
+      nextPageUrl: sourceUrl(1) + '2.html',
+    });
+    expect(await pending).toBe(full);
+    expect(mockStore.get(chaptersAtom)[book.id][0]).toBe(full);
+  });
+
+  it('全本请求期间移除书籍不回填正文、不落盘或报全部完成', async () => {
+    const book = incomingBook();
+    const a = chapter(book.id, 'a', 1);
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [a] });
+    const response = deferred<{ content: string; complete: boolean }>();
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValueOnce(response.promise);
+    const pending = useCacheWholeBook()(book.id);
+    mockStore.set(booksAtom, [{ ...book, deletedAt: 10 }]);
+    response.resolve({ content: '完整有效正文。'.repeat(100), complete: true });
+    expect(await pending).toMatchObject({ done: 0, total: 1, cancelled: true });
+    expect(mockStore.get(chaptersAtom)[book.id][0]).toBe(a);
+    expect(saveBookChapters).not.toHaveBeenCalled();
+  });
+
+  it('正文迟到只补正文，不回退目录的新标题、顺序和来源地址', async () => {
+    const book = incomingBook();
+    const original = chapter(book.id, 'pending', 1);
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [original] });
+    const response = deferred<{ content: string; complete: boolean }>();
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValue(response.promise);
+    const pending = useEnsureChapterContent()(book.id, 0);
+    await Promise.resolve();
+    const latest = {
+      ...original,
+      title: '第1章 修正标题',
+      order: 1,
+      sourceUrl: sourceUrl(1) + '#new',
+    };
+    mockStore.set(chaptersAtom, {
+      [book.id]: [chapter(book.id, 'inserted', 4), latest],
+    });
+    response.resolve({ content: '完整有效正文。'.repeat(100), complete: true });
+    const filled = await pending;
+    expect(filled).toMatchObject({
+      title: latest.title,
+      order: 1,
+      sourceUrl: latest.sourceUrl,
+    });
+    expect(mockStore.get(chaptersAtom)[book.id][1]).toMatchObject({
+      title: latest.title,
+      order: 1,
+      sourceUrl: latest.sourceUrl,
+      content: filled!.content,
+    });
+  });
+
+  it('子页迟到同样保留追更修正的目录信息', async () => {
+    const book = incomingBook();
+    const original = {
+      ...chapter(book.id, 'partial', 1, true),
+      contentComplete: false,
+      nextPageUrl: sourceUrl(1) + '2.html',
+    };
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [original] });
+    const response = deferred<{ content: string; complete: boolean }>();
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValue(response.promise);
+    const pending = useLoadNextChapterPage()(book.id, 0);
+    await Promise.resolve();
+    const latest = { ...original, title: '第1章 修正标题', order: 1 };
+    mockStore.set(chaptersAtom, {
+      [book.id]: [chapter(book.id, 'inserted', 4), latest],
+    });
+    response.resolve({ content: '短尾页。', complete: true });
+    expect(await pending).toMatchObject({ title: latest.title, order: 1 });
+    expect(mockStore.get(chaptersAtom)[book.id][1]).toMatchObject({
+      title: latest.title,
+      order: 1,
+    });
+  });
+
+  it('全本缓存期间目录重排不漏章，不回退目录元数据', async () => {
+    const book = incomingBook();
+    const [a, b] = [chapter(book.id, 'a', 1), chapter(book.id, 'b', 2)];
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [a, b] });
+    const response = deferred<{ content: string; complete: boolean }>();
+    const parse = jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValueOnce(response.promise)
+      .mockResolvedValue({
+        content: '完整有效正文。'.repeat(100),
+        complete: true,
+      });
+    const pending = useCacheWholeBook()(book.id);
+    mockStore.set(chaptersAtom, {
+      [book.id]: [
+        { ...b, order: 0 },
+        { ...a, order: 1, title: '第1章 修正标题' },
+      ],
+    });
+    response.resolve({ content: '完整有效正文。'.repeat(100), complete: true });
+    expect(await pending).toEqual({ done: 2, total: 2 });
+    expect(parse.mock.calls.map(call => call[0])).toEqual([
+      a.sourceUrl,
+      b.sourceUrl,
+    ]);
+    expect(mockStore.get(chaptersAtom)[book.id].map(c => c.order)).toEqual([
+      0, 1,
+    ]);
+    expect(mockStore.get(chaptersAtom)[book.id].every(c => !!c.content)).toBe(
+      true,
+    );
+  });
+
+  it('正文请求期间移入回收站，迟到结果不能写入或返回成功', async () => {
+    jest.useFakeTimers();
+    const book = incomingBook();
+    const original = chapter(book.id, 'pending', 1);
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: [original] });
+    const response = deferred<{ content: string; complete: boolean }>();
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockReturnValue(response.promise);
+    const pending = useEnsureChapterContent()(book.id, 0);
+    await Promise.resolve();
+    mockStore.set(booksAtom, [{ ...book, deletedAt: 10 }]);
+    response.resolve({ content: '完整有效正文。'.repeat(100), complete: true });
+    expect(await pending).toBeNull();
+    await jest.advanceTimersByTimeAsync(1100);
+    expect(mockStore.get(chaptersAtom)[book.id][0]).toBe(original);
+    expect(saveBookChapters).not.toHaveBeenCalled();
+  });
+
+  it('已排队的缓存在书籍彻底移除后不重建孤立正文文件', async () => {
+    jest.useFakeTimers();
+    const book = incomingBook();
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, {
+      [book.id]: [chapter(book.id, 'pending', 1)],
+    });
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockResolvedValue({
+        content: '完整有效正文。'.repeat(100),
+        complete: true,
+      });
+    await useEnsureChapterContent()(book.id, 0);
+    mockStore.set(booksAtom, []);
+    mockStore.set(chaptersAtom, {});
+    await jest.advanceTimersByTimeAsync(1100);
+    expect(saveBookChapters).not.toHaveBeenCalled();
+  });
+
+  it('旧残目录的阅读自动修复保存失败不提前发布新目录', async () => {
+    const book = {
+      ...incomingBook('legacy'),
+      source: {
+        name: 'bookshuku',
+        bookUrl: 'http://wap.bookshuku.org/read/1.html',
+      },
+    };
+    const old = Array.from({ length: 11 }, (_, i) => ({
+      ...chapter(book.id, `old-${i}`, 690 + i),
+      sourceUrl: `http://wap.bookshuku.org/read/1_${690 + i}.html`,
+    }));
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: old });
+    const source = getSourceById('bookshuku')!;
+    jest.spyOn(source, 'parseCatalog').mockResolvedValue(
+      Array.from({ length: 701 }, (_, i) => ({
+        title: `第${i + 1}章`,
+        url: `http://wap.bookshuku.org/read/1_${i + 1}.html`,
+      })),
+    );
+    const parse = jest.spyOn(source, 'parseChapterContent').mockResolvedValue({
+      content: '完整有效正文。'.repeat(100),
+      complete: true,
+    });
+    jest.mocked(saveBookChapters).mockRejectedValueOnce(new Error('disk full'));
+    await expect(useEnsureChapterContent()(book.id, 0)).rejects.toThrow(
+      'disk full',
+    );
+    expect(mockStore.get(chaptersAtom)[book.id]).toBe(old);
+    expect(parse).not.toHaveBeenCalled();
+  });
+});
+
 describe('网站目录更新事务', () => {
   const setup = () => {
     const book = {

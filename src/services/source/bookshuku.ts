@@ -1,3 +1,4 @@
+import { StandardURL as URL } from '../../utils/standardUrl';
 import { throwIfAborted } from '../../utils/abort';
 /**
  * 书源：TXT图书下载网（wap.bookshuku.org）。
