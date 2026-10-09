@@ -1,0 +1,10 @@
+{
+  "url": "http://wap.xuanhuange.info/info-220996/",
+  "images": [
+    {
+      "src": "http://wap.xuanhuange.info/modules/article/images/nocover.jpg",
+      "currentSrc": "http://wap.xuanhuange.info/modules/article/images/nocover.jpg",
+      "outer": "<img src=\"http://wap.xuanhuange.info/modules/article/images/nocover.jpg\" border=\"0\" width=\"85\" height=\"100\" onerror=\"this.src='/images/no_photo.jpg'\">"
+    }
+  ]
+}

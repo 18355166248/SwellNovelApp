@@ -62,7 +62,8 @@ const usable = (field: Field, value?: string) =>
   !!value?.trim() &&
   !(
     field === 'cover' &&
-    /(?:no[_-]?(?:photo|cover)|placeholder|loading|logo)\./i.test(value)
+    // 和提取器保持一致，已确认来自本书的 nocover 地址不能在合并时再次被丢弃。
+    /(?:no[_-]?photo|placeholder|loading|logo)\./i.test(value)
   ) &&
   !(field === 'author' && /^(?:佚名|未知|未知作者|作者)$/.test(value.trim()));
 export const needsBookMetadata = (book: BookMetadata) =>

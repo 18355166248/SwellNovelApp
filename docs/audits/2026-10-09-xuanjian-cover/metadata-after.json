@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "reports": [
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-220996/",
+      "missing": ["author", "cover"],
+      "remaining": [],
+      "attempts": [
+        {
+          "url": "http://wap.xuanhuange.info/info-220996/",
+          "via": "source-detail",
+          "status": "merged",
+          "fields": ["author", "cover"],
+          "rules": {
+            "description": "meta:description",
+            "title": "heading/title",
+            "author": "label:author",
+            "cover": "image:book-container"
+          },
+          "issues": []
+        }
+      ],
+      "resolved": {
+        "title": "玄鉴仙族",
+        "author": "季越人",
+        "cover": "http://wap.xuanhuange.info/modules/article/images/nocover.jpg",
+        "description": "玄鉴仙族是由作家季越人所作,本书属于武侠,本书由玄幻阁小说网的会员收集于网络,供书友们及时阅读和下载到玄鉴仙族全文阅读最新更新手打全文字TXT章节。"
+      },
+      "elapsedMs": 1585,
+      "outcome": "complete"
+    }
+  ]
+}

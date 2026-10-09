@@ -274,26 +274,53 @@ it('用户取消后停止候选抓取，不提交迟到的资料', async () => {
   });
 });
 
-it('玄鉴仙族原站提供 nocover 占位图时，明确报告站点缺封面，不把占位图当原图', async () => {
+it('玄鉴仙族真实封面沿用 nocover 文件名时，DOM、HTML 和补全均保留站点封面', async () => {
   const url = `${origin}/wapbook-220996/`;
-  // 2026-10-09 真机原站节点：图片实际是绿色书籍占位图，并非《玄鉴仙族》封面。
+  // 真机已确认这个地址实际显示本书封面，文件名不能作为图片内容的证据。
   const html = `<title>玄鉴仙族txt下载-季越人-玄幻阁</title><h1>《玄鉴仙族》</h1>
     <div class="block_img2"><img src="http://wap.xuanhuange.info/modules/article/images/nocover.jpg"></div>
     <p>作者：<a>季越人</a></p>`;
   const extracted = recognizeBookHtml(html, `${origin}/info-220996/`);
-  expect(extracted.cover).toBe('');
-  expect(extracted.metadataIssues).toEqual(['placeholder-cover']);
+  const siteCover = `${origin}/modules/article/images/nocover.jpg`;
+  expect(extracted.cover).toBe(siteCover);
+  expect(extracted.metadataIssues).toEqual([]);
+  const dom = new JSDOM(html, {
+    url: `${origin}/info-220996/`,
+    runScripts: 'outside-only',
+  });
+  const postMessage = jest.fn();
+  Object.defineProperty(dom.window, 'ReactNativeWebView', {
+    value: { postMessage },
+  });
+  dom.window.eval(RECOGNIZER_JS);
+  expect(JSON.parse(postMessage.mock.calls[0][0]).cover).toBe(siteCover);
+  dom.window.close();
   const { book, report } = await enrichBookMetadata(
     seed({ url, title: '玄鉴仙族', author: '季越人' }),
     { fetchHtml: jest.fn().mockResolvedValue(html) },
   );
-  expect(book.cover).toBeUndefined();
+  expect(book.cover).toBe(siteCover);
   expect(report).toMatchObject({
-    outcome: 'partial',
-    remaining: ['cover', 'description'],
+    outcome: 'complete',
+    remaining: ['description'],
   });
   expect(report.attempts[0]).toMatchObject({
-    reason: 'site-placeholder-cover',
-    issues: ['placeholder-cover'],
+    status: 'merged',
+    fields: ['cover'],
+    rules: { cover: 'image:book-container' },
+    issues: [],
   });
+});
+
+it('放宽 nocover 文件名不允许提取无关图片，也继续过滤 no_photo 加载失败图', () => {
+  const html =
+    '<h1>玄鉴仙族</h1><img src="/images/nocover.jpg"><div class="block_img2"><img src="/images/no_photo.jpg"></div>';
+  expect(
+    extractBookMetadata(html, `${origin}/info-220996/`, URL),
+  ).toMatchObject({
+    metadataIssues: ['placeholder-cover'],
+  });
+  expect(
+    extractBookMetadata(html, `${origin}/info-220996/`, URL).cover,
+  ).toBeUndefined();
 });

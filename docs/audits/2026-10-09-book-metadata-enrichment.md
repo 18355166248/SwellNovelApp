@@ -59,7 +59,7 @@
 
 ## 玄鉴仙族追加排查
 
-用户在浏览器目录预览发现默认封面后，读取真机当前 `/info-220996/` 的 HTML。网站确实显示图片，但地址是 `http://wap.xuanhuange.info/modules/article/images/nocover.jpg`，为绿色书籍占位图，并非本书原封面。该地址应明确排除，而不是作为成功提取的图片保存。
+用户在浏览器目录预览发现默认封面后，读取真机当前 `/info-220996/` 的 HTML。图片地址为 `http://wap.xuanhuange.info/modules/article/images/nocover.jpg`。当时依据文件名将它判断成占位图；后续真机复核确认网页实际展示《玄鉴仙族》封面，之前的判断错误，修正见下文。
 
 同时发现两个此前未覆盖的实际问题：
 
@@ -70,7 +70,7 @@
 
 诊断新增 `outcome`（complete / partial / cancelled / timeout）、占位封面 issues 与 `site-placeholder-cover` 原因；用户取消时也记录正在访问的地址和 `caller-aborted`，避免只有空 attempts 而无法区分从未请求与中途取消。
 
-本书原站未提供原封面时，当前流程会保留默认封面并说明原因。跨书源找图片需要额外核验书名、作者和图片来源；现有结果不把随机图片或站点占位图冒充原封面。
+未提取到封面时，流程保留默认封面。跨书源找图片需要额外核验书名、作者和图片来源；`nocover` 文件名本身不证明原站缺少本书封面。
 
 追加修复验证：72 套件、495 项测试通过；相关服务与回归 ESLint 无错误或警告，Web production 构建通过。Release 已成功覆盖安装到 Swell5；安装后用户更换测试手机，新预览提示改在下述新设备完成复核。
 
@@ -79,3 +79,14 @@
 - 《仙工开物》详情页预览直接显示原封面与作者，确认静态 DOM 注入在 Hermes Release 中生效。目录页预览显示原封面、作者“蛊真人”、本页 40 项与 30 页目录；固定诊断报告确认从 `source-detail` 补回 author/cover，耗时 1486 毫秒，`outcome=complete`、`remaining=[]`。
 - 《玄鉴仙族》详情页和目录页都明确提示“本站未提供原封面，暂用默认封面”。目录页预览显示作者“季越人”、本页 40 项与 44 页目录。固定报告确认详情页 `placeholder-cover` / `site-placeholder-cover`，继续访问目录原页后仍缺 cover，耗时 2781 毫秒，最终 `outcome=partial`、`remaining=[cover]`。
 - 核对过程仅查看浏览器识别预览，未将详情页的 16 条最新章节预览误当完整目录导入书架。诊断结果已读取至 `/tmp/swell-new-phone-metadata.json`。
+
+## 玄鉴仙族封面文件名误过滤修正
+
+2026-10-09 再次在 Swell5 真机复核：网页显示有书名和树木图案的《玄鉴仙族》封面，App 预览却显示默认图和“本站未提供原封面”。读取当前可见 WKWebView 的 `.block_img2 img`，`src` 与 `currentSrc` 均为上述 `nocover.jpg`；固定补全报告仍记录 `placeholder-cover`。因此问题是文件名黑名单误过滤，并非站点没有封面，也不是图片加载失败。
+
+- 共享提取器、DOM 兼容分支和补全合并统一移除 `nocover` 文件名拒绝条件；仍只接受书籍 meta、结构化资料、明确封面容器或匹配书名的图片，继续过滤 `no_photo` 等失败图片。
+- 未硬编码书号或封面 URL，没有新增跨站图片搜索。站点复用的图片地址仍可能改变内容，当前结果表示采用站点为本书展示的图片。
+- 回归先复现失败，再验证 DOM、HTML、目录补全都保留封面；同时验证无关图片不会误提取、OG 兼容分支不会重新写回 `no_photo`。
+- 最终验证：77 套件、557 项测试通过，TypeScript 和相关文件 ESLint 通过；Web production 构建通过（既有 2 条包体积警告），Swell5 Release 构建、覆盖安装成功。
+- 真机详情预览显示与网页一致的封面；从“查看目录”进入后仍成功补全封面，显示本页 40 项、44 页目录。固定报告确认 `source-detail` / `image:book-container` 补回 author、cover，耗时 1585 毫秒，`outcome=complete`、`remaining=[]`。核对过程中未重新导入书籍。
+- [真机截图及节点、补全报告](./2026-10-09-xuanjian-cover/)。本次修复尚未提交。

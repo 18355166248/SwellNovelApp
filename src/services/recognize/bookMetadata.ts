@@ -106,10 +106,12 @@ export function extractBookMetadata(
     value: string | undefined,
     rule: string,
   ) => {
+    // 玄幻阁的 nocover.jpg 实际显示《玄鉴仙族》封面，不能凭文件名推断图片内容。
+    // 图片仍须来自书籍 meta、结构化资料或明确封面容器；加载失败图继续排除。
     if (
       field === 'cover' &&
       value &&
-      /(?:no[_-]?(?:photo|cover)|placeholder|loading|logo)\./i.test(value)
+      /(?:no[_-]?photo|placeholder|loading|logo)\./i.test(value)
     ) {
       if (!result.metadataIssues.includes('placeholder-cover'))
         result.metadataIssues.push('placeholder-cover');

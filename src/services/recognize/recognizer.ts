@@ -265,7 +265,7 @@ export const RECOGNIZER_JS = `(function(){
       url: location.href, host: location.host,
       requestId: requestId,
       title: (mingBook ? title : metadata.title) || title,
-      author: metadata.author || author, cover: metadata.cover || (/(?:no[_-]?(?:photo|cover)|placeholder|loading|logo)[.]/i.test(cover) ? '' : cover),
+      author: metadata.author || author, cover: metadata.cover || (/(?:no[_-]?photo|placeholder|loading|logo)[.]/i.test(cover) ? '' : cover),
       description: metadata.description,
       catalogUrl: metadata.catalogUrl,
       metadataLinks: metadata.metadataLinks, metadataRules: metadata.metadataRules,

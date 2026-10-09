@@ -259,9 +259,9 @@ it('OG占位图不会从旧兼容分支重新写回DOM预览', () => {
   const html = detail
     .replace(
       '<h1>',
-      '<meta property="og:image" content="/images/nocover.jpg"><h1>',
+      '<meta property="og:image" content="/images/no_photo.jpg"><h1>',
     )
-    .replace('<img src="/cover.jpg">', '<img src="/images/nocover.jpg">');
+    .replace('<img src="/cover.jpg">', '<img src="/images/no_photo.jpg">');
   expect(domRecognize(html, detailUrl).cover).toBe('');
   expect(recognizeBookHtml(html, detailUrl).cover).toBe('');
 });
