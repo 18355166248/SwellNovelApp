@@ -1,0 +1,31 @@
+docs/audits/2026-10-09-search-import-ux/README.md
+  s_c19edc1c619064::t_02381a7ca8eb6a 38-51
+  s_c19edc1c619064::t_52366e14e8ae23 60
+  s_c19edc1c619064::t_ac1a7bf42e11ff 1-7,9-34,36-37
+  s_c19edc1c619064::t_eb081509507636 35,52-59
+  s_c19edc1c619064::t_23f16d52089acb 8
+__tests__/InAppBrowserScreen.test.tsx
+  s_c19edc1c619064::t_25e3309ecbf3c9 2-3,27,31,44,69-70,183-369
+__tests__/SearchScreen.import.test.tsx
+  s_c19edc1c619064::t_3a8a1c9d4288c0 9,129-150
+__tests__/SearchScreen.test.tsx
+  s_c19edc1c619064::t_62ecc422102e38 3,81-96
+src/screens/InAppBrowserScreen.tsx
+  s_c19edc1c619064::t_6d6edaf8efdc9d 18,86,115,156-157,160,162-169,190-203,207,236,244,271,325,447-448,459,473-517,529-530,532,534,539,544,546-553,555-559,562-573,575,583-585,587-623,629,632-633,648-667,675-701,849-853,904,911,915,923,968-971,1010-1011,1017,1027-1031,1033-1048,1050,1062-1065,1077-1086,1157-1163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "a10f10769ab361ecbb024f6b645015d8c5ed47c2",
+  "prompts": {},
+  "sessions": {
+    "s_c19edc1c619064": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b61-fc54-7992-a80f-527a59a57530",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
