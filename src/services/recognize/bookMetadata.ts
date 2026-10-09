@@ -11,6 +11,8 @@ export interface MetadataLink {
 }
 
 export interface MetadataExtraction extends BookMetadata {
+  /** 页面明确提供的完整章节入口；详情页的最新章节不能直接当整本目录。 */
+  catalogUrl?: string;
   metadataLinks: MetadataLink[];
   metadataRules: Partial<Record<keyof BookMetadata, string>>;
   metadataIssues: string[];
@@ -251,6 +253,20 @@ export function extractBookMetadata(
   while ((link = links.exec(clean))) {
     const a = attrs(link[1]);
     const label = text(link[2]);
+    if (
+      /^(?:查看|进入|進入|全部|完整)?(?:章节|章節)?(?:目录|目錄|章节列表|章節列表)$/.test(
+        label,
+      )
+    ) {
+      const target = absolute(a.href);
+      // 通用入口只跟随同站显式目录；跨站广告不能借“目录”文案获得抓取权限。
+      if (
+        target &&
+        new URLImpl(target).origin === new URLImpl(pageUrl).origin &&
+        target !== absolute(pageUrl)
+      )
+        result.catalogUrl = result.catalogUrl || target;
+    }
     if (
       /^(?:返回)?(?:书籍|書籍|本书|本書)?(?:详情|詳情|信息|资料|資料|介绍|介紹|书页|書頁)$/.test(
         label,

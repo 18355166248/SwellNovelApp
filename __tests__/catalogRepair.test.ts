@@ -300,3 +300,26 @@ it('重识别目录保留子页记录，末章未续载完时不能变成已读�
     ),
   ).toBe(99);
 });
+
+it('玄幻阁换成旧正文入口仍保留章节身份、缓存和书签映射', () => {
+  const previous = {
+    ...chapter(1, 0),
+    sourceUrl: 'http://wap.xuanhuange.info/wapbook-192466-63654391/',
+  };
+  const repaired = repairCatalogPreservingIdentity(
+    'book-1',
+    [previous],
+    [
+      {
+        title: '第一章',
+        url: 'https://www.xuanhuange.info/read/192466/63654391.html',
+      },
+    ],
+    () => true,
+  );
+  expect(repaired.chapters[0]).toMatchObject({
+    id: previous.id,
+    content: previous.content,
+  });
+  expect(repaired.chapterIdMap.get(previous.id)).toBe(previous.id);
+});

@@ -1,3 +1,4 @@
+import { formatFollowResult } from '../utils/followResult';
 import React from 'react';
 import { useAtomValue } from 'jotai';
 import {
@@ -74,19 +75,6 @@ function isToday(timestamp?: number) {
     checked.getMonth() === now.getMonth() &&
     checked.getDate() === now.getDate()
   );
-}
-
-function formatFollowResult(result: {
-  updated: number;
-  failed: number;
-  cached: number;
-}) {
-  if (result.updated > 0) {
-    return result.cached > 0
-      ? `发现 ${result.updated} 个新章节，已自动缓存 ${result.cached} 章`
-      : `发现 ${result.updated} 个新章节`;
-  }
-  return result.failed ? `${result.failed} 本检查失败` : '追更书籍已是最新';
 }
 
 export default function BookshelfScreen() {

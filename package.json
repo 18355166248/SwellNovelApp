@@ -26,7 +26,13 @@
     "verify:sources": "node scripts/verify-sources.cjs",
     "check:version": "node scripts/check-version.js",
     "check": "npm run check:version && npm run typecheck && npm run lint && npm run test:ci && npm run build:web",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "preios": "npm run generate:metadata-script",
+    "preios:device": "npm run generate:metadata-script",
+    "prebuild:ios": "npm run generate:metadata-script",
+    "preandroid": "npm run generate:metadata-script",
+    "preweb": "npm run generate:metadata-script",
+    "test:website-flow": "jest --runInBand --watchman=false --runTestsByPath __tests__/websiteImportFlow.test.ts __tests__/onlineBookImport.test.ts __tests__/recognizerStability.test.ts __tests__/bookMetadata.test.ts __tests__/sameOnlineBook.test.ts __tests__/catalogRepair.test.ts __tests__/LibraryPersistence.test.tsx __tests__/BookDetailScreen.test.tsx __tests__/useRecognizedBookMetadata.test.tsx __tests__/InAppBrowserScreen.test.tsx __tests__/SearchScreen.import.test.tsx __tests__/followResult.test.ts"
   },
   "dependencies": {
     "@react-native-documents/picker": "^12.0.1",

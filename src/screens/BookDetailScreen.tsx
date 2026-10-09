@@ -36,7 +36,7 @@ import { sanitizeBookDescription } from '../utils/bookDescription';
 import BookCatalogModal from './bookDetail/BookCatalogModal';
 import { isBadBookshukuCatalog } from '../utils/bookCatalogQuality';
 import { catalogNumberSummary } from '../utils/catalogNumberSummary';
-import { getSourceById } from '../services/source/registry';
+import { getSourceById, resolveSource } from '../services/source/registry';
 import { isCompleteOnlineChapterCacheUsable } from '../services/source/contentQuality';
 import { COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
 import { detailPalette } from './bookDetail/detailPalette';
@@ -118,8 +118,10 @@ export default function BookDetailScreen() {
       ).length,
     [chapters, book?.source?.name],
   );
-  const supportsCatalogActions =
-    !!book?.source && !!getSourceById(book.source.name);
+  const supportsCatalogActions = !!book?.source;
+  const supportsWholeBookCache =
+    !!book?.source &&
+    !!(getSourceById(book.source.name) || resolveSource(book.source.bookUrl));
   const cachePct =
     caching.total > 0 ? Math.round((caching.done / caching.total) * 100) : 0;
   const catalogNeedsRepair =
@@ -132,7 +134,9 @@ export default function BookDetailScreen() {
   const onCheckUpdate = async () => {
     if (checking || caching.active || !supportsCatalogActions) return;
     setChecking(true);
-    setOnlineMsg(catalogNeedsRepair ? '正在修复目录…' : '');
+    setOnlineMsg(
+      catalogNeedsRepair ? '正在修复目录…' : '正在逐页检查目录，请稍候…',
+    );
     try {
       const n = await checkBookUpdate(bookId, taskSignal);
       if (taskSignal.aborted) return;
@@ -148,9 +152,9 @@ export default function BookDetailScreen() {
     } catch (error) {
       if (taskSignal.aborted || isAbortError(error)) return;
       setOnlineMsg(
-        catalogNeedsRepair
-          ? '目录修复失败，请稍后重试'
-          : '检查更新失败，请检查网络后重试',
+        `${catalogNeedsRepair ? '目录修复失败' : '检查更新失败'}：${
+          error instanceof Error ? error.message : '请检查网络后重试'
+        }`,
       );
     } finally {
       setChecking(false);
@@ -167,6 +171,7 @@ export default function BookDetailScreen() {
       checking ||
       catalogNeedsRepair ||
       !supportsCatalogActions ||
+      !supportsWholeBookCache ||
       !chapters.length
     )
       return;
@@ -240,9 +245,12 @@ export default function BookDetailScreen() {
 
   const totalWords = chapters.reduce((sum, c) => sum + (c.wordCount || 0), 0);
   const resumeIdx = resumeChapterIndex(chapters, book.currentChapterId);
+  // 长书开头的百分比可能四舍五入为 0；续读状态以真实阅读记录为准。
+  const hasStartedReading =
+    book.progress > 0 || !!book.lastReadAt || !!book.currentChapterId;
   const latest = chapters[chapters.length - 1];
   const readingStateLabel =
-    book.progress >= 100 ? '已读完' : book.progress > 0 ? '阅读中' : '未开始';
+    book.progress >= 100 ? '已读完' : hasStartedReading ? '阅读中' : '未开始';
   const chaptersReady = chapters.length > 0;
   const catalogReady = chaptersReady && !catalogNeedsRepair;
   const synopsis = sanitizeBookDescription(book.description);
@@ -284,7 +292,6 @@ export default function BookDetailScreen() {
             source={require('../assets/detail-hero-glow.png')}
             resizeMode="stretch"
             style={StyleSheet.absoluteFill}
-            pointerEvents="none"
           />
           <View style={[styles.heroContent, { paddingTop: insets.top + 10 }]}>
             <View style={styles.heroTopRow}>
@@ -436,129 +443,143 @@ export default function BookDetailScreen() {
 
         {book.source && (
           <View style={styles.onlineSection}>
-            {supportsCatalogActions ? (
-              <View style={styles.onlineRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    book.following ? '取消追更' : '追更这本书'
-                  }
-                  accessibilityState={{ selected: !!book.following }}
-                  onPress={() => toggleBookFollow(bookId)}
-                  style={[
-                    styles.onlineBtn,
-                    {
-                      backgroundColor: book.following
-                        ? theme.colors.accentDark
-                        : 'transparent',
-                      borderColor: book.following
-                        ? theme.colors.accentDark
-                        : palette.line,
-                    },
-                  ]}
-                >
-                  <Icon
-                    family="feather"
-                    name="bookmark"
-                    size={15}
-                    color={book.following ? '#fff' : palette.ink}
-                  />
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      lineHeight: 17,
-                      color: book.following ? '#fff' : palette.ink,
-                    }}
-                  >
-                    {book.following ? '追更中' : '追更'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    checking
-                      ? catalogNeedsRepair
-                        ? '正在修复目录'
-                        : '正在检查更新'
-                      : catalogNeedsRepair
-                      ? '重新修复目录'
-                      : '检查书籍更新'
-                  }
-                  accessibilityState={{ disabled: checking || caching.active }}
-                  onPress={onCheckUpdate}
-                  disabled={checking || caching.active}
-                  style={[
-                    styles.onlineBtn,
-                    {
-                      backgroundColor: 'transparent',
-                      borderColor: palette.line,
-                      opacity: checking || caching.active ? 0.5 : 1,
-                    },
-                  ]}
-                >
-                  <Icon
-                    family="feather"
-                    name="refresh-cw"
-                    size={15}
-                    color={palette.ink}
-                  />
-                  <Text
-                    style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
-                  >
-                    {checking
-                      ? catalogNeedsRepair
-                        ? '修复中…'
-                        : '检查中…'
-                      : catalogNeedsRepair
-                      ? '修复目录'
-                      : '检查更新'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    catalogNeedsRepair
-                      ? '目录需修复后才能缓存全本'
-                      : caching.active
-                      ? `停止缓存，当前 ${cachePct}%`
-                      : '缓存全本'
-                  }
-                  accessibilityState={{
-                    disabled: checking || catalogNeedsRepair || !chaptersReady,
-                    busy: caching.active,
+            <View style={styles.onlineRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={book.following ? '取消追更' : '追更这本书'}
+                accessibilityState={{ selected: !!book.following }}
+                onPress={() => toggleBookFollow(bookId)}
+                style={[
+                  styles.onlineBtn,
+                  {
+                    backgroundColor: book.following
+                      ? theme.colors.accentDark
+                      : 'transparent',
+                    borderColor: book.following
+                      ? theme.colors.accentDark
+                      : palette.line,
+                  },
+                ]}
+              >
+                <Icon
+                  family="feather"
+                  name="bookmark"
+                  size={15}
+                  color={book.following ? '#fff' : palette.ink}
+                />
+                <Text
+                  style={{
+                    fontSize: 11,
+                    lineHeight: 17,
+                    color: book.following ? '#fff' : palette.ink,
                   }}
-                  onPress={onCacheAll}
-                  disabled={checking || catalogNeedsRepair || !chaptersReady}
-                  style={[
-                    styles.onlineBtn,
-                    {
-                      backgroundColor: 'transparent',
-                      borderColor: palette.line,
-                      opacity:
-                        checking || catalogNeedsRepair || !chaptersReady
-                          ? 0.5
-                          : 1,
-                    },
-                  ]}
                 >
-                  <Icon
-                    family="feather"
-                    name={caching.active ? 'square' : 'download'}
-                    size={15}
-                    color={palette.ink}
-                  />
-                  <Text
-                    style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
-                  >
-                    {catalogNeedsRepair
-                      ? '目录需修复'
-                      : caching.active
-                      ? `缓存中 ${cachePct}% · 停止`
-                      : '缓存全本'}
-                  </Text>
-                </Pressable>
-              </View>
-            ) : (
+                  {book.following ? '追更中' : '追更'}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  checking
+                    ? catalogNeedsRepair
+                      ? '正在修复目录'
+                      : '正在检查更新'
+                    : catalogNeedsRepair
+                    ? '重新修复目录'
+                    : '检查书籍更新'
+                }
+                accessibilityState={{ disabled: checking || caching.active }}
+                onPress={onCheckUpdate}
+                disabled={checking || caching.active}
+                style={[
+                  styles.onlineBtn,
+                  {
+                    backgroundColor: 'transparent',
+                    borderColor: palette.line,
+                    opacity: checking || caching.active ? 0.5 : 1,
+                  },
+                ]}
+              >
+                <Icon
+                  family="feather"
+                  name="refresh-cw"
+                  size={15}
+                  color={palette.ink}
+                />
+                <Text
+                  style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
+                >
+                  {checking
+                    ? catalogNeedsRepair
+                      ? '修复中…'
+                      : '检查中…'
+                    : catalogNeedsRepair
+                    ? '修复目录'
+                    : '检查更新'}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  catalogNeedsRepair
+                    ? '目录需修复后才能缓存全本'
+                    : caching.active
+                    ? `停止缓存，当前 ${cachePct}%`
+                    : supportsWholeBookCache
+                    ? '缓存全本'
+                    : '阅读时自动缓存'
+                }
+                accessibilityState={{
+                  disabled:
+                    checking ||
+                    catalogNeedsRepair ||
+                    !chaptersReady ||
+                    !supportsWholeBookCache,
+                  busy: caching.active,
+                }}
+                onPress={onCacheAll}
+                disabled={
+                  checking ||
+                  catalogNeedsRepair ||
+                  !chaptersReady ||
+                  !supportsWholeBookCache
+                }
+                style={[
+                  styles.onlineBtn,
+                  {
+                    backgroundColor: 'transparent',
+                    borderColor: palette.line,
+                    opacity:
+                      checking ||
+                      catalogNeedsRepair ||
+                      !chaptersReady ||
+                      !supportsWholeBookCache
+                        ? 0.5
+                        : 1,
+                  },
+                ]}
+              >
+                <Icon
+                  family="feather"
+                  name={caching.active ? 'square' : 'download'}
+                  size={15}
+                  color={palette.ink}
+                />
+                <Text
+                  style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
+                >
+                  {catalogNeedsRepair
+                    ? '目录需修复'
+                    : caching.active
+                    ? `缓存中 ${cachePct}% · 停止`
+                    : supportsWholeBookCache
+                    ? '缓存全本'
+                    : '阅读时缓存'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {!!onlineMsg && !checking && /失败/.test(onlineMsg) && (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="回到原网页更新章节目录"
@@ -860,7 +881,7 @@ export default function BookDetailScreen() {
                   : '目录需要修复'
                 : !chaptersReady
                 ? '章节加载中'
-                : book.progress > 0
+                : hasStartedReading
                 ? book.source
                   ? `继续阅读 ${chapters[resumeIdx]?.title || ''}`
                   : `继续阅读第 ${resumeIdx + 1} 章`
@@ -888,7 +909,7 @@ export default function BookDetailScreen() {
                   : '目录需修复后阅读'
                 : !chaptersReady
                 ? '章节加载中…'
-                : book.progress > 0
+                : hasStartedReading
                 ? book.source
                   ? `继续阅读 · ${chapters[resumeIdx]?.title || ''}`
                   : `继续阅读 · 第 ${resumeIdx + 1} 章`

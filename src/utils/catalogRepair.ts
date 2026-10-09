@@ -68,6 +68,19 @@ export function normalizedChapterIdentity(url?: string): string | null {
     return `bookshuku:${bookshuku.bookId}:${bookshuku.sequence}`;
   }
 
+  const xuan = parsedChapterUrl(url);
+  if (xuan && /(^|\.)xuanhuange\.info$/i.test(xuan.hostname)) {
+    const match =
+      /^\/(?:wapbook-(\d+)-(\d+)\/?|read\/(\d+)\/(\d+)\.html\/?)(?:$)/i.exec(
+        xuan.pathname,
+      );
+    // 手机与旧版正文路由是同一章，更新时换入口不能丢失续读、正文和书签。
+    if (match)
+      return `xuanhuange:${normalizedNumericSegment(
+        match[1] || match[3],
+      )}:${normalizedNumericSegment(match[2] || match[4])}`;
+  }
+
   const parsed = parsedChapterUrl(url);
   if (!parsed) return `raw:${url.trim()}`;
   const host = parsed.hostname.toLowerCase().replace(/^(?:www|wap)\./, '');
@@ -344,6 +357,20 @@ export function progressAfterCatalogRepair(
   const previous = previousChapters.find(
     chapter => chapter.id === book.currentChapterId,
   );
+  const previousIndex = previousChapters.findIndex(
+    c => c.id === book.currentChapterId,
+  );
+  // 历史尚未懒加载时，用已保存的全书进度还原章内比例；目录未变不能把进度退回章首。
+  const savedFraction =
+    previousIndex < 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(
+            1,
+            (book.progress / 100) * previousChapters.length - previousIndex,
+          ),
+        );
   const chapterFraction =
     book.progress >= 100
       ? 1
@@ -351,6 +378,8 @@ export function progressAfterCatalogRepair(
         history?.chapterId === book.currentChapterId &&
         previous?.content.length
       ? Math.max(0, Math.min(1, history.position / previous.content.length))
+      : nextChapterId === book.currentChapterId
+      ? savedFraction
       : 0;
 
   return calculateReadingProgress({

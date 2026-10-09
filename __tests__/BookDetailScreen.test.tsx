@@ -18,6 +18,7 @@ const mockNavigation = {
   setOptions: jest.fn(),
 };
 const mockEnsureChapter = jest.fn();
+const mockCheckUpdate = jest.fn();
 let mockFocused = true;
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => mockNavigation,
@@ -36,6 +37,7 @@ jest.mock('../src/components', () => ({
 jest.mock('../src/store', () => ({
   ...jest.requireActual('../src/store'),
   useEnsureChapterContent: () => mockEnsureChapter,
+  useCheckBookUpdate: () => mockCheckUpdate,
 }));
 // 页面交互用例不发起资料网络请求；补资料的抓取/取消/合并由独立回归与真机验证。
 jest.mock('../src/store/hooks/useBookMetadataRepair', () => ({
@@ -205,3 +207,80 @@ it.each(['loading', 'repair'])(
     await act(() => tree.unmount());
   },
 );
+
+it('长书已阅读但总进度为0%时显示续读，未知网站也能检查更新', async () => {
+  jest.clearAllMocks();
+  mockFocused = true;
+  const store = createStore();
+  store.set(booksAtom, [
+    {
+      id: 'catalog-test',
+      title: '长书',
+      author: '作者',
+      addedAt: 1,
+      updatedAt: 1,
+      progress: 0,
+      lastReadAt: 2,
+      currentChapterId: 'started',
+      source: { name: 'novel.test', bookUrl: 'https://novel.test/catalog' },
+    },
+  ]);
+  store.set(chaptersAtom, {
+    'catalog-test': [
+      {
+        id: 'started',
+        bookId: 'catalog-test',
+        title: '第2章',
+        content: '',
+        order: 0,
+        sourceUrl: 'https://novel.test/2.html',
+      },
+    ],
+  });
+  let tree!: Renderer.ReactTestRenderer;
+  await act(() => {
+    tree = Renderer.create(
+      <Provider store={store}>
+        <ThemeProvider>
+          <BookDetailScreen />
+        </ThemeProvider>
+      </Provider>,
+    );
+  });
+  expect(
+    tree.root.findAllByProps({ children: '阅读中' }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: '继续阅读 第2章' }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: '检查书籍更新' }).length,
+  ).toBeGreaterThan(0);
+  await act(() =>
+    tree.root
+      .findAllByProps({ accessibilityLabel: '继续阅读 第2章' })[0]
+      .props.onPress(),
+  );
+  expect(mockNavigation.navigate).toHaveBeenCalledWith('Reader', {
+    bookId: 'catalog-test',
+  });
+  mockCheckUpdate.mockRejectedValueOnce(new Error('书源目录不完整'));
+  await act(async () =>
+    tree.root
+      .findAllByProps({ accessibilityLabel: '检查书籍更新' })[0]
+      .props.onPress(),
+  );
+  expect(
+    tree.root.findAllByProps({ children: '检查更新失败：书源目录不完整' })
+      .length,
+  ).toBeGreaterThan(0);
+  await act(() =>
+    tree.root
+      .findAllByProps({ accessibilityLabel: '回到原网页更新章节目录' })[0]
+      .props.onPress(),
+  );
+  expect(mockNavigation.navigate).toHaveBeenCalledWith('InAppBrowser', {
+    initialUrl: 'https://novel.test/catalog',
+  });
+  await act(() => tree.unmount());
+});

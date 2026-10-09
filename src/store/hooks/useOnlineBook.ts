@@ -42,7 +42,6 @@ import {
   MAX_CHAPTER_PAGES,
 } from '../../services/source/chapterPages';
 import { loadBookChapters, saveBookChapters } from '../../utils/libraryStorage';
-import { calculateReadingProgress } from '../../utils/readingProgressPercent';
 import {
   isBadBookshukuCatalog,
   isSafeBookshukuCatalogReplacement,
@@ -52,14 +51,21 @@ import {
   migrateReaderSelection,
   progressAfterCatalogRepair,
   repairCatalogPreservingIdentity,
+  normalizedChapterIdentity,
 } from '../../utils/catalogRepair';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
+import {
+  recognizeBookHtml,
+  getRecognitionTargetUrl,
+} from '../../services/recognize/recognizer';
+import { prepareRecognizedCatalog } from '../../services/recognize/prepareRecognizedCatalog';
 import {
   enrichBookMetadata,
   needsBookMetadata,
 } from '../../services/recognize/enrichBookMetadata';
 import {
   fetchRenderedChapterPage,
+  fetchRenderedHtml,
   cleanRenderedText,
 } from '../../services/browserFetch/bridge';
 
@@ -278,15 +284,12 @@ function runBookImport(
   return request;
 }
 
-function commitBookImport(
+function runLibraryTransaction<T>(
   store: LibraryStore,
-  incoming: OnlineBookResult,
-  fromBrowser = false,
-): Promise<Book> {
-  // 两个入口等待落盘时仍只能有一个发布者，避免都读到“尚未入库”的旧状态。
-  const request = (bookImportQueues.get(store) ?? Promise.resolve()).then(() =>
-    saveImportedBook(store, incoming, fromBrowser),
-  );
+  task: () => Promise<T>,
+): Promise<T> {
+  // 导入与追更共用发布队列；否则两个事务都可能基于旧目录写盘并覆盖对方的结果。
+  const request = (bookImportQueues.get(store) ?? Promise.resolve()).then(task);
   const tail = request.then(
     () => undefined,
     () => undefined,
@@ -296,6 +299,20 @@ function commitBookImport(
     if (bookImportQueues.get(store) === tail) bookImportQueues.delete(store);
   });
   return request;
+}
+
+function commitBookImport(
+  store: LibraryStore,
+  incoming: OnlineBookResult,
+  fromBrowser = false,
+  signal?: AbortSignal,
+): Promise<Book> {
+  // 两个入口等待落盘时仍只能有一个发布者，避免都读到“尚未入库”的旧状态。
+  return runLibraryTransaction(store, () => {
+    throwIfAborted(signal);
+    // 已进入落盘事务后完成发布，避免保存成功但页面因离开而误报失败。
+    return saveImportedBook(store, incoming, fromBrowser);
+  });
 }
 
 async function saveImportedBook(
@@ -322,6 +339,13 @@ async function saveImportedBook(
   const preserveCatalog =
     metas.length < previous.length &&
     !isBadBookshukuCatalog(existing?.source?.name, previous);
+  const incomingIds = new Set(metas.map(m => normalizedChapterIdentity(m.url)));
+  if (
+    !preserveCatalog &&
+    !isBadBookshukuCatalog(existing?.source?.name, previous) &&
+    previous.some(c => !incomingIds.has(normalizedChapterIdentity(c.sourceUrl)))
+  )
+    throw new Error('新目录不完整，已保留本地目录和阅读数据');
   // 临时只识别到第一页时保留完整旧目录；残缺 bookshuku 目录则仍允许可信修复。
   if (
     !preserveCatalog &&
@@ -369,8 +393,14 @@ async function saveImportedBook(
     repaired = repair(previous);
     scheduleCache(bookId, repaired.chapters);
   }
-  const latestBook =
-    store.get(booksAtom).find(book => book.id === bookId) ?? existing;
+  const latestBook = store.get(booksAtom).find(book => book.id === bookId);
+  // 用户在导入等待期间再次移除原书时，后发的删除意图优先，不能被迟到导入还原。
+  if (
+    existing &&
+    (!latestBook ||
+      (latestBook.deletedAt && latestBook.deletedAt !== existing.deletedAt))
+  )
+    throw new Error('书籍已移除，已停止本次导入');
   const history = store.get(readingHistoryAtom)[bookId];
   const references = migrateCatalogReferences(
     bookId,
@@ -463,8 +493,9 @@ export const useAddOnlineBook = () => {
 export const useAddRecognizedBook = () => {
   const store = useStore();
 
-  return (data: RecognizedBook): Promise<Book> =>
+  return (data: RecognizedBook, signal?: AbortSignal): Promise<Book> =>
     runBookImport(store, onlineBookImportKey(data.url), async () => {
+      throwIfAborted(signal);
       if (!data.ok || !data.isDetail)
         throw new Error('未识别到书籍目录，请重新识别后重试');
       // 可直连的专用书源必须重取完整目录并保存注册身份；否则浏览导入会误走通用正文抓取，丢失章内子页。
@@ -475,7 +506,10 @@ export const useAddRecognizedBook = () => {
             addOnlineBook(data.url),
             BOOK_IMPORT_TIMEOUT_MS,
             '书源响应超时',
+            signal,
           ),
+          false,
+          signal,
         );
       }
       const metas = normalizeOnlineCatalog(data.chapters);
@@ -484,7 +518,8 @@ export const useAddRecognizedBook = () => {
       const metadata =
         data.metadataChecked || !needsBookMetadata(data)
           ? data
-          : (await enrichBookMetadata(data)).book;
+          : (await enrichBookMetadata(data, { signal })).book;
+      throwIfAborted(signal);
 
       const now = Date.now();
       const book: Book = {
@@ -497,8 +532,11 @@ export const useAddRecognizedBook = () => {
         updatedAt: now,
         progress: 0,
         totalChapters: metas.length,
-        // 浏览器识别源：host 作为来源名（无注册 BookSource），bookUrl 存详情页。
-        source: { name: data.host, bookUrl: data.url },
+        // 注册源保留适配器身份以支持追更/缓存；未知网站用 host 标识，来源地址用于通用解析。
+        source: {
+          name: resolveSource(data.url)?.id || data.host,
+          bookUrl: data.url,
+        },
       };
       const chapters: Chapter[] = metas.map((c, i) => ({
         id: `${bookId}-${i}`,
@@ -509,7 +547,7 @@ export const useAddRecognizedBook = () => {
         sourceUrl: c.url,
       }));
 
-      return commitBookImport(store, { book, chapters }, true);
+      return commitBookImport(store, { book, chapters }, true, signal);
     });
 };
 
@@ -1013,7 +1051,9 @@ export const useCacheWholeBook = () => {
     signal?: AbortSignal,
   ): Promise<CacheProgress> => {
     const book = store.get(booksAtom).find(b => b.id === bookId);
-    const source = book?.source ? getSourceById(book.source.name) : null;
+    const source = book?.source
+      ? getSourceById(book.source.name) || resolveSource(book.source.bookUrl)
+      : null;
     const initial = store.get(chaptersAtom)[bookId];
     if (!source)
       throw new Error('网页导入书籍会在阅读时自动缓存，请回原网页更新目录');
@@ -1117,6 +1157,9 @@ export const useCacheWholeBook = () => {
             fullContent.replace(/\s+/g, '').length < 200
               ? allPartsTrustedShort
               : undefined,
+          browserContentVersion: book?.source?.name.includes('.')
+            ? BROWSER_CONTENT_VERSION
+            : ch.browserContentVersion,
           nextPageUrl,
           contentComplete,
         };
@@ -1150,183 +1193,189 @@ export const useCacheWholeBook = () => {
   };
 };
 
-/**
- * 检查在线书更新：重拉目录，把超出现有数量的新章节追加进来（正文留空，阅读时懒加载）。
- * 返回新增章节数。假定书源目录按顺序追加新章（连载站点常态）；不处理中途插入/重排。
- */
+// 手动检查与自动追更共享同书请求，任一页面离开不会取消仍有使用者的检查。
+const updateRequests = new WeakMap<
+  LibraryStore,
+  ReturnType<typeof createSharedRequestPool<number>>
+>();
+
+/** 更新按章节来源身份合并，保存成功后才发布目录、续读引用和未读数量。 */
 export const useCheckBookUpdate = () => {
   const store = useStore();
-
-  return async (bookId: string, signal?: AbortSignal): Promise<number> => {
-    throwIfAborted(signal);
-    const book = store.get(booksAtom).find(b => b.id === bookId);
-    const source = book?.source ? getSourceById(book.source.name) : null;
-    if (!source || !book?.source) return 0;
-    const sourceBookId = source.extractId(book.source.bookUrl) ?? '';
-
-    const metas = await abortable(
-      source.parseCatalog(
-        {
-          sourceBookId,
-          title: book.title,
-          author: book.author,
-          catalogUrl: book.source.bookUrl,
-        },
-        { signal },
-      ),
-      signal,
-    );
-    throwIfAborted(signal);
-    let existing = store.get(chaptersAtom)[bookId];
-    if (!existing) {
-      // 章节正文按书懒加载。追更可能发生在用户尚未打开书籍时，必须先恢复旧目录，
-      // 否则会把远端整本目录误判成新增章节，并覆盖本地已缓存正文。
-      const loaded = (await loadBookChapters(bookId, signal)) ?? [];
-      throwIfAborted(signal);
-      store.set(chaptersAtom, prev =>
-        prev[bookId] ? prev : { ...prev, [bookId]: loaded },
-      );
-      existing = store.get(chaptersAtom)[bookId] ?? loaded;
+  return (bookId: string, signal?: AbortSignal): Promise<number> => {
+    let pool = updateRequests.get(store);
+    if (!pool) {
+      pool = createSharedRequestPool<number>();
+      updateRequests.set(store, pool);
     }
-    const shouldReplaceCatalog = isBadBookshukuCatalog(source.id, existing);
-    if (
-      shouldReplaceCatalog &&
-      !isSafeBookshukuCatalogReplacement(
-        source.id,
-        existing,
-        metas.map(meta => ({ title: meta.title, sourceUrl: meta.url })),
-      )
-    ) {
-      // 更新检查同样不能让临时半截目录覆盖用户的续读、书签与摘抄。
-      throw new Error('书源返回的目录仍不完整，已保留本地目录和阅读数据');
-    }
-    if (!shouldReplaceCatalog && metas.length <= existing.length) {
-      store.set(booksAtom, prev =>
-        prev.map(b =>
-          b.id === bookId ? { ...b, lastUpdateCheckAt: Date.now() } : b,
-        ),
-      );
-      return 0;
-    }
-
-    const repaired = shouldReplaceCatalog
-      ? repairCatalogPreservingIdentity(bookId, existing, metas, cached =>
-          isCachedOnlineChapterUsable(cached, source.id),
+    return pool(bookId, signal, async requestSignal => {
+      const book = store
+        .get(booksAtom)
+        .find(b => b.id === bookId && !b.deletedAt);
+      if (!book?.source) return 0;
+      const source =
+        getSourceById(book.source.name) || resolveSource(book.source.bookUrl);
+      let remote;
+      if (source) {
+        remote = await abortable(
+          source.parseCatalog(
+            {
+              sourceBookId: source.extractId(book.source.bookUrl) || '',
+              title: book.title,
+              author: book.author,
+              catalogUrl: getRecognitionTargetUrl(book.source.bookUrl),
+            },
+            { signal: requestSignal },
+          ),
+          requestSignal,
+        );
+      } else {
+        // 未注册网站沿用导入时的通用解析与分页完整性检查，无需为追更再写一套适配。
+        const fetchHtml = (url: string) =>
+          fetchRenderedHtml(url, {
+            signal: requestSignal,
+            waitMs: 3500,
+            timeout: 20000,
+            priority: 'normal',
+          });
+        const recognized = recognizeBookHtml(
+          await fetchHtml(book.source.bookUrl),
+          book.source.bookUrl,
+        );
+        if (recognized.title && recognized.title !== book.title)
+          throw new Error('书源返回了其他书籍的目录，请回原网页核对');
+        remote = (
+          await prepareRecognizedCatalog(
+            recognized,
+            fetchHtml,
+            undefined,
+            requestSignal,
+          )
+        ).chapters;
+      }
+      const metas = normalizeOnlineCatalog(remote);
+      throwIfAborted(requestSignal);
+      return runLibraryTransaction(store, async () => {
+        throwIfAborted(requestSignal);
+        const currentBook = () =>
+          store.get(booksAtom).find(b => b.id === bookId && !b.deletedAt);
+        if (!currentBook()) return 0;
+        let existing = store.get(chaptersAtom)[bookId];
+        if (!existing) {
+          existing = (await loadBookChapters(bookId, requestSignal)) ?? [];
+          existing = store.get(chaptersAtom)[bookId] ?? existing;
+        }
+        throwIfAborted(requestSignal);
+        if (!currentBook()) return 0;
+        const replacingBad = isBadBookshukuCatalog(source?.id, existing);
+        const remoteIds = new Set(
+          metas.map(m => normalizedChapterIdentity(m.url)),
+        );
+        // 只返回最新几章或一页目录不能被当成“已是最新”。保守拒绝缺失旧章的结果，保留阅读数据。
+        if (
+          (!replacingBad &&
+            existing.some(
+              c => !remoteIds.has(normalizedChapterIdentity(c.sourceUrl)),
+            )) ||
+          (replacingBad &&
+            !isSafeBookshukuCatalogReplacement(
+              source?.id,
+              existing,
+              metas.map(m => ({ title: m.title, sourceUrl: m.url })),
+            ))
         )
-      : null;
-    const next: Chapter[] = repaired
-      ? repaired.chapters
-      : [
-          ...existing,
-          ...metas.slice(existing.length).map((m, i) => ({
-            id: `${bookId}-${existing.length + i}`,
-            bookId,
-            title: m.title,
-            content: '',
-            order: existing.length + i,
-            sourceUrl: m.url,
-          })),
-        ];
-
-    const latestBook =
-      store.get(booksAtom).find(item => item.id === bookId) ?? book;
-    const history = store.get(readingHistoryAtom)[bookId];
-    const migratedReferences = repaired
-      ? migrateCatalogReferences(
+          throw new Error('书源返回的目录不完整，已保留本地目录和阅读数据');
+        const oldIds = new Set(
+          existing.map(c => normalizedChapterIdentity(c.sourceUrl)),
+        );
+        const repair = (list: Chapter[]) =>
+          repairCatalogPreservingIdentity(bookId, list, metas, c =>
+            isCachedOnlineChapterUsable(c, source?.id ?? book.source!.name),
+          );
+        let repaired = repair(existing);
+        const added = replacingBad
+          ? repaired.newChapterCount
+          : metas.filter(m => !oldIds.has(normalizedChapterIdentity(m.url)))
+              .length;
+        const pendingCache = cacheTimers.get(bookId);
+        if (pendingCache) {
+          clearTimeout(pendingCache);
+          cacheTimers.delete(bookId);
+        }
+        try {
+          await saveBookChapters(bookId, repaired.chapters);
+        } catch (error) {
+          if (pendingCache)
+            scheduleCache(bookId, store.get(chaptersAtom)[bookId] ?? existing);
+          throw error;
+        }
+        // 落盘期间读者可能缓存正文/移动位置，也可能删除书籍；不能发布旧快照或复活已删除书。
+        const latest = currentBook();
+        if (!latest) return 0;
+        const newer = store.get(chaptersAtom)[bookId];
+        if (newer && newer !== existing) {
+          existing = newer;
+          repaired = repair(newer);
+          scheduleCache(bookId, repaired.chapters);
+        }
+        const next = repaired.chapters;
+        const history = store.get(readingHistoryAtom)[bookId];
+        const references = migrateCatalogReferences(
           bookId,
-          latestBook.currentChapterId,
+          latest.currentChapterId,
           history,
           store.get(bookmarksAtom)[bookId] ?? [],
           next,
           repaired.chapterIdMap,
-        )
-      : null;
-    const readerTargetsBook = store.get(selectedBookIdAtom) === bookId;
-    const migratedReaderSelection = repaired
-      ? migrateReaderSelection(
+        );
+        const readerTargetsBook = store.get(selectedBookIdAtom) === bookId;
+        const selection = migrateReaderSelection(
           existing,
           next,
           readerTargetsBook ? store.get(currentChapterIndexAtom) : null,
-          migratedReferences?.currentChapterId,
+          references.currentChapterId,
           repaired.chapterIdMap,
-        )
-      : null;
-    store.set(chaptersAtom, prev => ({ ...prev, [bookId]: next }));
-    if (repaired && readerTargetsBook) {
-      // 后台追更也可能在阅读器存活时修复目录，同步更新全局索引和正文快照。
-      store.set(
-        currentChapterIndexAtom,
-        migratedReaderSelection?.chapterIndex ?? null,
-      );
-      store.set(
-        currentChapterContentAtom,
-        migratedReaderSelection?.chapterContent ?? '',
-      );
-    }
-    if (migratedReferences) {
-      // 追更触发的残目录修复也要同步迁移续读和书签，不能只替换章节数组。
-      store.set(readingHistoryAtom, prev => {
-        const migrated = { ...prev };
-        if (migratedReferences.history) {
-          migrated[bookId] = migratedReferences.history;
-        } else {
-          delete migrated[bookId];
+        );
+        store.set(chaptersAtom, prev => ({ ...prev, [bookId]: next }));
+        if (readerTargetsBook) {
+          store.set(currentChapterIndexAtom, selection.chapterIndex);
+          store.set(currentChapterContentAtom, selection.chapterContent);
         }
-        return migrated;
-      });
-      store.set(bookmarksAtom, prev => {
-        const migrated = { ...prev };
-        if (migratedReferences.bookmarks.length > 0) {
-          migrated[bookId] = migratedReferences.bookmarks;
-        } else {
-          delete migrated[bookId];
-        }
-        return migrated;
-      });
-    }
-    // 修复残目录时，补回的旧章节不能算“新章”；仅 URL 序号超过旧最大值的章节进入追更数。
-    const addedChapterCount = repaired
-      ? repaired.newChapterCount
-      : Math.max(0, next.length - existing.length);
-    store.set(booksAtom, prev =>
-      prev.map(b =>
-        b.id === bookId
-          ? {
-              ...b,
-              currentChapterId: repaired
-                ? migratedReferences?.currentChapterId
-                : b.currentChapterId,
-              // 已读完的连载书出现新章后不应继续显示 100%；保留首次完成时间，
-              // 但把进度回落到旧目录末尾在新目录中的真实位置。
-              progress: repaired
-                ? progressAfterCatalogRepair(
+        if (references.history)
+          store.set(readingHistoryAtom, prev => ({
+            ...prev,
+            [bookId]: references.history!,
+          }));
+        store.set(bookmarksAtom, prev => ({
+          ...prev,
+          [bookId]: references.bookmarks,
+        }));
+        store.set(booksAtom, prev =>
+          prev.map(b =>
+            b.id === bookId
+              ? {
+                  ...b,
+                  currentChapterId: references.currentChapterId,
+                  progress: progressAfterCatalogRepair(
                     b,
                     existing,
                     next,
                     history,
                     repaired.chapterIdMap,
-                  )
-                : b.progress >= 100 && addedChapterCount > 0
-                ? calculateReadingProgress({
-                    chapterIndex: Math.max(0, existing.length - 1),
-                    totalChapters: next.length,
-                    chapterFraction: 1,
-                  })
-                : b.progress,
-              totalChapters: next.length,
-              updatedAt: Date.now(),
-              lastUpdateCheckAt: Date.now(),
-              unreadUpdates: b.following
-                ? (b.unreadUpdates || 0) + addedChapterCount
-                : b.unreadUpdates,
-            }
-          : b,
-      ),
-    );
-    await saveBookChapters(bookId, next).catch(error => {
-      console.warn('[useCheckBookUpdate] save failed', error);
+                  ),
+                  totalChapters: next.length,
+                  updatedAt: Date.now(),
+                  lastUpdateCheckAt: Date.now(),
+                  unreadUpdates: b.following
+                    ? (b.unreadUpdates || 0) + added
+                    : b.unreadUpdates,
+                }
+              : b,
+          ),
+        );
+        return added;
+      });
     });
-    return addedChapterCount;
   };
 };
 
@@ -1372,14 +1421,29 @@ export const useCheckFollowedBooks = () => {
     let cacheFailed = 0;
     for (const book of followed) {
       try {
+        const before = options.cacheNewChapters
+          ? store.get(chaptersAtom)[book.id] ??
+            (await loadBookChapters(book.id)) ??
+            []
+          : [];
+        const beforeIds = new Set(
+          before.map(c => normalizedChapterIdentity(c.sourceUrl)),
+        );
         const added = await checkBookUpdate(book.id);
         updated += added;
         if (added > 0 && options.cacheNewChapters) {
           const chapters = store.get(chaptersAtom)[book.id] ?? [];
-          const firstNewIndex = Math.max(0, chapters.length - added);
+          let bookCached = 0;
 
           // 新章缓存严格串行，避免自动追更在后台并发请求触发书源限流。
-          for (let index = firstNewIndex; index < chapters.length; index += 1) {
+          for (let index = 0; index < chapters.length; index += 1) {
+            // 新章也可能插在中间；按来源身份定位，不能缓存末尾 N 章冒充新增章。
+            if (
+              beforeIds.has(
+                normalizedChapterIdentity(chapters[index].sourceUrl),
+              )
+            )
+              continue;
             try {
               let chapter = await ensureChapterContent(book.id, index, {
                 background: true,
@@ -1389,7 +1453,12 @@ export const useCheckFollowedBooks = () => {
                   background: true,
                 });
               }
-              if (chapter?.content) cached += 1;
+              if (
+                chapter &&
+                isCompleteOnlineChapterCacheUsable(chapter, book.source?.name)
+              )
+                bookCached += 1;
+              else cacheFailed += 1;
             } catch {
               // 单章缓存失败不影响其它新章；正文仍可在真正阅读时再次按需抓取。
               cacheFailed += 1;
@@ -1398,7 +1467,13 @@ export const useCheckFollowedBooks = () => {
 
           const latest = store.get(chaptersAtom)[book.id];
           if (latest) {
-            await saveBookChapters(book.id, latest).catch(() => {});
+            try {
+              await saveBookChapters(book.id, latest);
+              cached += bookCached;
+            } catch {
+              // 正文只在内存里不等于可离线；保留更新成功，单独报告缓存落盘失败。
+              cacheFailed += bookCached;
+            }
           }
         }
       } catch {

@@ -14,6 +14,7 @@ import {
   useLoadNextChapterPage,
   useEnsureChapterContent,
   useCheckFollowedBooks,
+  useCheckBookUpdate,
 } from '../src/store/hooks/useOnlineBook';
 import {
   addOnlineBook,
@@ -126,6 +127,201 @@ beforeEach(() => {
 afterEach(() => {
   jest.restoreAllMocks();
   jest.useRealTimers();
+});
+
+describe('网站目录更新事务', () => {
+  const setup = () => {
+    const book = {
+      ...incomingBook(),
+      following: true,
+      currentChapterId: 'old-2',
+      progress: 50,
+    };
+    const chapters = [1, 2, 3].map(n => chapter(book.id, `old-${n}`, n, true));
+    mockStore.set(booksAtom, [book]);
+    mockStore.set(chaptersAtom, { [book.id]: chapters });
+    return { book, chapters };
+  };
+  const catalog = (sequences: number[]) =>
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseCatalog')
+      .mockResolvedValue(
+        sequences.map(n => ({ title: `第${n}章`, url: sourceUrl(n) })),
+      );
+
+  it('更新去重并按 URL 合并插章，保持续读和正文，不按旧长度截取', async () => {
+    const { book, chapters } = setup();
+    catalog([1, 4, 2, 3, 3]);
+    mockStore.set(selectedBookIdAtom, book.id);
+    mockStore.set(currentChapterIndexAtom, 1);
+    expect(await useCheckBookUpdate()(book.id)).toBe(1);
+    expect(mockStore.get(chaptersAtom)[book.id].map(c => c.sourceUrl)).toEqual(
+      [1, 4, 2, 3].map(sourceUrl),
+    );
+    expect(mockStore.get(chaptersAtom)[book.id][2]).toMatchObject({
+      id: chapters[1].id,
+      content: chapters[1].content,
+    });
+    expect(mockStore.get(currentChapterIndexAtom)).toBe(2);
+    expect(mockStore.get(booksAtom)[0].unreadUpdates).toBe(1);
+  });
+
+  it('等长目录重排也同步身份与标题，不丢缓存', async () => {
+    const { book } = setup();
+    catalog([3, 1, 2]);
+    expect(await useCheckBookUpdate()(book.id)).toBe(0);
+    expect(mockStore.get(chaptersAtom)[book.id].map(c => c.id)).toEqual([
+      'old-3',
+      'old-1',
+      'old-2',
+    ]);
+  });
+
+  it('目录未变且尚无阅读历史时，检查更新不把章内进度退回章首', async () => {
+    const { book } = setup();
+    catalog([1, 2, 3]);
+    await useCheckBookUpdate()(book.id);
+    expect(mockStore.get(booksAtom)[0].progress).toBe(50);
+  });
+
+  it('一个检查者取消不影响另一个等待者，不重复发布更新', async () => {
+    const { book } = setup();
+    const late = deferred<Array<{ title: string; url: string }>>();
+    const parse = catalog([]).mockReturnValueOnce(late.promise);
+    const check = useCheckBookUpdate();
+    const controller = new AbortController();
+    const first = check(book.id, controller.signal);
+    const second = check(book.id);
+    await Promise.resolve();
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    expect(parse.mock.calls[0][1]!.signal!.aborted).toBe(false);
+    late.resolve(
+      [1, 2, 3, 4].map(n => ({ title: `第${n}章`, url: sourceUrl(n) })),
+    );
+    expect(await second).toBe(1);
+    expect(mockStore.get(booksAtom)[0].unreadUpdates).toBe(1);
+  });
+
+  it('追更缓存定位中间插入的新章，不误缓存原目录末章', async () => {
+    const { book } = setup();
+    catalog([1, 4, 2, 3]);
+    const content = jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockResolvedValue({ content: '新的正文。'.repeat(100), complete: true });
+    expect(
+      await useCheckFollowedBooks()({ cacheNewChapters: true }),
+    ).toMatchObject({ updated: 1, cached: 1 });
+    expect(content).toHaveBeenCalledWith(sourceUrl(4), expect.anything());
+    expect(mockStore.get(chaptersAtom)[book.id][1].content).toContain(
+      '新的正文',
+    );
+  });
+
+  it('追更资料更新成功但正文保存失败时，不报可离线缓存成功', async () => {
+    jest.useFakeTimers();
+    setup();
+    catalog([1, 2, 3, 4]);
+    jest
+      .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
+      .mockResolvedValue({ content: '新的正文。'.repeat(100), complete: true });
+    jest
+      .mocked(saveBookChapters)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('缓存存储已满'));
+    expect(
+      await useCheckFollowedBooks()({ cacheNewChapters: true }),
+    ).toMatchObject({ updated: 1, cached: 0, cacheFailed: 1 });
+    jest.runOnlyPendingTimers();
+  });
+
+  it('保存等待期间新增的正文和阅读进度不能被旧更新快照覆盖', async () => {
+    jest.useFakeTimers();
+    const { book, chapters } = setup();
+    catalog([1, 2, 3, 4]);
+    const writing = deferred<void>();
+    jest.mocked(saveBookChapters).mockReturnValueOnce(writing.promise);
+    const running = useCheckBookUpdate()(book.id);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    const newer = chapters.map((c, i) =>
+      i === 1 ? { ...c, content: '新缓存正文。'.repeat(100) } : c,
+    );
+    mockStore.set(chaptersAtom, { [book.id]: newer });
+    mockStore.set(booksAtom, [{ ...book, lastReadAt: 99 }]);
+    writing.resolve();
+    await running;
+    expect(mockStore.get(chaptersAtom)[book.id][1].content).toBe(
+      newer[1].content,
+    );
+    expect(mockStore.get(booksAtom)[0].lastReadAt).toBe(99);
+    jest.runOnlyPendingTimers();
+    expect(saveBookChapters).toHaveBeenCalledTimes(2);
+  });
+
+  it('远端残目录不能误报已是最新，也不能改本地目录', async () => {
+    const { book, chapters } = setup();
+    catalog([2, 3]);
+    await expect(useCheckBookUpdate()(book.id)).rejects.toThrow('不完整');
+    expect(mockStore.get(chaptersAtom)[book.id]).toBe(chapters);
+    expect(mockStore.get(booksAtom)[0].lastUpdateCheckAt).toBeUndefined();
+  });
+
+  it('保存失败会报错，章节数量与追更提示保持原样，允许重新检查', async () => {
+    const { book, chapters } = setup();
+    catalog([1, 2, 3, 4]);
+    jest.mocked(saveBookChapters).mockRejectedValueOnce(new Error('存储已满'));
+    await expect(useCheckBookUpdate()(book.id)).rejects.toThrow('存储已满');
+    expect(mockStore.get(chaptersAtom)[book.id]).toBe(chapters);
+    expect(mockStore.get(booksAtom)[0]).toBe(book);
+    expect(await useCheckBookUpdate()(book.id)).toBe(1);
+  });
+
+  it('手动与自动同时检查共享请求，新增数不重复累计', async () => {
+    const { book } = setup();
+    const parse = catalog([1, 2, 3, 4]);
+    const check = useCheckBookUpdate();
+    await Promise.all([check(book.id), check(book.id)]);
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(mockStore.get(booksAtom)[0].unreadUpdates).toBe(1);
+  });
+
+  it('解析期间移入回收站后，迟到更新不得继续发布', async () => {
+    const { book, chapters } = setup();
+    const late = deferred<Array<{ title: string; url: string }>>();
+    catalog([]).mockReturnValueOnce(late.promise);
+    const pending = useCheckBookUpdate()(book.id);
+    await Promise.resolve();
+    mockStore.set(booksAtom, [{ ...book, deletedAt: 123 }]);
+    late.resolve(
+      [1, 2, 3, 4].map(n => ({ title: `第${n}章`, url: sourceUrl(n) })),
+    );
+    await pending;
+    expect(mockStore.get(chaptersAtom)[book.id]).toBe(chapters);
+    expect(saveBookChapters).not.toHaveBeenCalled();
+  });
+});
+
+it('更长但缺旧章的重新导入不能覆盖原书，存储期间后发的删除不被还原', async () => {
+  const book = incomingBook();
+  const chapters = [1, 2, 3].map(n => chapter(book.id, `old-${n}`, n, true));
+  mockStore.set(booksAtom, [book]);
+  mockStore.set(chaptersAtom, { [book.id]: chapters });
+  await expect(
+    useAddRecognizedBook()(recognized([1, 3, 4, 5])),
+  ).rejects.toThrow('不完整');
+  expect(mockStore.get(chaptersAtom)[book.id]).toBe(chapters);
+  const writing = deferred<void>();
+  jest.mocked(saveBookChapters).mockReturnValueOnce(writing.promise);
+  const running = useAddRecognizedBook()({
+    ...recognized(),
+    metadataChecked: true,
+  });
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+  mockStore.set(booksAtom, [{ ...book, deletedAt: 123 }]);
+  writing.resolve();
+  await expect(running).rejects.toThrow('已移除');
+  expect(mockStore.get(booksAtom)[0].deletedAt).toBe(123);
+  expect(mockStore.get(chaptersAtom)[book.id]).toBe(chapters);
 });
 
 it('目录持久化失败不会先显示成功或留下空壳书，下次添加可以重试', async () => {

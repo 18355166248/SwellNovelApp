@@ -9,6 +9,7 @@
 // RN 自带 URL 会把根相对链接拼到当前目录路径后，导致真机分页读到 HTML 却解析出 0 章。
 // 这里只显式使用标准实现；注入脚本仍由 WebView 自己的浏览器 URL 执行。
 import { StandardURL as URL } from '../../utils/standardUrl';
+import { abortable, isAbortError, throwIfAborted } from '../../utils/abort';
 import { extractBookMetadata, type MetadataExtraction } from './bookMetadata';
 import { BOOK_METADATA_EXTRACTOR_JS } from './bookMetadataScript.generated';
 import { removeNonContentElements } from '../source/htmlContainers';
@@ -264,15 +265,16 @@ export const RECOGNIZER_JS = `(function(){
       url: location.href, host: location.host,
       requestId: requestId,
       title: (mingBook ? title : metadata.title) || title,
-      author: metadata.author || author, cover: metadata.cover || cover,
+      author: metadata.author || author, cover: metadata.cover || (/(?:no[_-]?(?:photo|cover)|placeholder|loading|logo)[.]/i.test(cover) ? '' : cover),
       description: metadata.description,
+      catalogUrl: metadata.catalogUrl,
       metadataLinks: metadata.metadataLinks, metadataRules: metadata.metadataRules,
       metadataIssues: metadata.metadataIssues,
       chapters: chapters.slice(0, 5000), pageUrls: pageUrls.slice(0, ${MAX_CATALOG_PAGES})
     };
     post(payload);
   } catch (e) {
-    post({ type: '${RECOGNIZE_MESSAGE}', requestId: requestId, ok: false, error: String(e), chapters: [] });
+    post({ type: '${RECOGNIZE_MESSAGE}', url: location.href, requestId: requestId, ok: false, error: String(e), chapters: [] });
   }
 })(); true;`;
 
@@ -521,7 +523,9 @@ export async function expandRecognizedCatalog(
   book: RecognizedBook,
   fetchPageHtml: (url: string) => Promise<string>,
   onProgress?: (done: number, total: number, attempt?: number) => void,
+  signal?: AbortSignal,
 ): Promise<RecognizedBook> {
+  throwIfAborted(signal);
   const currentUrl = book.url.replace(/#.*$/, '');
   const pages = (book.pageUrls || []).filter(
     (url, index, all) =>
@@ -536,6 +540,7 @@ export async function expandRecognizedCatalog(
   const seen = new Set<string>();
   let fetchedPages = 0;
   for (const pageUrl of orderedPages) {
+    throwIfAborted(signal);
     if (pageUrl === currentUrl) {
       for (const chapter of book.chapters) {
         const identity = catalogChapterIdentity(
@@ -558,7 +563,7 @@ export async function expandRecognizedCatalog(
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       onProgress?.(fetchedPages, pages.length, attempt);
       try {
-        const html = await fetchPageHtml(pageUrl);
+        const html = await abortable(fetchPageHtml(pageUrl), signal);
         pageChapters = parseRecognizedChaptersHtml(html, pageUrl);
         if (
           pageChapters.some(
@@ -572,10 +577,14 @@ export async function expandRecognizedCatalog(
         pageChapters = [];
         lastError = '未识别到新章节，目录分页可能失效';
       } catch (error) {
+        if (isAbortError(error)) throw error;
         lastError = error instanceof Error ? error.message : '页面加载失败';
       }
       if (attempt < 3) {
-        await new Promise<void>(resolve => setTimeout(resolve, attempt * 600));
+        await abortable(
+          new Promise<void>(resolve => setTimeout(resolve, attempt * 600)),
+          signal,
+        );
       }
     }
     if (pageChapters.length === 0) {

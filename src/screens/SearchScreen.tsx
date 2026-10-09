@@ -212,6 +212,15 @@ export default function SearchScreen() {
         }
         return;
       }
+      if (
+        Platform.OS !== 'web' &&
+        !resolveSource(result.url)?.preferDirectImport
+      ) {
+        // 依赖浏览器会话的长目录不能挤进直连入库的 45 秒预算；与粘贴链接入口保持一致。
+        if (requestCoordinator.finishAdding(requestToken))
+          openBrowser(result.url);
+        return;
+      }
       setAddingUrl(result.url);
       try {
         const book = await addOnlineBook(result.url);
@@ -230,7 +239,7 @@ export default function SearchScreen() {
         }
       }
     },
-    [addOnlineBook, allBooks, navigation, requestCoordinator],
+    [addOnlineBook, allBooks, navigation, openBrowser, requestCoordinator],
   );
 
   const hasQuery = query.trim().length > 0;
@@ -604,6 +613,9 @@ export default function SearchScreen() {
                     isSameOnlineBook(book, result.url),
                   );
                   const addingThisResult = addingUrl === result.url;
+                  const browserImport =
+                    Platform.OS !== 'web' &&
+                    !resolveSource(result.url)?.preferDirectImport;
                   const resultDisabled = addingUrl !== null;
                   return (
                     <Pressable
@@ -612,7 +624,11 @@ export default function SearchScreen() {
                       accessibilityLabel={`${result.title}${
                         result.author ? `，作者 ${result.author}` : ''
                       }，来源 ${result.sourceName}，${
-                        existing ? '已在书架，打开详情' : '加入书架'
+                        existing
+                          ? '已在书架，打开详情'
+                          : browserImport
+                          ? '打开网页加入书架'
+                          : '加入书架'
                       }`}
                       accessibilityState={{
                         disabled: resultDisabled,
@@ -665,7 +681,7 @@ export default function SearchScreen() {
                         <Text
                           style={{ color: theme.colors.accent, fontSize: 11.5 }}
                         >
-                          加入书架
+                          {browserImport ? '网页中加入' : '加入书架'}
                         </Text>
                       )}
                     </Pressable>

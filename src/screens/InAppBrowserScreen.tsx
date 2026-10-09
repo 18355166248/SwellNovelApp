@@ -32,7 +32,6 @@ import { useAddRecognizedBook } from '../store';
 import {
   RECOGNIZER_JS,
   RECOGNIZE_MESSAGE,
-  expandRecognizedCatalog,
   getRecognitionTargetUrl,
   inputToUrl,
   recognizeBookHtml,
@@ -40,6 +39,9 @@ import {
 } from '../services/recognize/recognizer';
 import { fetchRenderedHtml } from '../services/browserFetch/bridge';
 import { useRecognizedBookMetadata } from '../services/recognize/useRecognizedBookMetadata';
+import { prepareRecognizedCatalog } from '../services/recognize/prepareRecognizedCatalog';
+import { isAbortError } from '../utils/abort';
+import { useScreenTaskSignal } from '../store/hooks/useScreenTaskSignal';
 import { PAGE_SANITIZER_JS } from '../services/browserFetch/pageSanitizer';
 import {
   SOURCES,
@@ -115,8 +117,10 @@ export default function InAppBrowserScreen() {
   const [recognizedPage, setRecognized] = React.useState<RecognizedBook | null>(
     null,
   );
+  const focused = useIsFocused();
+  const taskSignal = useScreenTaskSignal(navigation, url || '', focused);
   const { book: recognized, loading: metadataLoading } =
-    useRecognizedBookMetadata(recognizedPage, useIsFocused());
+    useRecognizedBookMetadata(recognizedPage, focused);
   const [recognizing, setRecognizing] = React.useState(false);
   const [recognizeMessage, setRecognizeMessage] = React.useState('');
   const [adding, setAdding] = React.useState(false);
@@ -124,6 +128,7 @@ export default function InAppBrowserScreen() {
   const currentPageUrlRef = React.useRef('');
   const requestedNavigationRef = React.useRef('');
   const recognizeAbortRef = React.useRef<AbortController | null>(null);
+  const importAbortRef = React.useRef<AbortController | null>(null);
   const manualRecognizeRef = React.useRef('');
   const recognizeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -138,6 +143,7 @@ export default function InAppBrowserScreen() {
       if (recognizeFallbackTimerRef.current)
         clearTimeout(recognizeFallbackTimerRef.current);
       recognizeAbortRef.current?.abort();
+      importAbortRef.current?.abort();
       manualRecognizeRef.current = '';
       currentPageUrlRef.current = '';
     },
@@ -171,6 +177,9 @@ export default function InAppBrowserScreen() {
     manualRecognizeRef.current = '';
     recognizeAbortRef.current?.abort();
     recognizeAbortRef.current = null;
+    importAbortRef.current?.abort();
+    importAbortRef.current = null;
+    setAdding(false);
     if (recognizeTimerRef.current) clearTimeout(recognizeTimerRef.current);
     if (recognizeFallbackTimerRef.current)
       clearTimeout(recognizeFallbackTimerRef.current);
@@ -229,7 +238,7 @@ export default function InAppBrowserScreen() {
     if (data?.type !== RECOGNIZE_MESSAGE) return;
     // 切站时 WebView 仍可能显示上一页，不能把旧页面目录挂到新网址下。
     if (
-      data.ok &&
+      data.url &&
       !isRequestedBrowserNavigation(currentPageUrlRef.current, data.url)
     )
       return;
@@ -354,7 +363,11 @@ export default function InAppBrowserScreen() {
   };
 
   const onAdd = async () => {
-    if (!recognized || adding) return;
+    if (!recognized || importAbortRef.current || taskSignal.aborted) return;
+    const controller = new AbortController();
+    importAbortRef.current = controller;
+    const cancel = () => controller.abort();
+    taskSignal.addEventListener('abort', cancel);
     const addingPageUrl = currentPageUrlRef.current;
     const needsFullCatalog = !!resolveSource(recognized.url)
       ?.preferDirectImport;
@@ -364,38 +377,48 @@ export default function InAppBrowserScreen() {
       // 已有专用适配器的站点直接完整校验；详情页的“最新 10 章”不能当整本目录。
       const expanded = needsFullCatalog
         ? recognized
-        : await expandRecognizedCatalog(
+        : await prepareRecognizedCatalog(
             recognized,
-            url =>
-              fetchRenderedHtml(url, {
+            pageUrl =>
+              fetchRenderedHtml(pageUrl, {
                 // 玄幻阁目录为静态 HTML；但连续翻 27 页时部分页会晚于首屏完成渲染，
                 // 取 1.2 秒以提升长目录稳定性，同时避免 5 秒等待让整本导入过慢。
                 // 其他站点仍沿用较长等待，避免把延迟渲染页面误判为空目录。
                 waitMs: recognized.host === 'wap.xuanhuange.info' ? 1200 : 5000,
                 timeout: 20000,
                 priority: 'high',
+                signal: controller.signal,
               }),
             (done, total, attempt = 1) =>
+              !controller.signal.aborted &&
               setAddMessage(
                 attempt > 1
                   ? `目录第 ${done + 1} 页重试 ${attempt}/3…`
                   : `正在加载目录 ${done}/${total}`,
               ),
+            controller.signal,
           );
-      const book = await addRecognized(expanded);
+      const book = await addRecognized(expanded, controller.signal);
       // 入库可完成，但用户已离开或换站时不能迟到跳回旧书详情。
       if (
+        controller.signal.aborted ||
         !isRequestedBrowserNavigation(addingPageUrl, currentPageUrlRef.current)
       )
         return;
       setRecognized(null);
       navigation.navigate('BookDetail', { bookId: book.id });
     } catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) return;
       setAddMessage(
         error instanceof Error ? error.message : '目录加载失败，请重试',
       );
     } finally {
-      setAdding(false);
+      taskSignal.removeEventListener('abort', cancel);
+      // 旧任务的 finally 不能解开新页正在进行的导入锁。
+      if (importAbortRef.current === controller) {
+        importAbortRef.current = null;
+        setAdding(false);
+      }
     }
   };
 
@@ -840,6 +863,9 @@ export default function InAppBrowserScreen() {
             </Pressable>
           </View>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="加入书架"
+            accessibilityState={{ disabled: adding, busy: adding }}
             onPress={onAdd}
             disabled={adding}
             style={[

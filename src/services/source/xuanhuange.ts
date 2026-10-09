@@ -89,6 +89,7 @@ const xuanhuangeSource: BookSource = {
       title: recognized.title,
       author: recognized.author || '佚名',
       cover: recognized.cover,
+      description: recognized.description,
       catalogUrl: catalogUrl(id),
     };
   },
