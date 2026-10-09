@@ -12,12 +12,17 @@ import {
   readingHistoryAtom,
 } from '../src/store/atoms';
 
-const mockNavigation = { navigate: jest.fn(), goBack: jest.fn() };
+const mockNavigation = {
+  navigate: jest.fn(),
+  goBack: jest.fn(),
+  setOptions: jest.fn(),
+};
 const mockEnsureChapter = jest.fn();
+let mockFocused = true;
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => mockNavigation,
   useRoute: () => ({ params: { bookId: 'catalog-test' } }),
-  useIsFocused: () => true,
+  useIsFocused: () => mockFocused,
 }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -34,6 +39,8 @@ jest.mock('../src/store', () => ({
 }));
 
 it('browses, searches and closes the catalog without opening a reader or changing progress; selection opens the correct chapter', async () => {
+  jest.clearAllMocks();
+  mockFocused = true;
   const store = createStore();
   const chapters = Array.from({ length: 30 }, (_, index) => ({
     id: `chapter-${index}`,
@@ -82,6 +89,40 @@ it('browses, searches and closes the catalog without opening a reader or changin
     tree.root.findAllByProps({ children: '第一段故事。\n\n第二段故事。' })
       .length,
   ).toBeGreaterThan(0);
+  await press('快捷打开目录');
+  expect(tree.root.findByType(FlatList).props.initialScrollIndex).toBe(8);
+  await press('关闭章节目录');
+  await press('更多书籍操作');
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: '删除书籍' }).length,
+  ).toBeGreaterThan(0);
+  await press('关闭更多菜单');
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: '删除书籍' }),
+  ).toHaveLength(0);
+  await press('更多书籍操作');
+  await press('删除书籍');
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: '关闭更多菜单' }),
+  ).toHaveLength(0);
+  await press('取消移到回收站');
+  expect(store.get(booksAtom)).toBe(originalBooks);
+  // 失焦后再次返回详情，临时遮罩不能留存并拦截其他入口。
+  await press('更多书籍操作');
+  mockFocused = false;
+  const screen = () => (
+    <Provider store={store}>
+      <ThemeProvider>
+        <BookDetailScreen />
+      </ThemeProvider>
+    </Provider>
+  );
+  await act(() => tree.update(screen()));
+  mockFocused = true;
+  await act(() => tree.update(screen()));
+  expect(
+    tree.root.findAllByProps({ accessibilityLabel: '关闭更多菜单' }),
+  ).toHaveLength(0);
   await press('打开完整目录');
   expect(tree.root.findByType(FlatList).props.initialScrollIndex).toBe(8);
   await act(() => tree.root.findByType(TextInput).props.onChangeText('第20章'));
@@ -105,3 +146,58 @@ it('browses, searches and closes the catalog without opening a reader or changin
   expect(store.get(currentChapterIndexAtom)).toBe(19);
   await act(() => tree.unmount());
 });
+
+it.each(['loading', 'repair'])(
+  'blocks both catalog entries while the catalog is %s',
+  async state => {
+    jest.clearAllMocks();
+    mockFocused = true;
+    const store = createStore();
+    store.set(booksAtom, [
+      {
+        id: 'catalog-test',
+        title: '测试小说',
+        author: '作者',
+        addedAt: 1,
+        updatedAt: 1,
+        progress: 0,
+        source: { name: 'bookshuku', bookUrl: 'https://example.com/book' },
+      },
+    ]);
+    store.set(chaptersAtom, {
+      'catalog-test':
+        state === 'repair'
+          ? [
+              {
+                id: 'bad-chapter',
+                bookId: 'catalog-test',
+                title: '分节阅读 1',
+                content: '',
+                order: 0,
+                sourceUrl: 'https://example.com/1.html',
+              },
+            ]
+          : [],
+    });
+    let tree!: Renderer.ReactTestRenderer;
+    await act(() => {
+      tree = Renderer.create(
+        <Provider store={store}>
+          <ThemeProvider>
+            <BookDetailScreen />
+          </ThemeProvider>
+        </Provider>,
+      );
+    });
+    for (const label of ['快捷打开目录', '打开完整目录']) {
+      const entry = tree.root.findAllByProps({ accessibilityLabel: label })[0];
+      expect(entry.props.accessibilityState.disabled).toBe(true);
+      // 即便回调已排队，处理器也必须再次检查目录状态。
+      await act(() => entry.props.onPress());
+      expect(tree.root.findAllByType(FlatList)).toHaveLength(0);
+    }
+    expect(mockNavigation.navigate).not.toHaveBeenCalled();
+    expect(mockEnsureChapter).not.toHaveBeenCalled();
+    await act(() => tree.unmount());
+  },
+);

@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon, Text } from '../../components';
 import type { Chapter } from '../../store/types/book';
 import { useTheme } from '../../theme/ThemeContext';
+import { detailPalette } from './detailPalette';
 
 interface Props {
   chapters: Chapter[];
@@ -28,7 +29,8 @@ export default function BookCatalogModal({
   onClose,
   onSelect,
 }: Props) {
-  const { theme } = useTheme();
+  const { isDarkMode } = useTheme();
+  const palette = detailPalette(isDarkMode);
   const insets = useSafeAreaInsets();
   const [query, setQuery] = React.useState('');
   const [descending, setDescending] = React.useState(false);
@@ -55,33 +57,44 @@ export default function BookCatalogModal({
         style={[
           styles.container,
           {
-            backgroundColor: theme.colors.background,
+            backgroundColor: palette.paper,
             paddingTop: insets.top,
             paddingBottom: insets.bottom,
           },
         ]}
       >
         <View style={styles.header}>
-          <Text variant="h3">目录 · 共 {chapters.length} 项</Text>
+          <Text style={[styles.heading, { color: palette.ink }]}>
+            目录{' '}
+            <Text style={[styles.count, { color: palette.secondary }]}>
+              共 {chapters.length} 项
+            </Text>
+          </Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="关闭章节目录"
             onPress={onClose}
             style={styles.button}
           >
-            <Icon name="close" size={24} color={theme.colors.text} />
+            <Icon family="feather" name="x" size={19} color={palette.ink} />
           </Pressable>
         </View>
-        <View style={styles.searchRow}>
+        <View style={[styles.searchRow, { borderBottomColor: palette.line }]}>
+          <Icon
+            family="feather"
+            name="search"
+            size={16}
+            color={palette.secondary}
+          />
           <TextInput
             accessibilityLabel="搜索章节"
             placeholder="搜索章节名称或序号"
-            placeholderTextColor={theme.colors.textSecondary}
+            placeholderTextColor={palette.secondary}
             value={query}
             onChangeText={setQuery}
             style={[
               styles.search,
-              { color: theme.colors.text, borderColor: theme.colors.border },
+              { color: palette.ink, backgroundColor: palette.surface },
             ]}
           />
           <Pressable
@@ -90,7 +103,9 @@ export default function BookCatalogModal({
             onPress={() => setDescending(value => !value)}
             style={styles.button}
           >
-            <Text>{descending ? '倒序' : '正序'}</Text>
+            <Text style={[styles.sortLabel, { color: palette.accent }]}>
+              {descending ? '倒序' : '正序'}
+            </Text>
           </Pressable>
         </View>
         <FlatList
@@ -122,18 +137,19 @@ export default function BookCatalogModal({
               style={[
                 styles.row,
                 {
-                  borderBottomColor: theme.colors.border,
+                  borderBottomColor: palette.line,
                   backgroundColor:
-                    index === currentIndex
-                      ? theme.colors.surface
-                      : theme.colors.background,
+                    index === currentIndex ? palette.surface : palette.paper,
                 },
               ]}
             >
-              <Text color="textSecondary" style={styles.number}>
+              <Text style={[styles.number, { color: palette.secondary }]}>
                 {index + 1}
               </Text>
-              <Text numberOfLines={1} style={styles.title}>
+              <Text
+                numberOfLines={1}
+                style={[styles.title, { color: palette.ink }]}
+              >
                 {chapter.title}
               </Text>
             </Pressable>
@@ -145,13 +161,13 @@ export default function BookCatalogModal({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, paddingHorizontal: 20 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    marginBottom: 13,
+    minHeight: 44,
   },
   button: {
     minWidth: 44,
@@ -162,26 +178,28 @@ const styles = StyleSheet.create({
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 20,
+    gap: 8,
+    borderBottomWidth: 1,
     paddingBottom: 12,
   },
   search: {
     flex: 1,
     height: 44,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    fontSize: 16,
   },
   row: {
     height: ROW_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 20,
-    gap: 12,
+    borderBottomWidth: 1,
+    gap: 15,
   },
-  number: { width: 40, fontSize: 12 },
+  heading: { fontSize: 20, lineHeight: 26, fontWeight: '600' },
+  count: { fontSize: 12, lineHeight: 18, fontWeight: '400' },
+  sortLabel: { fontSize: 13, lineHeight: 20 },
+  number: { width: 24, textAlign: 'right', fontSize: 12 },
   title: { flex: 1, fontSize: 14 },
   empty: { padding: 24, textAlign: 'center' },
 });

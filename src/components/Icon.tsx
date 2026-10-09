@@ -1,5 +1,6 @@
 import React from 'react';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
+import FeatherIcon from 'react-native-vector-icons/Feather';
 import { TextStyle } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 
@@ -7,12 +8,19 @@ type SizeToken = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 interface IconProps {
   name: string;
+  family?: 'material' | 'feather';
   size?: number | SizeToken;
   color?: string | 'primary' | 'secondary' | 'text' | 'textSecondary' | 'error';
   style?: TextStyle;
 }
 
-export const Icon: React.FC<IconProps> = ({ name, size = 'md', color = 'text', style }) => {
+export const Icon: React.FC<IconProps> = ({
+  name,
+  family = 'material',
+  size = 'md',
+  color = 'text',
+  style,
+}) => {
   const { theme } = useTheme();
   const sizeMap: Record<SizeToken, number> = {
     xs: theme.fontSize.xs,
@@ -30,7 +38,18 @@ export const Icon: React.FC<IconProps> = ({ name, size = 'md', color = 'text', s
     textSecondary: theme.colors.textSecondary,
     error: theme.colors.error,
   };
-  const finalColor = typeof color === 'string' && colorMap[color] ? colorMap[color] : (color as string);
+  const finalColor =
+    typeof color === 'string' && colorMap[color]
+      ? colorMap[color]
+      : (color as string);
 
-  return <MaterialIcon name={name} size={finalSize} color={finalColor || theme.colors.text} style={style} />;
+  const IconComponent = family === 'feather' ? FeatherIcon : MaterialIcon;
+  return (
+    <IconComponent
+      name={name}
+      size={finalSize}
+      color={finalColor || theme.colors.text}
+      style={style}
+    />
+  );
 };

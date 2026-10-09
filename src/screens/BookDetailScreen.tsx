@@ -7,6 +7,8 @@ import {
   ScrollView,
   Pressable,
   Platform,
+  BackHandler,
+  Image,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon, LinearGradient, BookCover } from '../components';
@@ -36,10 +38,8 @@ import { isBadBookshukuCatalog } from '../utils/bookCatalogQuality';
 import { catalogNumberSummary } from '../utils/catalogNumberSummary';
 import { getSourceById } from '../services/source/registry';
 import { isCompleteOnlineChapterCacheUsable } from '../services/source/contentQuality';
-import {
-  DETAIL_HERO_GRADIENT,
-  COVER_GRADIENT_DIRECTION,
-} from '../theme/readerThemes';
+import { COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
+import { detailPalette } from './bookDetail/detailPalette';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type DetailRoute = RouteProp<RootStackParamList, 'BookDetail'>;
@@ -49,18 +49,9 @@ function formatWordCount(n: number) {
   return String(n);
 }
 
-function relativeTime(ts?: number) {
-  if (!ts) return '';
-  const diff = Date.now() - ts;
-  const min = Math.floor(diff / 60000);
-  if (min < 60) return `${Math.max(min, 1)} 分钟前更新`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} 小时前更新`;
-  return `${Math.floor(hr / 24)} 天前更新`;
-}
-
 export default function BookDetailScreen() {
-  const { theme } = useTheme();
+  const { theme, isDarkMode } = useTheme();
+  const palette = detailPalette(isDarkMode);
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<DetailRoute>();
   const insets = useSafeAreaInsets();
@@ -75,7 +66,7 @@ export default function BookDetailScreen() {
   const cacheWholeBook = useCacheWholeBook();
   const checkBookUpdate = useCheckBookUpdate();
   const toggleBookFollow = useToggleBookFollow();
-  const bottomActionOffset = Math.max(insets.bottom, 34) + 18;
+  const bottomActionOffset = Math.max(insets.bottom, 12);
 
   // 在线书专属：检查更新 / 缓存全本的进行态与结果提示。
   const [checking, setChecking] = React.useState(false);
@@ -87,6 +78,33 @@ export default function BookDetailScreen() {
   const [onlineMsg, setOnlineMsg] = React.useState('');
   const [showDeletePrompt, setShowDeletePrompt] = React.useState(false);
   const [catalogOpen, setCatalogOpen] = React.useState(false);
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  React.useLayoutEffect(() => {
+    if (!focused) return;
+    // 状态栏跟随当前可见背景，由原生导航控制，避免直接调用 StatusBar 与 iOS 控制器冲突。
+    navigation.setOptions({
+      statusBarStyle: catalogOpen && !isDarkMode ? 'dark' : 'light',
+    });
+  }, [navigation, catalogOpen, isDarkMode, focused]);
+  React.useEffect(() => {
+    // 页面失焦时同步收起临时浮层，返回书架后不能留下拦截点击的遮罩。
+    if (!focused) {
+      setMoreOpen(false);
+      setCatalogOpen(false);
+      setShowDeletePrompt(false);
+    }
+  }, [focused]);
+  React.useEffect(() => {
+    if (!moreOpen || !focused) return;
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        setMoreOpen(false);
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [moreOpen, focused]);
   // 缓存全本可中断：离开页面或点“停止”时 abort，避免后台继续抓取。
   const cacheAbortRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => cacheAbortRef.current?.abort(), []);
@@ -220,7 +238,6 @@ export default function BookDetailScreen() {
 
   const totalWords = chapters.reduce((sum, c) => sum + (c.wordCount || 0), 0);
   const resumeIdx = resumeChapterIndex(chapters, book.currentChapterId);
-  const preview = chapters.slice(-4).reverse();
   const latest = chapters[chapters.length - 1];
   const readingStateLabel =
     book.progress >= 100 ? '已读完' : book.progress > 0 ? '阅读中' : '未开始';
@@ -230,6 +247,12 @@ export default function BookDetailScreen() {
   // 在线书未缓存正文时没有可信字数，展示破折号比把“未知”误报成 0 更准确。
   const wordCountLabel = totalWords > 0 ? formatWordCount(totalWords) : '—';
 
+  const openCatalog = () => {
+    // 两个入口只展示已有目录；加载/修复期间不可进入，也不触发正文抓取或改写续读状态。
+    if (!catalogReady) return;
+    setMoreOpen(false);
+    setCatalogOpen(true);
+  };
   const goReader = (idx: number) => {
     if (!catalogReady) return;
     openChapter(book.id, idx);
@@ -237,23 +260,30 @@ export default function BookDetailScreen() {
   };
 
   return (
-    <View
-      style={[styles.container, { backgroundColor: theme.colors.background }]}
-    >
+    <View style={[styles.container, { backgroundColor: palette.paper }]}>
       <ScrollView
+        // 页面已手动处理安全区，关闭系统重复调整，避免目录弹层关闭后内容向上跳动。
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
         contentContainerStyle={{
-          paddingBottom: 180 + Math.max(insets.bottom, 34),
+          paddingBottom: 100 + bottomActionOffset,
         }}
         showsVerticalScrollIndicator={false}
+        onScrollBeginDrag={() => setMoreOpen(false)}
       >
         <View style={styles.hero}>
           <LinearGradient
-            colors={DETAIL_HERO_GRADIENT}
+            colors={['#22443e', '#1d3935']}
             {...COVER_GRADIENT_DIRECTION}
             style={StyleSheet.absoluteFill}
           />
-          {/* 设计稿右上角的金色径向光斑，用半透明大圆近似 */}
-          <View style={styles.heroGlow} pointerEvents="none" />
+          {/* 用透明径向渐变纹理还原柔光，避免实色圆形出现明显边缘。 */}
+          <Image
+            source={require('../assets/detail-hero-glow.png')}
+            resizeMode="stretch"
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
           <View style={[styles.heroContent, { paddingTop: insets.top + 10 }]}>
             <View style={styles.heroTopRow}>
               <Pressable
@@ -262,16 +292,48 @@ export default function BookDetailScreen() {
                 onPress={() => navigation.goBack()}
                 style={styles.heroBtn}
               >
-                <Icon name="arrow-back" size={20} color="#fff" />
+                <Icon
+                  family="feather"
+                  name="arrow-left"
+                  size={19}
+                  color="#fbf8ee"
+                />
               </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="删除书籍"
-                style={[styles.heroBtn, styles.deleteHeroBtn]}
-                onPress={() => setShowDeletePrompt(true)}
-              >
-                <Icon name="delete-outline" size={20} color="#fff" />
-              </Pressable>
+              <View style={styles.heroActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="快捷打开目录"
+                  accessibilityState={{ disabled: !catalogReady }}
+                  disabled={!catalogReady}
+                  onPress={openCatalog}
+                  style={[
+                    styles.catalogShortcut,
+                    { opacity: catalogReady ? 1 : 0.45 },
+                  ]}
+                >
+                  <Icon
+                    family="feather"
+                    name="list"
+                    size={19}
+                    color="#f0d9a8"
+                  />
+                  <Text style={styles.catalogShortcutText}>目录</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="更多书籍操作"
+                  accessibilityState={{ expanded: moreOpen }}
+                  onPress={() => setMoreOpen(value => !value)}
+                  style={styles.heroBtn}
+                >
+                  <Icon
+                    family="feather"
+                    name="more-horizontal"
+                    size={19}
+                    color="#fbf8ee"
+                  />
+                </Pressable>
+              </View>
             </View>
             <View style={styles.heroBody}>
               <View style={styles.heroCoverShadow}>
@@ -294,10 +356,12 @@ export default function BookDetailScreen() {
                   <View
                     style={[
                       styles.tag,
-                      { borderColor: 'rgba(240,217,168,.5)' },
+                      { borderColor: 'rgba(240,217,168,.31)' },
                     ]}
                   >
-                    <Text style={{ color: '#f0d9a8', fontSize: 11 }}>
+                    <Text
+                      style={{ color: '#f0d9a8', fontSize: 11, lineHeight: 16 }}
+                    >
                       {readingStateLabel}
                     </Text>
                   </View>
@@ -309,7 +373,11 @@ export default function BookDetailScreen() {
                       ]}
                     >
                       <Text
-                        style={{ color: 'rgba(255,255,255,.7)', fontSize: 11 }}
+                        style={{
+                          color: 'rgba(255,255,255,.7)',
+                          fontSize: 11,
+                          lineHeight: 16,
+                        }}
                       >
                         本地导入
                       </Text>
@@ -341,7 +409,7 @@ export default function BookDetailScreen() {
                 style={styles.statItem}
               >
                 <Text style={styles.statValue}>{wordCountLabel}</Text>
-                <Text style={styles.statLabel}>字数</Text>
+                <Text style={styles.statLabel}>已缓存字数</Text>
               </View>
               <View
                 accessible
@@ -349,63 +417,23 @@ export default function BookDetailScreen() {
                 style={styles.statItem}
               >
                 <Text style={styles.statValue}>{book.progress}%</Text>
-                <Text style={styles.statLabel}>进度</Text>
+                <Text style={styles.statLabel}>阅读进度</Text>
               </View>
             </View>
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: theme.colors.text }]}>
+          <Text style={[styles.sectionLabel, { color: palette.ink }]}>
             内容简介
           </Text>
-          <Text style={[styles.synopsis, { color: theme.colors.text }]}>
+          <Text style={[styles.synopsis, { color: palette.ink }]}>
             {synopsis || '这本书还没有可用简介。'}
           </Text>
         </View>
 
-        {latest && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`阅读最新章节 ${latest.title}`}
-            accessibilityState={{ disabled: !catalogReady }}
-            disabled={!catalogReady}
-            onPress={() => goReader(chapters.length - 1)}
-            style={[
-              styles.updateCard,
-              { backgroundColor: theme.colors.surface },
-              theme.shadows.sm,
-              { opacity: catalogReady ? 1 : 0.62 },
-            ]}
-          >
-            <View
-              style={[styles.dot, { backgroundColor: theme.colors.danger }]}
-            />
-            <View style={{ flex: 1 }}>
-              <Text
-                numberOfLines={1}
-                style={{ color: theme.colors.text, fontSize: 13 }}
-              >
-                {book.source
-                  ? latest.title
-                  : `第 ${chapters.length} 章 · ${latest.title}`}
-              </Text>
-              <Text
-                variant="caption"
-                color="textSecondary"
-                style={{ marginTop: 2 }}
-              >
-                {relativeTime(book.updatedAt)}
-              </Text>
-            </View>
-            <Text style={{ color: theme.colors.accent, fontSize: 12 }}>
-              最新
-            </Text>
-          </Pressable>
-        )}
-
         {book.source && (
-          <View style={styles.section}>
+          <View style={styles.onlineSection}>
             {supportsCatalogActions ? (
               <View style={styles.onlineRow}>
                 <Pressable
@@ -420,26 +448,24 @@ export default function BookDetailScreen() {
                     {
                       backgroundColor: book.following
                         ? theme.colors.accentDark
-                        : theme.colors.surface,
+                        : 'transparent',
                       borderColor: book.following
                         ? theme.colors.accentDark
-                        : theme.colors.border,
+                        : palette.line,
                     },
                   ]}
                 >
                   <Icon
-                    name={
-                      book.following
-                        ? 'notifications-active'
-                        : 'notifications-none'
-                    }
-                    size={16}
-                    color={book.following ? '#fff' : theme.colors.accentDark}
+                    family="feather"
+                    name="bookmark"
+                    size={15}
+                    color={book.following ? '#fff' : palette.ink}
                   />
                   <Text
                     style={{
-                      fontSize: 13,
-                      color: book.following ? '#fff' : theme.colors.text,
+                      fontSize: 11,
+                      lineHeight: 17,
+                      color: book.following ? '#fff' : palette.ink,
                     }}
                   >
                     {book.following ? '追更中' : '追更'}
@@ -462,18 +488,21 @@ export default function BookDetailScreen() {
                   style={[
                     styles.onlineBtn,
                     {
-                      backgroundColor: theme.colors.surface,
-                      borderColor: theme.colors.border,
+                      backgroundColor: 'transparent',
+                      borderColor: palette.line,
                       opacity: checking || caching.active ? 0.5 : 1,
                     },
                   ]}
                 >
                   <Icon
-                    name="refresh"
-                    size={16}
-                    color={theme.colors.accentDark}
+                    family="feather"
+                    name="refresh-cw"
+                    size={15}
+                    color={palette.ink}
                   />
-                  <Text style={{ fontSize: 13, color: theme.colors.text }}>
+                  <Text
+                    style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
+                  >
                     {checking
                       ? catalogNeedsRepair
                         ? '修复中…'
@@ -501,8 +530,8 @@ export default function BookDetailScreen() {
                   style={[
                     styles.onlineBtn,
                     {
-                      backgroundColor: theme.colors.surface,
-                      borderColor: theme.colors.border,
+                      backgroundColor: 'transparent',
+                      borderColor: palette.line,
                       opacity:
                         checking || catalogNeedsRepair || !chaptersReady
                           ? 0.5
@@ -511,11 +540,14 @@ export default function BookDetailScreen() {
                   ]}
                 >
                   <Icon
-                    name={caching.active ? 'stop' : 'download'}
-                    size={16}
-                    color={theme.colors.accentDark}
+                    family="feather"
+                    name={caching.active ? 'square' : 'download'}
+                    size={15}
+                    color={palette.ink}
                   />
-                  <Text style={{ fontSize: 13, color: theme.colors.text }}>
+                  <Text
+                    style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
+                  >
                     {catalogNeedsRepair
                       ? '目录需修复'
                       : caching.active
@@ -537,17 +569,20 @@ export default function BookDetailScreen() {
                   styles.onlineBtn,
                   {
                     backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
+                    borderColor: palette.line,
                     alignSelf: 'flex-start',
                   },
                 ]}
               >
                 <Icon
-                  name="refresh"
-                  size={16}
-                  color={theme.colors.accentDark}
+                  family="feather"
+                  name="refresh-cw"
+                  size={15}
+                  color={palette.ink}
                 />
-                <Text style={{ fontSize: 13, color: theme.colors.text }}>
+                <Text
+                  style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
+                >
                   更新网页目录
                 </Text>
               </Pressable>
@@ -555,7 +590,7 @@ export default function BookDetailScreen() {
             <Text
               variant="caption"
               color="textSecondary"
-              style={{ marginTop: 8 }}
+              style={[styles.cacheNote, { color: palette.secondary }]}
             >
               {onlineMsg ||
                 (catalogNeedsRepair
@@ -574,27 +609,35 @@ export default function BookDetailScreen() {
         )}
 
         <View style={styles.section}>
-          <View style={styles.tocHeader}>
-            <Text
-              style={[
-                styles.sectionLabel,
-                { color: theme.colors.text, marginBottom: 0 },
-              ]}
-            >
-              目录
-            </Text>
-            <Pressable
-              disabled={!catalogReady}
-              accessibilityRole="button"
-              accessibilityLabel="打开完整目录"
-              accessibilityState={{ disabled: !catalogReady }}
-              onPress={() => {
-                // 查看目录不进入阅读器，不触发正文抓取、预取或改写全局续读状态。
-                setCatalogOpen(true);
-              }}
-              style={[styles.tocMore, { opacity: catalogReady ? 1 : 0.45 }]}
-            >
-              <Text variant="caption" color="textSecondary">
+          <Pressable
+            disabled={!catalogReady}
+            accessibilityRole="button"
+            accessibilityLabel="打开完整目录"
+            accessibilityState={{ disabled: !catalogReady }}
+            onPress={openCatalog}
+            style={[
+              styles.catalogEntry,
+              {
+                backgroundColor: palette.surface,
+                opacity: catalogReady ? 1 : 0.62,
+              },
+            ]}
+          >
+            <View style={styles.entrySymbol}>
+              <Icon
+                family="feather"
+                name="list"
+                size={19}
+                color={palette.accent}
+              />
+            </View>
+            <View style={styles.entryCopy}>
+              <Text style={[styles.entryTitle, { color: palette.ink }]}>
+                章节目录
+              </Text>
+              <Text
+                style={[styles.entrySubtitle, { color: palette.secondary }]}
+              >
                 {catalogNeedsRepair
                   ? checking
                     ? '目录修复中…'
@@ -605,13 +648,39 @@ export default function BookDetailScreen() {
                     : `共 ${chapters.length} 章`
                   : '目录加载中…'}
               </Text>
+            </View>
+            <View style={styles.entryCTA}>
+              <Text style={[styles.entryCTAText, { color: palette.accent }]}>
+                查看全部
+              </Text>
               <Icon
+                family="feather"
                 name="chevron-right"
                 size={15}
-                color={theme.colors.textSecondary}
+                color={palette.accent}
               />
+            </View>
+          </Pressable>
+          {latest && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`阅读最新章节 ${latest.title}`}
+              accessibilityState={{ disabled: !catalogReady }}
+              disabled={!catalogReady}
+              onPress={() => goReader(chapters.length - 1)}
+              style={[styles.latest, { opacity: catalogReady ? 1 : 0.62 }]}
+            >
+              <Text style={[styles.latestLabel, { color: palette.accent }]}>
+                最新
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={[styles.latestTitle, { color: palette.ink }]}
+              >
+                {latest.title}
+              </Text>
             </Pressable>
-          </View>
+          )}
           {book.source && catalogNumbers.maxNumber > 0 && (
             <Text
               variant="caption"
@@ -632,62 +701,55 @@ export default function BookDetailScreen() {
               个章号未匹配，建议核对原站目录；原站跳号不一定是缺章。
             </Text>
           )}
-          <View
-            style={[
-              styles.tocList,
-              { backgroundColor: theme.colors.surface },
-              theme.shadows.sm,
-            ]}
-          >
-            {catalogNeedsRepair ? (
-              <View style={styles.catalogBlocked}>
-                <Icon name="build" size={20} color={theme.colors.warning} />
-                <Text color="textSecondary" style={styles.catalogBlockedText}>
-                  当前目录质量异常，修复完成后才可进入阅读，避免打开错误章节。
-                </Text>
-              </View>
-            ) : null}
-            {!catalogNeedsRepair &&
-              preview.map(c => {
-                const idx = chapters.indexOf(c);
-                return (
-                  <Pressable
-                    key={c.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      book.source
-                        ? `阅读目录第 ${idx + 1} 项 ${c.title}`
-                        : `阅读第 ${idx + 1} 章 ${c.title}`
-                    }
-                    onPress={() => goReader(idx)}
-                    style={[
-                      styles.tocRow,
-                      { borderBottomColor: theme.colors.border },
-                    ]}
-                  >
-                    <Text
-                      variant="caption"
-                      color="textSecondary"
-                      style={{ width: 30 }}
-                    >
-                      {idx + 1}
-                    </Text>
-                    <Text
-                      numberOfLines={1}
-                      style={{
-                        flex: 1,
-                        fontSize: 13.5,
-                        color: theme.colors.text,
-                      }}
-                    >
-                      {c.title}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-          </View>
+          {catalogNeedsRepair && (
+            <View style={styles.catalogBlocked}>
+              <Icon name="build" size={20} color={theme.colors.warning} />
+              <Text color="textSecondary" style={styles.catalogBlockedText}>
+                当前目录质量异常，修复完成后才可进入阅读，避免打开错误章节。
+              </Text>
+            </View>
+          )}
         </View>
       </ScrollView>
+
+      {moreOpen && focused && (
+        <View style={styles.moreOverlay} pointerEvents="box-none">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="关闭更多菜单"
+            onPress={() => setMoreOpen(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[
+              styles.moreMenu,
+              { top: insets.top + 60, backgroundColor: palette.surface },
+            ]}
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="删除书籍"
+              onPress={() => {
+                setMoreOpen(false);
+                setShowDeletePrompt(true);
+              }}
+              style={styles.moreMenuItem}
+            >
+              <Icon
+                family="feather"
+                name="trash-2"
+                size={19}
+                color={palette.destructive}
+              />
+              <Text
+                style={[styles.moreMenuText, { color: palette.destructive }]}
+              >
+                删除书籍
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       {catalogOpen && (
         <BookCatalogModal
@@ -714,7 +776,7 @@ export default function BookDetailScreen() {
               theme.shadows.md,
             ]}
           >
-            <Text style={[styles.deleteTitle, { color: theme.colors.text }]}>
+            <Text style={[styles.deleteTitle, { color: palette.ink }]}>
               移到回收站
             </Text>
             <Text
@@ -764,11 +826,7 @@ export default function BookDetailScreen() {
       >
         {/* 渐变只做背景，按钮由外层 View 控位，避免 iOS 安全区下半截被裁。 */}
         <LinearGradient
-          colors={[
-            `${theme.colors.background}00`,
-            theme.colors.background,
-            theme.colors.background,
-          ]}
+          colors={[`${palette.paper}00`, palette.paper, palette.paper]}
           locations={[0, 0.3, 1]}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
@@ -781,20 +839,14 @@ export default function BookDetailScreen() {
             accessibilityLabel="返回上一页"
             // 详情可能来自书架、发现或搜索；这里保持返回栈语义，文案也不再误称“书架”。
             onPress={() => navigation.goBack()}
-            style={[styles.shelfBtn, { borderColor: theme.colors.accentDark }]}
+            style={[styles.shelfBtn, { borderColor: palette.accent }]}
           >
-            <Icon name="arrow-back" size={19} color={theme.colors.accentDark} />
-            <Text
-              style={{
-                fontSize: 9,
-                color: theme.colors.accentDark,
-                marginTop: 2,
-              }}
-              numberOfLines={1}
-              maxFontSizeMultiplier={1}
-            >
-              返回
-            </Text>
+            <Icon
+              family="feather"
+              name="arrow-left"
+              size={19}
+              color={palette.accent}
+            />
           </Pressable>
           <Pressable
             disabled={!catalogReady}
@@ -817,11 +869,12 @@ export default function BookDetailScreen() {
             style={[
               styles.readBtn,
               {
-                backgroundColor: theme.colors.accentDark,
+                backgroundColor: '#1d3d37',
                 opacity: catalogReady ? 1 : 0.45,
               },
             ]}
           >
+            <Icon family="feather" name="book-open" size={19} color="#f6f3e9" />
             <Text
               style={styles.readBtnText}
               numberOfLines={1}
@@ -889,121 +942,178 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   deleteConfirmText: { color: '#fff', fontWeight: '600' },
-  deleteHeroBtn: { backgroundColor: 'rgba(180,53,53,.82)' },
+  heroActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  catalogShortcut: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    height: 44,
+    paddingHorizontal: 14,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(240,217,168,.31)',
+    backgroundColor: 'rgba(240,217,168,.075)',
+  },
+  catalogShortcutText: {
+    color: '#f0d9a8',
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '600',
+  },
+  moreOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10 },
+  moreMenu: {
+    position: 'absolute',
+    right: 20,
+    padding: 4,
+    borderRadius: 9,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  moreMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    minHeight: 44,
+    paddingHorizontal: 13,
+  },
+  moreMenuText: { fontSize: 13, lineHeight: 20 },
   hero: {
     position: 'relative',
     overflow: 'hidden',
   },
   heroContent: {
     paddingHorizontal: 20,
-    paddingBottom: 24,
-  },
-  // 近似设计稿 radial-gradient(90% 60% at 80% 0%, rgba(201,161,94,.22), transparent)
-  heroGlow: {
-    position: 'absolute',
-    top: -110,
-    right: -70,
-    width: 300,
-    height: 260,
-    borderRadius: 150,
-    backgroundColor: 'rgba(201,161,94,.14)',
+    paddingBottom: 20,
   },
   heroTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    height: 36,
+    height: 44,
     alignItems: 'center',
   },
   heroBtn: {
     width: 44,
     height: 44,
     borderRadius: 9,
-    backgroundColor: 'rgba(255,255,255,.12)',
+    backgroundColor: 'rgba(255,255,255,.09)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroBody: { flexDirection: 'row', gap: 16, marginTop: 16 },
-  heroCover: { width: 96 },
-  // 对齐设计稿封面投影 0 12px 28px -8px rgba(0,0,0,.5)
+  heroBody: { flexDirection: 'row', gap: 16, marginTop: 19, minHeight: 128 },
+  heroCover: { width: 96, borderRadius: 7 },
+  // 封面投影与完整 3:4 尺寸独立，避免为阴影裁切原图。
   heroCoverShadow: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
-    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.33,
+    shadowRadius: 11,
     elevation: 10,
   },
   heroInfo: { flex: 1, paddingTop: 2 },
   heroTitle: {
     fontFamily: SERIF_FONT,
-    fontSize: 23,
-    fontWeight: Platform.select({ ios: '700', android: 'bold' }),
-    color: '#fff',
+    fontSize: 22,
+    lineHeight: 30,
+    letterSpacing: 0.4,
+    fontWeight: '600',
+    color: '#fbf8ee',
   },
-  heroAuthor: { fontSize: 13, color: 'rgba(255,255,255,.72)', marginTop: 8 },
+  heroAuthor: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: 'rgba(255,255,255,.72)',
+    marginTop: 9,
+  },
   tagRow: { flexDirection: 'row', gap: 7, marginTop: 12, flexWrap: 'wrap' },
   tag: {
-    paddingVertical: 2,
-    paddingHorizontal: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 7,
     borderRadius: 5,
     borderWidth: 1,
   },
   statsRow: {
     flexDirection: 'row',
-    marginTop: 22,
-    paddingTop: 14,
+    marginTop: 21,
+    paddingTop: 15,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,.12)',
+    borderTopColor: 'rgba(255,255,255,.11)',
   },
   statItem: { flex: 1, alignItems: 'center' },
   statValue: {
     fontFamily: SERIF_FONT,
-    fontSize: 16,
-    fontWeight: Platform.select({ ios: '600', android: 'bold' }),
-    color: '#fff',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '500',
+    color: '#fbf8ee',
   },
-  statLabel: { fontSize: 11, color: 'rgba(255,255,255,.55)', marginTop: 3 },
-  section: { paddingHorizontal: 20, paddingTop: 20 },
+  statLabel: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: 'rgba(255,255,255,.65)',
+    marginTop: 6,
+  },
+  section: { paddingHorizontal: 20, paddingTop: 22 },
   sectionLabel: {
     fontSize: 13,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
-    marginBottom: 8,
+    marginBottom: 10,
+    lineHeight: 20,
   },
-  // 设计稿正文行高 1.85（14 × 1.85 ≈ 26）
-  synopsis: { fontFamily: SERIF_FONT, fontSize: 14, lineHeight: 26 },
-  updateCard: {
-    marginHorizontal: 20,
-    marginTop: 18,
-    padding: 13,
-    borderRadius: 8,
+  synopsis: { fontFamily: SERIF_FONT, fontSize: 13, lineHeight: 25 },
+  onlineSection: { paddingHorizontal: 20, paddingTop: 18 },
+  onlineRow: { flexDirection: 'row', gap: 7 },
+  cacheNote: { marginTop: 9, fontSize: 11, lineHeight: 18 },
+  latest: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
+    gap: 8,
+    paddingTop: 13,
+    paddingHorizontal: 4,
+    minHeight: 44,
   },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  onlineRow: { flexDirection: 'row', gap: 10 },
+  latestLabel: { fontSize: 11, lineHeight: 18 },
+  latestTitle: { flex: 1, fontSize: 12, lineHeight: 18 },
   onlineBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
+    paddingHorizontal: 5,
     minHeight: 44,
     borderRadius: 8,
     borderWidth: 1,
   },
-  tocHeader: {
+  catalogEntry: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
+    minHeight: 70,
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+    borderRadius: 10,
   },
-  tocMore: {
+  entrySymbol: {
+    width: 32,
+    height: 36,
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: 2,
-    minHeight: 44,
+    justifyContent: 'center',
   },
-  tocList: { marginTop: 8, borderRadius: 8, overflow: 'hidden' },
-  catalogAudit: { marginHorizontal: 16, marginBottom: 10 },
+  entryCopy: { flex: 1, gap: 5 },
+  entryTitle: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  entrySubtitle: { fontSize: 11, lineHeight: 16 },
+  entryCTA: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  entryCTAText: { fontSize: 12, lineHeight: 18, fontWeight: '500' },
+  catalogAudit: {
+    marginHorizontal: 4,
+    marginTop: 10,
+    fontSize: 11,
+    lineHeight: 18,
+  },
   catalogBlocked: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -1013,52 +1123,50 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   catalogBlockedText: { flex: 1, fontSize: 12.5, lineHeight: 19 },
-  tocRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 13,
-    paddingHorizontal: 15,
-    borderBottomWidth: 1,
-  },
   actionBarWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
-    height: 104,
+    height: 82,
     justifyContent: 'flex-end',
   },
   actionBar: {
     paddingHorizontal: 20,
-    paddingBottom: 8,
+    paddingBottom: 12,
+    paddingTop: 16,
     flexDirection: 'row',
     gap: 12,
     alignItems: 'center',
   },
   shelfBtn: {
-    width: 58,
-    height: 54,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    width: 48,
+    height: 44,
+    borderRadius: 9,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   readBtn: {
     flex: 1,
-    height: 54,
-    borderRadius: 10,
+    height: 50,
+    borderRadius: 9,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    gap: 7,
     alignItems: 'center',
     justifyContent: 'center',
-    // 设计稿主按钮投影 0 6px 16px -6px rgba(31,61,58,.6)
-    shadowColor: '#1f3d3a',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
+    // 保持轻投影，让阅读主按钮与浅色目录入口形成明确层级。
+    shadowColor: '#183a33',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
     elevation: 6,
   },
   readBtnText: {
-    color: '#fff',
-    fontSize: 15,
+    flexShrink: 1,
+    color: '#f6f3e9',
+    fontSize: 14,
+    lineHeight: 21,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
 });
