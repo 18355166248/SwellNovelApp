@@ -6,7 +6,7 @@ import { ThemeProvider } from '../src/theme/ThemeContext';
 import { searchNovels } from '../src/services/search/novelSearch';
 import type { Book } from '../src/store/types/book';
 
-const mockNavigation = { navigate: jest.fn() };
+const mockNavigation = { navigate: jest.fn(), push: jest.fn() };
 const mockAdd = jest.fn();
 let mockBooks: Book[] = [];
 jest.mock('@react-navigation/native', () => ({
@@ -124,5 +124,27 @@ it('已入库的玄幻阁搜索结果直接续用原书，不再次导入或打�
   expect(mockNavigation.navigate).toHaveBeenCalledWith('BookDetail', {
     bookId: 'existing',
   });
+  await act(() => tree.unmount());
+});
+
+it('网站导入每次打开新的入口页面，不继承之前链接的路由参数', async () => {
+  let tree!: Renderer.ReactTestRenderer;
+  await act(() => {
+    tree = Renderer.create(
+      <ThemeProvider>
+        <SearchScreen />
+      </ThemeProvider>,
+    );
+  });
+  const entry = tree.root.findAllByProps({
+    accessibilityLabel: '打开网站导入',
+  })[0];
+  await act(() => entry.props.onPress());
+  await act(() => entry.props.onPress());
+  expect(mockNavigation.push.mock.calls).toEqual([
+    ['InAppBrowser'],
+    ['InAppBrowser'],
+  ]);
+  expect(mockNavigation.navigate).not.toHaveBeenCalled();
   await act(() => tree.unmount());
 });

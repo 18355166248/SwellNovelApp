@@ -1,6 +1,6 @@
 import React from 'react';
 import Renderer, { act } from 'react-test-renderer';
-import { TextInput, Text } from 'react-native';
+import { Keyboard, TextInput, Text } from 'react-native';
 import SearchScreen from '../src/screens/SearchScreen';
 import type {
   NovelSearchOptions,
@@ -76,6 +76,22 @@ describe('SearchScreen 搜索与入库交互', () => {
   });
   afterEach(async () => {
     await act(() => tree.unmount());
+  });
+
+  it('输入后聚焦结果，提交时收起键盘，清空后恢复网站入口', async () => {
+    const dismiss = jest.spyOn(Keyboard, 'dismiss');
+    mockSearch.mockResolvedValue([novel]);
+    expect(control('打开网站导入')).toBeTruthy();
+    await change('夜无疆');
+    expect(
+      tree.root.findAllByProps({ accessibilityLabel: '打开网站导入' }),
+    ).toHaveLength(0);
+    await submit();
+    expect(dismiss).toHaveBeenCalled();
+    expect(control(resultLabel)).toBeTruthy();
+    await act(() => control('清空搜索内容').props.onPress());
+    expect(control('打开网站导入')).toBeTruthy();
+    dismiss.mockRestore();
   });
 
   it('先显示有效候选，添加失败保留列表和完成态，不误报搜索失败', async () => {

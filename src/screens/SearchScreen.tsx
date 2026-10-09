@@ -6,6 +6,7 @@ import {
   Pressable,
   TextInput,
   Platform,
+  Keyboard,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon } from '../components';
@@ -114,11 +115,12 @@ export default function SearchScreen() {
   );
 
   const openBrowser = React.useCallback(
-    (url?: string) =>
-      navigation.navigate(
-        'InAppBrowser',
-        url ? { initialUrl: url } : undefined,
-      ),
+    (url?: string) => {
+      Keyboard.dismiss();
+      if (url) navigation.navigate('InAppBrowser', { initialUrl: url });
+      // 入口每次使用新页面，避免复用浏览器时继承旧网页和 initialUrl 参数。
+      else navigation.push('InAppBrowser');
+    },
     [navigation],
   );
 
@@ -169,6 +171,8 @@ export default function SearchScreen() {
         invalidateOnlineActivity();
         return;
       }
+      // 搜索、历史选词和链接导入共用入口，先收起键盘以便直接查看结果或网页。
+      Keyboard.dismiss();
       // 已验证直连的书源走专用解析以取齐分页；需要浏览器会话的站点仍保留可见网页导入。
       if (isUrl(trimmed)) {
         invalidateOnlineActivity();
@@ -254,6 +258,7 @@ export default function SearchScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.heading}>
@@ -261,7 +266,7 @@ export default function SearchScreen() {
           <Text variant="caption" color="textSecondary" style={styles.subtitle}>
             {Platform.OS === 'web'
               ? '搜书名，或粘贴受支持书源链接'
-              : '搜书名，或粘贴网页链接导入'}
+              : '按书名或作者查找，找到后加入书架'}
           </Text>
         </View>
 
@@ -323,15 +328,15 @@ export default function SearchScreen() {
             style={[
               styles.searchBtn,
               {
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.accentDark,
+                borderColor: theme.colors.accentDark,
               },
               searchDisabled && styles.disabledControl,
             ]}
           >
             <Text
               style={{
-                color: theme.colors.accent,
+                color: '#fff',
                 fontSize: 14,
                 fontWeight: Platform.select({ ios: '600', android: 'bold' }),
               }}
@@ -347,50 +352,99 @@ export default function SearchScreen() {
           </Pressable>
         </View>
 
-        {Platform.OS === 'web' ? (
-          <View
-            accessible
-            accessibilityLabel="链接导入提示：将受支持的小说网页链接粘贴到上方输入框"
-            style={[
-              styles.importCard,
-              { backgroundColor: theme.colors.accentDark },
-              theme.shadows.md,
-            ]}
-          >
-            <View style={styles.importIcon}>
-              <Icon name="link" size={22} color="#fff" />
+        {!hasQuery &&
+          (Platform.OS === 'web' ? (
+            <View
+              accessible
+              accessibilityLabel="链接导入提示：将受支持的小说网页链接粘贴到上方输入框"
+              style={[
+                styles.importCard,
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border,
+                },
+                theme.shadows.sm,
+              ]}
+            >
+              <View
+                style={[
+                  styles.importIcon,
+                  { backgroundColor: theme.colors.background },
+                ]}
+              >
+                <Icon name="link" size={22} color={theme.colors.accentDark} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.importTitle,
+                    { color: theme.colors.accentDark },
+                  ]}
+                >
+                  粘贴链接导入
+                </Text>
+                <Text
+                  style={[
+                    styles.importHint,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  将支持的小说详情页链接粘贴到上方输入框
+                </Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.importTitle}>粘贴链接导入</Text>
-              <Text style={styles.importHint}>
-                将支持的小说详情页链接粘贴到上方输入框
-              </Text>
-            </View>
-          </View>
-        ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="打开网页或链接导入"
-            accessibilityHint="打开小说站后可自动识别书名、目录与分页"
-            onPress={() => openBrowser()}
-            style={[
-              styles.importCard,
-              { backgroundColor: theme.colors.accentDark },
-              theme.shadows.md,
-            ]}
-          >
-            <View style={styles.importIcon}>
-              <Icon name="language" size={22} color="#fff" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.importTitle}>网页 / 链接导入</Text>
-              <Text style={styles.importHint}>
-                打开小说站，自动识别书名、目录与分页
-              </Text>
-            </View>
-            <Icon name="arrow-forward" size={20} color="#fff" />
-          </Pressable>
-        )}
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="打开网站导入"
+              accessibilityHint="打开小说站后可自动识别书名、目录与分页"
+              onPress={() => openBrowser()}
+              style={[
+                styles.importCard,
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border,
+                },
+                theme.shadows.sm,
+              ]}
+            >
+              <View
+                style={[
+                  styles.importIcon,
+                  { backgroundColor: theme.colors.background },
+                ]}
+              >
+                <Icon
+                  name="language"
+                  size={22}
+                  color={theme.colors.accentDark}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.importTitle,
+                    { color: theme.colors.accentDark },
+                  ]}
+                >
+                  网站导入
+                </Text>
+                <Text
+                  style={[
+                    styles.importHint,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  浏览小说目录，识别后加入书架
+                </Text>
+              </View>
+              <Icon
+                name="arrow-forward"
+                size={20}
+                color={theme.colors.accentDark}
+              />
+            </Pressable>
+          ))}
 
         {hasQuery && isUrl(query) && onlineState === 'error' ? (
           <View accessibilityLiveRegion="polite" style={styles.linkImportState}>
@@ -405,18 +459,10 @@ export default function SearchScreen() {
 
         {!hasQuery && (
           <View style={styles.section}>
-            <View style={styles.sectionHeading}>
-              <Text variant="label">全网搜书</Text>
-              <Text variant="caption" color="textSecondary">
-                输入书名或作者开始搜索
-              </Text>
-            </View>
             {history.length > 0 ? (
               <>
-                <View style={styles.rowBetween}>
-                  <Text variant="caption" color="textSecondary">
-                    最近搜索
-                  </Text>
+                <View style={styles.sectionHeading}>
+                  <Text variant="label">最近搜索</Text>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="清空最近搜索"
@@ -460,13 +506,23 @@ export default function SearchScreen() {
                 </View>
               </>
             ) : (
-              <Text
-                variant="caption"
-                color="textSecondary"
-                style={styles.emptyHint}
-              >
-                网络搜索结果可直接加入书架；已有书籍请在“书架”内筛选。
-              </Text>
+              <View style={styles.emptyState}>
+                <Icon
+                  name="search"
+                  size={30}
+                  color={theme.colors.textSecondary}
+                />
+                <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
+                  输入书名，开始找书
+                </Text>
+                <Text
+                  variant="caption"
+                  color="textSecondary"
+                  style={styles.emptyHint}
+                >
+                  搜索结果可直接加入书架。已有小说网址，也可粘贴到上方导入。
+                </Text>
+              </View>
             )}
           </View>
         )}
@@ -531,7 +587,7 @@ export default function SearchScreen() {
                 ) : (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="搜索失败，改用网页导入"
+                    accessibilityLabel="搜索失败，改用网站导入"
                     onPress={() => openBrowser()}
                     style={styles.fallbackLink}
                   >
@@ -546,7 +602,7 @@ export default function SearchScreen() {
                         { color: theme.colors.accent },
                       ]}
                     >
-                      改用网页导入
+                      改用网站导入
                     </Text>
                   </Pressable>
                 )}
@@ -569,7 +625,7 @@ export default function SearchScreen() {
                 ) : (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="没有搜索结果，改用网页导入"
+                    accessibilityLabel="没有搜索结果，改用网站导入"
                     onPress={() => openBrowser()}
                     style={styles.fallbackLink}
                   >
@@ -584,7 +640,7 @@ export default function SearchScreen() {
                         { color: theme.colors.accent },
                       ]}
                     >
-                      换网页导入试试
+                      换网站导入试试
                     </Text>
                   </Pressable>
                 )}
@@ -654,7 +710,12 @@ export default function SearchScreen() {
                       <View style={{ flex: 1 }}>
                         <Text
                           numberOfLines={2}
-                          style={{ fontSize: 13.5, color: theme.colors.text }}
+                          style={{
+                            fontSize: 15,
+                            lineHeight: 23,
+                            fontWeight: '600',
+                            color: theme.colors.text,
+                          }}
                         >
                           {result.title}
                         </Text>
@@ -681,7 +742,7 @@ export default function SearchScreen() {
                         <Text
                           style={{ color: theme.colors.accent, fontSize: 11.5 }}
                         >
-                          {browserImport ? '网页中加入' : '加入书架'}
+                          {browserImport ? '打开网页' : '加入书架'}
                         </Text>
                       )}
                     </Pressable>
@@ -715,7 +776,7 @@ const styles = StyleSheet.create({
   },
   searchField: {
     flex: 1,
-    height: 46,
+    minHeight: 48,
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -724,7 +785,7 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontSize: 14, padding: 0 },
   clearQueryButton: {
-    minWidth: 32,
+    minWidth: 44,
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
@@ -734,29 +795,29 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 46,
-    minWidth: 64,
+    minHeight: 48,
+    width: 76,
     paddingHorizontal: 12,
   },
   importCard: {
     marginHorizontal: 20,
-    marginTop: 16,
-    padding: 16,
+    marginTop: 14,
+    padding: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
   importIcon: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,.16)',
   },
-  importTitle: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  importHint: { color: 'rgba(255,255,255,.76)', fontSize: 11.5, marginTop: 3 },
+  importTitle: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  importHint: { fontSize: 12, lineHeight: 18, marginTop: 3 },
   linkImportState: { paddingHorizontal: 20, paddingTop: 12 },
   section: { paddingHorizontal: 20, paddingTop: 24 },
   sectionHeading: {
@@ -764,12 +825,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
   },
   clearHistoryButton: {
     alignItems: 'center',
@@ -788,7 +843,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  emptyHint: { lineHeight: 19 },
+  emptyState: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 42,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    lineHeight: 23,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  emptyHint: { lineHeight: 20, textAlign: 'center', marginTop: 8 },
   errorText: { lineHeight: 18 },
   addingError: { marginBottom: 12 },
   disabledControl: { opacity: 0.55 },

@@ -15,6 +15,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  Keyboard,
 } from 'react-native';
 import { WebView as RNWebView } from 'react-native-webview';
 import {
@@ -82,7 +83,7 @@ const SITE_ENTRIES: {
     const shown = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
     return {
       name: source.name,
-      desc: `${shown} · 支持识别目录一键导入`,
+      desc: shown,
       url,
       supported: true,
     };
@@ -111,6 +112,7 @@ export default function InAppBrowserScreen() {
   const [url, setUrl] = React.useState<string | null>(null);
   const [input, setInput] = React.useState('');
   const [history, setHistory] = React.useState<string[]>([]);
+  const [historyExpanded, setHistoryExpanded] = React.useState(false);
   const [historyReady, setHistoryReady] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [canGoBack, setCanGoBack] = React.useState(false);
@@ -151,26 +153,20 @@ export default function InAppBrowserScreen() {
   );
 
   React.useEffect(() => {
+    let active = true;
+    // 最近访问只用于入口列表，不自动恢复上次网页，也不能迟到覆盖用户的新地址。
     loadBrowserHistory()
       .then(items => {
-        setHistory(items);
-        const initialUrl = route.params?.initialUrl;
-        // 从“搜书”页粘贴链接进入时，链接优先于最近历史，避免用户又被带回上次网页。
-        if (initialUrl) {
-          setUrl(initialUrl);
-          setInput(initialUrl);
-          currentPageUrlRef.current = initialUrl;
-          return;
-        }
-        // 有历史时直接恢复最近书页；无历史则展示起始页，不再强制加载 Bing。
-        if (items[0]) {
-          setUrl(items[0]);
-          setInput(items[0]);
-          currentPageUrlRef.current = items[0];
-        }
+        if (active) setHistory(items);
       })
-      .finally(() => setHistoryReady(true));
-  }, [route.params?.initialUrl]);
+      .catch(() => {})
+      .finally(() => {
+        if (active) setHistoryReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const resetRecognition = React.useCallback(() => {
     // 页面切换后，旧 DOM/隐藏抓取的结果与重试计时器都失效，不能覆盖新书或首页。
@@ -191,9 +187,24 @@ export default function InAppBrowserScreen() {
     setAddMessage('');
   }, []);
 
+  React.useEffect(() => {
+    // 普通入口显示站点选择；详情/搜索传入具体链接时才直接打开该页。
+    const initialUrl = route.params?.initialUrl ?? null;
+    resetRecognition();
+    webRef.current?.stopLoading();
+    requestedNavigationRef.current = '';
+    currentPageUrlRef.current = initialUrl ?? '';
+    setUrl(initialUrl);
+    setInput(initialUrl ?? '');
+    setLoading(false);
+    setCanGoBack(false);
+    setHistoryExpanded(false);
+  }, [route.params?.initialUrl, resetRecognition]);
+
   const openUrl = React.useCallback(
     (next: string) => {
       if (!next) return;
+      Keyboard.dismiss();
       resetRecognition();
       webRef.current?.stopLoading();
       // 只授权用户提交的目标页，站点广告不能继承这次跨站许可。
@@ -222,7 +233,7 @@ export default function InAppBrowserScreen() {
   };
 
   const showHistory = () => {
-    // 返回起始页时保留 WebView 历史记录，用户可一键回到任意最近访问的网站。
+    // 返回入口保留最近访问数据，但收起长列表；旧网页任务不能继续污染入口状态。
     resetRecognition();
     webRef.current?.stopLoading();
     setLoading(false);
@@ -230,6 +241,7 @@ export default function InAppBrowserScreen() {
     currentPageUrlRef.current = '';
     setUrl(null);
     setInput('');
+    setHistoryExpanded(false);
     setCanGoBack(false);
     setRecognized(null);
   };
@@ -256,7 +268,7 @@ export default function InAppBrowserScreen() {
     if (data.ok && data.isDetail && Array.isArray(data.chapters)) {
       setRecognized(data as RecognizedBook);
       if (isManual)
-        setRecognizeMessage(`已识别到 ${data.chapters.length} 章目录`);
+        setRecognizeMessage(`已识别到 ${data.chapters.length} 项目录`);
     } else {
       setRecognized(null);
       if (isManual) {
@@ -310,7 +322,7 @@ export default function InAppBrowserScreen() {
           if (parsed.isDetail) {
             setRecognized(parsed);
             setRecognizeMessage(
-              `已识别 ${parsed.chapters.length} 章 · ${
+              `已识别 ${parsed.chapters.length} 项目录 · ${
                 parsed.pageUrls?.length ? parsed.pageUrls.length + 1 : 1
               } 页目录`,
             );
@@ -432,6 +444,8 @@ export default function InAppBrowserScreen() {
       {/* 地址/搜索栏 */}
       <View style={styles.bar}>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={canGoBack ? '返回上一网页' : '返回上一页'}
           onPress={() =>
             canGoBack ? webRef.current?.goBack() : navigation.goBack()
           }
@@ -442,6 +456,7 @@ export default function InAppBrowserScreen() {
         <View style={[styles.field, { backgroundColor: theme.colors.surface }]}>
           <Icon name="search" size={15} color={theme.colors.textSecondary} />
           <TextInput
+            accessibilityLabel="小说网址或搜索关键词"
             value={input}
             onChangeText={setInput}
             onSubmitEditing={go}
@@ -455,25 +470,51 @@ export default function InAppBrowserScreen() {
             style={[styles.input, { color: theme.colors.text }]}
           />
         </View>
-        <Pressable onPress={showHistory} style={styles.barBtn}>
-          <Icon name="history" size={19} color={theme.colors.text} />
-        </Pressable>
-        <Pressable
-          disabled={!url}
-          onPress={() => webRef.current?.reload()}
-          style={[styles.barBtn, !url && { opacity: 0.35 }]}
-        >
-          {/* 加载提示使用工具栏的固定尺寸，避免从 2px 容器溢出后被原生网页盖住。 */}
-          {loading ? (
-            <ActivityIndicator
-              accessibilityLabel="网页加载中"
-              size="small"
-              color={theme.colors.primary}
-            />
-          ) : (
-            <Icon name="refresh" size={19} color={theme.colors.text} />
-          )}
-        </Pressable>
+        {url ? (
+          <>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="回到网站入口"
+              onPress={showHistory}
+              style={styles.barBtn}
+            >
+              <Icon name="home" size={21} color={theme.colors.text} />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="刷新网页"
+              onPress={() => webRef.current?.reload()}
+              style={styles.barBtn}
+            >
+              {loading ? (
+                <ActivityIndicator
+                  accessibilityLabel="网页加载中"
+                  size="small"
+                  color={theme.colors.primary}
+                />
+              ) : (
+                <Icon name="refresh" size={21} color={theme.colors.text} />
+              )}
+            </Pressable>
+          </>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="打开网址或搜索小说"
+            accessibilityState={{ disabled: !input.trim() }}
+            disabled={!input.trim()}
+            onPress={go}
+            style={[
+              styles.entryGo,
+              {
+                backgroundColor: theme.colors.primary,
+                opacity: input.trim() ? 1 : 0.45,
+              },
+            ]}
+          >
+            <Text style={styles.entryGoText}>打开</Text>
+          </Pressable>
+        )}
       </View>
 
       {!historyReady ? (
@@ -485,66 +526,53 @@ export default function InAppBrowserScreen() {
           style={styles.startPage}
           contentContainerStyle={styles.startPageContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
-          <View
-            style={[
-              styles.startCard,
-              { backgroundColor: theme.colors.surface },
-              theme.shadows.sm,
-            ]}
-          >
-            <Icon name="menu-book" size={27} color={theme.colors.primary} />
+          <View style={styles.startCard}>
             <Text style={[styles.startTitle, { color: theme.colors.text }]}>
-              从书籍目录页开始
+              网站导入
             </Text>
             <Text
               style={[styles.startHint, { color: theme.colors.textSecondary }]}
             >
-              选一个站点开始浏览，也可以在上方直接输入网址
+              打开小说目录 → 识别书籍 → 加入书架
             </Text>
           </View>
-
           <View style={styles.siteSection}>
             <Text style={[styles.historyTitle, { color: theme.colors.text }]}>
-              常用站点
+              常用小说站
             </Text>
-            {SITE_ENTRIES.map(site => (
-              <Pressable
-                key={site.url}
-                onPress={() => openUrl(site.url)}
-                style={[
-                  styles.siteRow,
-                  {
-                    backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
-                  },
-                ]}
-              >
-                <View
+            <View style={styles.siteGrid}>
+              {SITE_ENTRIES.filter(site => site.supported).map(site => (
+                <Pressable
+                  key={site.url}
+                  accessibilityRole="button"
+                  accessibilityLabel={`打开${site.name}`}
+                  accessibilityHint="浏览书籍目录后识别导入"
+                  onPress={() => openUrl(site.url)}
                   style={[
-                    styles.siteBadge,
-                    { backgroundColor: theme.colors.background },
+                    styles.siteTile,
+                    {
+                      backgroundColor: theme.colors.surface,
+                      borderColor: theme.colors.border,
+                    },
                   ]}
                 >
-                  <Icon
-                    name={site.supported ? 'auto-stories' : 'search'}
-                    size={17}
-                    color={
-                      site.supported
-                        ? theme.colors.primary
-                        : theme.colors.textSecondary
-                    }
-                  />
-                </View>
-                <View style={styles.siteInfo}>
+                  <View style={styles.siteTileHeading}>
+                    <Icon
+                      name="auto-stories"
+                      size={20}
+                      color={theme.colors.primary}
+                    />
+                    <Text
+                      style={[styles.siteName, { color: theme.colors.text }]}
+                    >
+                      {site.name}
+                    </Text>
+                  </View>
                   <Text
-                    numberOfLines={1}
-                    style={[styles.siteName, { color: theme.colors.text }]}
-                  >
-                    {site.name}
-                  </Text>
-                  <Text
-                    numberOfLines={1}
+                    numberOfLines={2}
                     style={[
                       styles.siteDesc,
                       { color: theme.colors.textSecondary },
@@ -552,23 +580,57 @@ export default function InAppBrowserScreen() {
                   >
                     {site.desc}
                   </Text>
-                </View>
-                <Icon
-                  name="chevron-right"
-                  size={18}
-                  color={theme.colors.textSecondary}
-                />
-              </Pressable>
-            ))}
+                </Pressable>
+              ))}
+            </View>
           </View>
+          {SITE_ENTRIES.filter(site => !site.supported).map(site => (
+            <Pressable
+              key={site.url}
+              accessibilityRole="button"
+              accessibilityLabel="用搜索引擎找书"
+              onPress={() => openUrl(site.url)}
+              style={[
+                styles.siteRow,
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border,
+                },
+              ]}
+            >
+              <Icon name="search" size={21} color={theme.colors.primary} />
+              <View style={styles.siteInfo}>
+                <Text
+                  style={[styles.searchSiteName, { color: theme.colors.text }]}
+                >
+                  {site.name}
+                </Text>
+                <Text
+                  style={[
+                    styles.siteDesc,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  没找到站点？用必应搜索小说目录
+                </Text>
+              </View>
+              <Icon
+                name="chevron-right"
+                size={18}
+                color={theme.colors.textSecondary}
+              />
+            </Pressable>
+          ))}
           {history.length > 0 && (
             <View style={styles.historySection}>
               <Text style={[styles.historyTitle, { color: theme.colors.text }]}>
                 最近访问
               </Text>
-              {history.map(item => (
+              {(historyExpanded ? history : history.slice(0, 3)).map(item => (
                 <Pressable
                   key={item}
+                  accessibilityRole="button"
+                  accessibilityLabel={`打开最近访问 ${item}`}
                   onPress={() => openUrl(item)}
                   style={[
                     styles.historyRow,
@@ -583,12 +645,26 @@ export default function InAppBrowserScreen() {
                     size={17}
                     color={theme.colors.textSecondary}
                   />
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.historyText, { color: theme.colors.text }]}
-                  >
-                    {displayUrl(item)}
-                  </Text>
+                  <View style={styles.siteInfo}>
+                    <Text
+                      style={[
+                        styles.historySiteName,
+                        { color: theme.colors.text },
+                      ]}
+                    >
+                      {resolveSource(item)?.name ??
+                        displayUrl(item).split('/')[0]}
+                    </Text>
+                    <Text
+                      numberOfLines={2}
+                      style={[
+                        styles.historyText,
+                        { color: theme.colors.textSecondary },
+                      ]}
+                    >
+                      {displayUrl(item)}
+                    </Text>
+                  </View>
                   <Icon
                     name="chevron-right"
                     size={18}
@@ -596,6 +672,33 @@ export default function InAppBrowserScreen() {
                   />
                 </Pressable>
               ))}
+              {history.length > 3 && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    historyExpanded ? '收起最近访问' : '展开全部最近访问'
+                  }
+                  accessibilityState={{ expanded: historyExpanded }}
+                  onPress={() => setHistoryExpanded(value => !value)}
+                  style={styles.historyToggle}
+                >
+                  <Text
+                    style={[
+                      styles.historyToggleText,
+                      { color: theme.colors.primary },
+                    ]}
+                  >
+                    {historyExpanded
+                      ? '收起最近访问'
+                      : `查看全部 ${history.length} 条访问记录`}
+                  </Text>
+                  <Icon
+                    name={historyExpanded ? 'expand-less' : 'expand-more'}
+                    size={20}
+                    color={theme.colors.primary}
+                  />
+                </Pressable>
+              )}
             </View>
           )}
         </ScrollView>
@@ -743,6 +846,11 @@ export default function InAppBrowserScreen() {
             </View>
           )}
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              recognizing ? '正在识别本页目录' : '识别本页目录'
+            }
+            accessibilityState={{ disabled: recognizing, busy: recognizing }}
             onPress={recognizeCurrentPage}
             disabled={recognizing}
             style={[
@@ -791,19 +899,20 @@ export default function InAppBrowserScreen() {
             />
             <View style={{ flex: 1 }}>
               <Text
-                numberOfLines={1}
                 style={{
                   fontSize: 15,
+                  lineHeight: 23,
                   fontWeight: '600',
                   color: theme.colors.text,
                 }}
               >
                 {recognized.title || '未命名书籍'}
               </Text>
+              {/* 当前页只代表已识别的条目；完整目录在入库前合并校验，不能称为整本书总章数。 */}
               <Text
-                numberOfLines={1}
                 style={{
                   fontSize: 12,
+                  lineHeight: 18,
                   color: theme.colors.textSecondary,
                   marginTop: 3,
                 }}
@@ -811,7 +920,7 @@ export default function InAppBrowserScreen() {
                 {(recognized.author || '佚名') +
                   (resolveSource(recognized.url)?.preferDirectImport
                     ? ' · 导入时校验完整目录'
-                    : ' · 共 ' + recognized.chapters.length + ' 章') +
+                    : ' · 已识别 ' + recognized.chapters.length + ' 项目录') +
                   (recognized.pageUrls?.length
                     ? ` · ${recognized.pageUrls.length + 1} 页目录`
                     : '')}
@@ -856,6 +965,10 @@ export default function InAppBrowserScreen() {
               )}
             </View>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="关闭书籍识别预览"
+              accessibilityState={{ disabled: adding }}
+              disabled={adding}
               onPress={() => setRecognized(null)}
               style={styles.sheetGhost}
             >
@@ -894,14 +1007,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   barBtn: {
-    width: 34,
-    height: 34,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
   field: {
     flex: 1,
-    height: 38,
+    minHeight: 44,
     borderRadius: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -911,16 +1024,30 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: 13.5, padding: 0 },
   startLoading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   startPage: { flex: 1 },
-  startPageContent: { padding: 20, paddingBottom: 36 },
-  startCard: {
+  startPageContent: { padding: 20, paddingTop: 18, paddingBottom: 36 },
+  entryGo: {
+    minWidth: 54,
+    minHeight: 44,
+    borderRadius: 10,
     alignItems: 'center',
-    borderRadius: 18,
-    paddingHorizontal: 24,
-    paddingVertical: 28,
+    justifyContent: 'center',
   },
-  startTitle: { fontSize: 17, fontWeight: '700', marginTop: 11 },
-  startHint: { fontSize: 13, marginTop: 7, textAlign: 'center' },
-  siteSection: { marginTop: 22 },
+  entryGoText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  startCard: { paddingBottom: 20 },
+  startTitle: { fontSize: 22, lineHeight: 30, fontWeight: '700' },
+  startHint: { fontSize: 12.5, lineHeight: 20, marginTop: 5 },
+  siteSection: { marginBottom: 16 },
+  siteGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  siteTile: {
+    width: '48%',
+    flexGrow: 1,
+    minHeight: 90,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    padding: 12,
+    justifyContent: 'center',
+  },
+  siteTileHeading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   siteRow: {
     alignItems: 'center',
     borderWidth: 1,
@@ -931,17 +1058,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     paddingVertical: 12,
   },
-  siteBadge: {
-    alignItems: 'center',
-    borderRadius: 9,
-    height: 34,
-    justifyContent: 'center',
-    width: 34,
-  },
   siteInfo: { flex: 1, minWidth: 0 },
-  siteName: { fontSize: 13.5, fontWeight: '600' },
-  siteDesc: { fontSize: 11, marginTop: 3 },
-  historySection: { marginTop: 26 },
+  siteName: { flex: 1, fontSize: 14, lineHeight: 21, fontWeight: '600' },
+  searchSiteName: { fontSize: 14, lineHeight: 21, fontWeight: '600' },
+  siteDesc: { fontSize: 11.5, lineHeight: 17, marginTop: 6 },
+  historySection: { marginTop: 20 },
   historyTitle: { fontSize: 14, fontWeight: '700', marginBottom: 10 },
   historyRow: {
     alignItems: 'center',
@@ -953,7 +1074,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     paddingVertical: 13,
   },
-  historyText: { flex: 1, fontSize: 13 },
+  historySiteName: { fontSize: 13, lineHeight: 20, fontWeight: '600' },
+  historyText: { fontSize: 11.5, lineHeight: 17, marginTop: 3 },
+  historyToggleText: { fontSize: 13, lineHeight: 20 },
+  historyToggle: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
   fab: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1024,7 +1154,13 @@ const styles = StyleSheet.create({
   },
   sheetInfo: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   cover: { width: 44, borderRadius: 4 },
-  sheetGhost: { padding: 6 },
+  sheetGhost: {
+    minWidth: 44,
+    minHeight: 44,
+    padding: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sheetAdd: {
     alignItems: 'center',
     borderRadius: 14,
