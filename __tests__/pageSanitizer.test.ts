@@ -141,6 +141,31 @@ it('新插入、延迟填充及广告脚本重写样式均重新隐藏；重复�
   expect(doc.querySelectorAll('#__nvl_clean_style')).toHaveLength(1);
 });
 
+it('笔趣阁背景广告切片新插入及重写 important 样式时，首个绘制帧前就隐藏', async () => {
+  const doc = page('<a id="chapter" href="/6/100">第1章</a>');
+  install();
+  // 真机广告将整幅图片拆成多个固定背景切片，并不断覆盖 display；不能等 80ms 再净化。
+  const tile = doc.createElement('div');
+  tile.className = 'randomTile';
+  const style =
+    'position:fixed;bottom:0;z-index:2147483646;width:42.8px;height:34px;background-image:url(/banner.gif);display:block!important';
+  tile.setAttribute('style', style);
+  doc.body.appendChild(tile);
+  const frame = () =>
+    new Promise<void>(resolve =>
+      dom.window.requestAnimationFrame(() => resolve()),
+    );
+  await frame();
+  expect(dom.window.getComputedStyle(tile).display).toBe('none');
+  for (let i = 0; i < 3; i++) {
+    tile.removeAttribute('data-nvl-hidden');
+    tile.setAttribute('style', style);
+    await frame();
+    expect(dom.window.getComputedStyle(tile).display).toBe('none');
+  }
+  expect(hidden('chapter')).toBe(false);
+});
+
 // 本用例验证扫描范围，不测墙钟性能；JSDOM 构建 1500 项时允许与原生构建争用 CPU。
 it('只清理变动子树；修改单张广告不再次扫描整本长目录', async () => {
   const doc = page(

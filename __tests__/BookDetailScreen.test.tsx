@@ -1,15 +1,17 @@
 import React from 'react';
 import Renderer, { act } from 'react-test-renderer';
-import { FlatList, TextInput } from 'react-native';
+import { FlatList, ScrollView, TextInput } from 'react-native';
 import { createStore, Provider } from 'jotai';
 import BookDetailScreen from '../src/screens/BookDetailScreen';
 import { ThemeProvider } from '../src/theme/ThemeContext';
+import { Text as AppText } from '../src/components/Text';
 import {
   booksAtom,
   chaptersAtom,
   currentChapterIndexAtom,
   selectedBookIdAtom,
   readingHistoryAtom,
+  appSettingsAtom,
 } from '../src/store/atoms';
 
 const mockNavigation = {
@@ -268,7 +270,11 @@ it.each(['loading', 'repair'])(
         </Provider>,
       );
     });
-    for (const label of ['快捷打开目录', '打开完整目录']) {
+    for (const label of [
+      '快捷打开目录',
+      '打开完整目录',
+      '从底部打开章节目录',
+    ]) {
       const entry = tree.root.findAllByProps({ accessibilityLabel: label })[0];
       expect(entry.props.accessibilityState.disabled).toBe(true);
       // 即便回调已排队，处理器也必须再次检查目录状态。
@@ -355,6 +361,145 @@ it('长书已阅读但总进度为0%时显示续读，未知网站也能检查�
   expect(mockNavigation.navigate).toHaveBeenCalledWith('InAppBrowser', {
     initialUrl: 'https://novel.test/catalog',
   });
+  await act(() => tree.unmount());
+});
+
+it.each(['light', 'dark'] as const)(
+  '详情滑到第二屏仍可打开目录，%s 主题状态栏随固定导航切换',
+  async theme => {
+    jest.clearAllMocks();
+    mockFocused = true;
+    const store = createStore();
+    store.set(appSettingsAtom, { ...store.get(appSettingsAtom), theme });
+    store.set(booksAtom, [
+      {
+        id: 'catalog-test',
+        title: '长简介测试书',
+        author: '作者',
+        description: '小说简介。'.repeat(100),
+        addedAt: 1,
+        updatedAt: 1,
+        progress: 25,
+        currentChapterId: 'c1',
+      },
+    ]);
+    store.set(chaptersAtom, {
+      'catalog-test': [
+        {
+          id: 'c1',
+          bookId: 'catalog-test',
+          title: '第一章',
+          content: '正文',
+          order: 0,
+        },
+      ],
+    });
+    const before = store.get(booksAtom);
+    let tree!: Renderer.ReactTestRenderer;
+    await act(() => {
+      tree = Renderer.create(
+        <Provider store={store}>
+          <ThemeProvider>
+            <BookDetailScreen />
+          </ThemeProvider>
+        </Provider>,
+      );
+    });
+    const scroll = tree.root.findByType(ScrollView);
+    expect(
+      scroll.findAllByProps({ accessibilityLabel: '快捷打开目录' }),
+    ).toHaveLength(0);
+    await act(() =>
+      tree.root
+        .findByProps({ testID: 'book-detail-hero' })
+        .props.onLayout({ nativeEvent: { layout: { height: 240 } } }),
+    );
+    await act(() =>
+      scroll.props.onScroll({ nativeEvent: { contentOffset: { y: 300 } } }),
+    );
+    expect(mockNavigation.setOptions).toHaveBeenLastCalledWith({
+      statusBarStyle: theme === 'light' ? 'dark' : 'light',
+    });
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '快捷打开目录' })[0]
+        .props.onPress(),
+    );
+    expect(tree.root.findAllByType(FlatList).length).toBeGreaterThan(0);
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '关闭章节目录' })[0]
+        .props.onPress(),
+    );
+    expect(store.get(booksAtom)).toBe(before);
+    expect(mockNavigation.navigate).not.toHaveBeenCalled();
+    await act(() =>
+      scroll.props.onScroll({ nativeEvent: { contentOffset: { y: 0 } } }),
+    );
+    expect(mockNavigation.setOptions).toHaveBeenLastCalledWith({
+      statusBarStyle: 'light',
+    });
+    await act(() => tree.unmount());
+  },
+);
+
+it('长简介默认收起，可展开全部和再次收起，不改变阅读位置', async () => {
+  jest.clearAllMocks();
+  mockFocused = true;
+  const store = createStore();
+  const description = '第一段故事。\n\n'.repeat(30);
+  store.set(booksAtom, [
+    {
+      id: 'catalog-test',
+      title: '长简介书',
+      author: '作者',
+      description,
+      addedAt: 1,
+      updatedAt: 1,
+      progress: 25,
+    },
+  ]);
+  store.set(chaptersAtom, { 'catalog-test': [] });
+  const before = store.get(booksAtom);
+  let tree!: Renderer.ReactTestRenderer;
+  await act(() => {
+    tree = Renderer.create(
+      <Provider store={store}>
+        <ThemeProvider>
+          <BookDetailScreen />
+        </ThemeProvider>
+      </Provider>,
+    );
+  });
+  expect(
+    tree.root
+      .findAllByType(AppText)
+      .find(node => node.props.children === description.trim())!.props
+      .numberOfLines,
+  ).toBe(4);
+  await act(() =>
+    tree.root
+      .findAllByProps({ accessibilityLabel: '展开内容简介' })[0]
+      .props.onPress(),
+  );
+  expect(
+    tree.root
+      .findAllByType(AppText)
+      .find(node => node.props.children === description.trim())!.props
+      .numberOfLines,
+  ).toBeUndefined();
+  await act(() =>
+    tree.root
+      .findAllByProps({ accessibilityLabel: '收起内容简介' })[0]
+      .props.onPress(),
+  );
+  expect(
+    tree.root
+      .findAllByType(AppText)
+      .find(node => node.props.children === description.trim())!.props
+      .numberOfLines,
+  ).toBe(4);
+  expect(store.get(booksAtom)).toBe(before);
   await act(() => tree.unmount());
 });
 

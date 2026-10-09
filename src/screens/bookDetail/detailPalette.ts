@@ -3,6 +3,8 @@ export function detailPalette(dark: boolean) {
   return {
     paper: dark ? '#171d1c' : '#ebe8e0',
     surface: dark ? '#252d2a' : '#ffffff',
+    subtle: dark ? '#303a35' : '#f5f6f2',
+    accentSurface: dark ? '#2c443a' : '#e7f1eb',
     ink: dark ? '#f0ede5' : '#252c28',
     secondary: dark ? '#a8b4ac' : '#767d73',
     line: dark ? '#35433c' : '#d9ddd5',

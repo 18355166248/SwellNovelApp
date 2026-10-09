@@ -1,0 +1,15 @@
+{
+  "url": "https://www.bqquge.org/6",
+  "installed": true,
+  "hosts": 42,
+  "tileFound": true,
+  "frames": 343,
+  "visibleFrames": 0,
+  "rewrites": 3,
+  "checks": [
+    { "display": "none", "inline": "none" },
+    { "display": "none", "inline": "none" },
+    { "display": "none", "inline": "none" }
+  ],
+  "elapsedMs": 6006
+}

@@ -13,6 +13,8 @@ import {
   Platform,
   BackHandler,
   Image,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Text, Icon, LinearGradient, BookCover } from '../components';
@@ -87,14 +89,42 @@ export default function BookDetailScreen() {
   const [recordsOpen, setRecordsOpen] = React.useState(false);
   const histories = useAtomValue(readingHistoryAtom);
   const [moreOpen, setMoreOpen] = React.useState(false);
+  const [headerCollapsed, setHeaderCollapsed] = React.useState(false);
+  const [heroHeight, setHeroHeight] = React.useState(0);
+  const [synopsisExpanded, setSynopsisExpanded] = React.useState(false);
+  const headerHeight = insets.top + 60;
+  const scrollOffsetRef = React.useRef(0);
+  const scrollRef = React.useRef<ScrollView>(null);
+  React.useEffect(() => {
+    // 同一详情路由换书时，不能沿用上一本文案展开状态与吸顶位置。
+    scrollOffsetRef.current = 0;
+    setHeaderCollapsed(false);
+    setSynopsisExpanded(false);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [bookId]);
+  const onDetailScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffsetRef.current = Math.max(0, event.nativeEvent.contentOffset.y);
+    // 根据实际封面区高度切换导航；只在跨过边界时改变状态，正文始终在安全区栏下方。
+    if (heroHeight > 0)
+      setHeaderCollapsed(scrollOffsetRef.current >= heroHeight - 1);
+  };
   React.useLayoutEffect(() => {
     if (!focused) return;
     // 状态栏跟随当前可见背景，由原生导航控制，避免直接调用 StatusBar 与 iOS 控制器冲突。
     navigation.setOptions({
       statusBarStyle:
-        (catalogOpen || recordsOpen) && !isDarkMode ? 'dark' : 'light',
+        (catalogOpen || recordsOpen || headerCollapsed) && !isDarkMode
+          ? 'dark'
+          : 'light',
     });
-  }, [navigation, catalogOpen, recordsOpen, isDarkMode, focused]);
+  }, [
+    navigation,
+    catalogOpen,
+    recordsOpen,
+    headerCollapsed,
+    isDarkMode,
+    focused,
+  ]);
   React.useEffect(() => {
     // 页面失焦时同步收起临时浮层，返回书架后不能留下拦截点击的遮罩。
     if (!focused) {
@@ -271,7 +301,9 @@ export default function BookDetailScreen() {
     book.progress >= 100 ? '已读完' : hasStartedReading ? '阅读中' : '未开始';
   const chaptersReady = chapters.length > 0;
   const catalogReady = chaptersReady && !catalogNeedsRepair;
-  const synopsis = sanitizeBookDescription(book.description);
+  const synopsis = sanitizeBookDescription(book.description) || '';
+  const canExpandSynopsis =
+    synopsis.length > 100 || synopsis.split('\n').length > 4;
   // 在线书未缓存正文时没有可信字数，展示破折号比把“未知”误报成 0 更准确。
   const wordCountLabel = totalWords > 0 ? formatWordCount(totalWords) : '—';
 
@@ -286,20 +318,39 @@ export default function BookDetailScreen() {
     openChapter(book.id, idx);
     navigation.navigate('Reader', { bookId: book.id });
   };
+  const headerInk = headerCollapsed ? palette.ink : '#fbf8ee';
+  const headerAccent = headerCollapsed ? palette.accent : '#f0d9a8';
+  const headerButtonSurface = headerCollapsed
+    ? palette.subtle
+    : 'rgba(255,255,255,.09)';
 
   return (
     <View style={[styles.container, { backgroundColor: palette.paper }]}>
       <ScrollView
+        ref={scrollRef}
+        testID="book-detail-scroll"
         // 页面已手动处理安全区，关闭系统重复调整，避免目录弹层关闭后内容向上跳动。
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustContentInsets={false}
         contentContainerStyle={{
+          paddingTop: headerHeight,
           paddingBottom: 100 + bottomActionOffset,
         }}
         showsVerticalScrollIndicator={false}
         onScrollBeginDrag={() => setMoreOpen(false)}
+        onScroll={onDetailScroll}
+        scrollEventThrottle={16}
       >
-        <View style={styles.hero}>
+        <View
+          testID="book-detail-hero"
+          style={styles.hero}
+          onLayout={event => {
+            const height = event.nativeEvent.layout.height;
+            setHeroHeight(height);
+            if (height > 0)
+              setHeaderCollapsed(scrollOffsetRef.current >= height - 1);
+          }}
+        >
           <LinearGradient
             colors={['#22443e', '#1d3935']}
             {...COVER_GRADIENT_DIRECTION}
@@ -311,57 +362,7 @@ export default function BookDetailScreen() {
             resizeMode="stretch"
             style={StyleSheet.absoluteFill}
           />
-          <View style={[styles.heroContent, { paddingTop: insets.top + 10 }]}>
-            <View style={styles.heroTopRow}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="返回上一页"
-                onPress={() => navigation.goBack()}
-                style={styles.heroBtn}
-              >
-                <Icon
-                  family="feather"
-                  name="arrow-left"
-                  size={19}
-                  color="#fbf8ee"
-                />
-              </Pressable>
-              <View style={styles.heroActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="快捷打开目录"
-                  accessibilityState={{ disabled: !catalogReady }}
-                  disabled={!catalogReady}
-                  onPress={openCatalog}
-                  style={[
-                    styles.catalogShortcut,
-                    { opacity: catalogReady ? 1 : 0.45 },
-                  ]}
-                >
-                  <Icon
-                    family="feather"
-                    name="list"
-                    size={19}
-                    color="#f0d9a8"
-                  />
-                  <Text style={styles.catalogShortcutText}>目录</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="更多书籍操作"
-                  accessibilityState={{ expanded: moreOpen }}
-                  onPress={() => setMoreOpen(value => !value)}
-                  style={styles.heroBtn}
-                >
-                  <Icon
-                    family="feather"
-                    name="more-horizontal"
-                    size={19}
-                    color="#fbf8ee"
-                  />
-                </Pressable>
-              </View>
-            </View>
+          <View style={styles.heroContent}>
             <View style={styles.heroBody}>
               <View style={styles.heroCoverShadow}>
                 <BookCover
@@ -450,17 +451,45 @@ export default function BookDetailScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: palette.surface }]}>
           <Text style={[styles.sectionLabel, { color: palette.ink }]}>
             内容简介
           </Text>
-          <Text style={[styles.synopsis, { color: palette.ink }]}>
+          <Text
+            style={[styles.synopsis, { color: palette.ink }]}
+            numberOfLines={
+              canExpandSynopsis && !synopsisExpanded ? 4 : undefined
+            }
+          >
             {synopsis || '这本书还没有可用简介。'}
           </Text>
+          {canExpandSynopsis && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                synopsisExpanded ? '收起内容简介' : '展开内容简介'
+              }
+              accessibilityState={{ expanded: synopsisExpanded }}
+              onPress={() => setSynopsisExpanded(value => !value)}
+              style={styles.synopsisToggle}
+            >
+              <Text style={{ color: palette.accent, fontSize: 13 }}>
+                {synopsisExpanded ? '收起简介' : '展开简介'}
+              </Text>
+              <Icon
+                family="feather"
+                name={synopsisExpanded ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color={palette.accent}
+              />
+            </Pressable>
+          )}
         </View>
 
         {book.source && (
-          <View style={styles.onlineSection}>
+          <View
+            style={[styles.onlineSection, { backgroundColor: palette.surface }]}
+          >
             <View style={styles.onlineRow}>
               <Pressable
                 accessibilityRole="button"
@@ -471,11 +500,9 @@ export default function BookDetailScreen() {
                   styles.onlineBtn,
                   {
                     backgroundColor: book.following
-                      ? theme.colors.accentDark
-                      : 'transparent',
-                    borderColor: book.following
-                      ? theme.colors.accentDark
-                      : palette.line,
+                      ? palette.accentSurface
+                      : palette.subtle,
+                    borderColor: book.following ? palette.accent : palette.line,
                   },
                 ]}
               >
@@ -483,13 +510,13 @@ export default function BookDetailScreen() {
                   family="feather"
                   name="bookmark"
                   size={15}
-                  color={book.following ? '#fff' : palette.ink}
+                  color={book.following ? palette.accent : palette.ink}
                 />
                 <Text
                   style={{
-                    fontSize: 11,
-                    lineHeight: 17,
-                    color: book.following ? '#fff' : palette.ink,
+                    fontSize: 13,
+                    lineHeight: 20,
+                    color: book.following ? palette.accent : palette.ink,
                   }}
                 >
                   {book.following ? '追更中' : '追更'}
@@ -512,7 +539,7 @@ export default function BookDetailScreen() {
                 style={[
                   styles.onlineBtn,
                   {
-                    backgroundColor: 'transparent',
+                    backgroundColor: palette.subtle,
                     borderColor: palette.line,
                     opacity: checking || caching.active ? 0.5 : 1,
                   },
@@ -525,7 +552,7 @@ export default function BookDetailScreen() {
                   color={palette.ink}
                 />
                 <Text
-                  style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
+                  style={{ fontSize: 13, lineHeight: 20, color: palette.ink }}
                 >
                   {checking
                     ? catalogNeedsRepair
@@ -565,7 +592,7 @@ export default function BookDetailScreen() {
                 style={[
                   styles.onlineBtn,
                   {
-                    backgroundColor: 'transparent',
+                    backgroundColor: palette.subtle,
                     borderColor: palette.line,
                     opacity:
                       checking ||
@@ -584,7 +611,7 @@ export default function BookDetailScreen() {
                   color={palette.ink}
                 />
                 <Text
-                  style={{ fontSize: 11, lineHeight: 17, color: palette.ink }}
+                  style={{ fontSize: 13, lineHeight: 20, color: palette.ink }}
                 >
                   {catalogNeedsRepair
                     ? '目录需修复'
@@ -649,7 +676,7 @@ export default function BookDetailScreen() {
           </View>
         )}
 
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: palette.surface }]}>
           <Pressable
             disabled={!catalogReady}
             accessibilityRole="button"
@@ -706,15 +733,25 @@ export default function BookDetailScreen() {
             accessibilityRole="button"
             accessibilityLabel="查看阅读记录"
             onPress={() => setRecordsOpen(true)}
-            style={styles.latest}
+            style={[styles.latest, { borderTopColor: palette.line }]}
           >
-            <Text style={[styles.latestLabel, { color: palette.accent }]}>
-              阅读记录
-            </Text>
-            <Text style={[styles.latestTitle, { color: palette.secondary }]}>
-              最近位置与目录跳转前的位置
-            </Text>
             <Icon name="history" size={18} color={palette.accent} />
+            <View style={styles.entryCopy}>
+              <Text style={[styles.entryTitle, { color: palette.ink }]}>
+                阅读记录
+              </Text>
+              <Text
+                style={[styles.entrySubtitle, { color: palette.secondary }]}
+              >
+                最近位置与目录跳转前的位置
+              </Text>
+            </View>
+            <Icon
+              family="feather"
+              name="chevron-right"
+              size={16}
+              color={palette.secondary}
+            />
           </Pressable>
           {latest && (
             <Pressable
@@ -723,13 +760,19 @@ export default function BookDetailScreen() {
               accessibilityState={{ disabled: !catalogReady }}
               disabled={!catalogReady}
               onPress={() => goReader(chapters.length - 1)}
-              style={[styles.latest, { opacity: catalogReady ? 1 : 0.62 }]}
+              style={[
+                styles.latest,
+                {
+                  borderTopColor: palette.line,
+                  opacity: catalogReady ? 1 : 0.62,
+                },
+              ]}
             >
               <Text style={[styles.latestLabel, { color: palette.accent }]}>
                 最新
               </Text>
               <Text
-                numberOfLines={1}
+                numberOfLines={2}
                 style={[styles.latestTitle, { color: palette.ink }]}
               >
                 {latest.title}
@@ -767,6 +810,87 @@ export default function BookDetailScreen() {
         </View>
       </ScrollView>
 
+      {/* 导航独立于滚动内容，安全区始终有实色背景，避免第二屏正文穿过状态栏。 */}
+      <View
+        testID="book-detail-header"
+        style={[
+          styles.fixedHeader,
+          {
+            paddingTop: insets.top,
+            height: headerHeight,
+            backgroundColor: headerCollapsed ? palette.surface : '#22443e',
+            borderBottomColor: headerCollapsed ? palette.line : 'transparent',
+          },
+        ]}
+      >
+        <View style={styles.heroTopRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="返回上一页"
+            onPress={() => navigation.goBack()}
+            style={[styles.heroBtn, { backgroundColor: headerButtonSurface }]}
+          >
+            <Icon
+              family="feather"
+              name="arrow-left"
+              size={20}
+              color={headerInk}
+            />
+          </Pressable>
+          <Text
+            numberOfLines={1}
+            style={[styles.headerTitle, { color: headerInk }]}
+          >
+            {headerCollapsed ? book.title : '书籍详情'}
+          </Text>
+          <View style={styles.heroActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="快捷打开目录"
+              accessibilityState={{ disabled: !catalogReady }}
+              disabled={!catalogReady}
+              onPress={openCatalog}
+              style={[
+                styles.catalogShortcut,
+                {
+                  backgroundColor: headerButtonSurface,
+                  borderColor: headerCollapsed
+                    ? palette.line
+                    : 'rgba(240,217,168,.31)',
+                  opacity: catalogReady ? 1 : 0.45,
+                },
+              ]}
+            >
+              <Icon
+                family="feather"
+                name="list"
+                size={18}
+                color={headerAccent}
+              />
+              <Text
+                style={[styles.catalogShortcutText, { color: headerAccent }]}
+              >
+                目录
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="更多书籍操作"
+              accessibilityState={{ expanded: moreOpen }}
+              onPress={() => setMoreOpen(value => !value)}
+              style={[styles.heroBtn, { backgroundColor: headerButtonSurface }]}
+            >
+              <Icon
+                family="feather"
+                name="more-horizontal"
+                size={20}
+                color={headerInk}
+              />
+            </Pressable>
+          </View>
+        </View>
+      </View>
+
       {moreOpen && focused && (
         <View style={styles.moreOverlay} pointerEvents="box-none">
           <Pressable
@@ -778,7 +902,7 @@ export default function BookDetailScreen() {
           <View
             style={[
               styles.moreMenu,
-              { top: insets.top + 60, backgroundColor: palette.surface },
+              { top: headerHeight + 6, backgroundColor: palette.surface },
             ]}
           >
             <Pressable
@@ -892,31 +1016,41 @@ export default function BookDetailScreen() {
 
       <View
         pointerEvents="box-none"
-        style={[styles.actionBarWrap, { bottom: bottomActionOffset }]}
+        style={[
+          styles.actionBarWrap,
+          {
+            paddingBottom: bottomActionOffset,
+            backgroundColor: palette.surface,
+            borderTopColor: palette.line,
+          },
+        ]}
       >
-        {/* 渐变只做背景，按钮由外层 View 控位，避免 iOS 安全区下半截被裁。 */}
-        <LinearGradient
-          colors={[`${palette.paper}00`, palette.paper, palette.paper]}
-          locations={[0, 0.3, 1]}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
         <View style={styles.actionBar}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="返回上一页"
-            // 详情可能来自书架、发现或搜索；这里保持返回栈语义，文案也不再误称“书架”。
-            onPress={() => navigation.goBack()}
-            style={[styles.shelfBtn, { borderColor: palette.accent }]}
+            accessibilityLabel="从底部打开章节目录"
+            accessibilityState={{ disabled: !catalogReady }}
+            disabled={!catalogReady}
+            onPress={openCatalog}
+            style={[
+              styles.shelfBtn,
+              {
+                backgroundColor: palette.subtle,
+                opacity: catalogReady ? 1 : 0.45,
+              },
+            ]}
           >
             <Icon
               family="feather"
-              name="arrow-left"
+              name="list"
               size={19}
               color={palette.accent}
             />
+            <Text
+              style={{ fontSize: 12, lineHeight: 17, color: palette.accent }}
+            >
+              目录
+            </Text>
           </Pressable>
           <Pressable
             disabled={!catalogReady}
@@ -945,11 +1079,7 @@ export default function BookDetailScreen() {
             ]}
           >
             <Icon family="feather" name="book-open" size={19} color="#f6f3e9" />
-            <Text
-              style={styles.readBtnText}
-              numberOfLines={1}
-              maxFontSizeMultiplier={1}
-            >
+            <Text style={styles.readBtnText} numberOfLines={2}>
               {catalogNeedsRepair
                 ? checking
                   ? '正在修复目录…'
@@ -1057,6 +1187,7 @@ const styles = StyleSheet.create({
   },
   heroContent: {
     paddingHorizontal: 20,
+    paddingTop: 20,
     paddingBottom: 20,
   },
   heroTopRow: {
@@ -1064,7 +1195,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     height: 44,
     alignItems: 'center',
+    gap: 10,
   },
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 3,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'flex-end',
+  },
+  headerTitle: { flex: 1, fontSize: 16, lineHeight: 24, fontWeight: '600' },
   heroBtn: {
     width: 44,
     height: 44,
@@ -1073,7 +1217,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroBody: { flexDirection: 'row', gap: 16, marginTop: 19, minHeight: 128 },
+  heroBody: { flexDirection: 'row', gap: 16, minHeight: 128 },
   heroCover: { width: 96, borderRadius: 7 },
   // 封面投影与完整 3:4 尺寸独立，避免为阴影裁切原图。
   heroCoverShadow: {
@@ -1126,27 +1270,47 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,.65)',
     marginTop: 6,
   },
-  section: { paddingHorizontal: 20, paddingTop: 22 },
+  section: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    padding: 18,
+    borderRadius: 14,
+  },
   sectionLabel: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
     marginBottom: 10,
-    lineHeight: 20,
+    lineHeight: 23,
   },
-  synopsis: { fontFamily: SERIF_FONT, fontSize: 13, lineHeight: 25 },
-  onlineSection: { paddingHorizontal: 20, paddingTop: 18 },
+  synopsis: { fontFamily: SERIF_FONT, fontSize: 15, lineHeight: 28 },
+  synopsisToggle: {
+    minHeight: 44,
+    flexDirection: 'row',
+    gap: 4,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  },
+  onlineSection: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 14,
+  },
   onlineRow: { flexDirection: 'row', gap: 7 },
-  cacheNote: { marginTop: 9, fontSize: 11, lineHeight: 18 },
+  cacheNote: { marginTop: 10, fontSize: 12, lineHeight: 19 },
   latest: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingTop: 13,
+    paddingVertical: 14,
     paddingHorizontal: 4,
     minHeight: 44,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 12,
   },
-  latestLabel: { fontSize: 11, lineHeight: 18 },
-  latestTitle: { flex: 1, fontSize: 12, lineHeight: 18 },
+  latestLabel: { fontSize: 12, lineHeight: 20 },
+  latestTitle: { flex: 1, fontSize: 13, lineHeight: 21 },
   onlineBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -1154,7 +1318,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
     paddingHorizontal: 5,
-    minHeight: 44,
+    minHeight: 48,
+    paddingVertical: 9,
     borderRadius: 8,
     borderWidth: 1,
   },
@@ -1164,7 +1329,7 @@ const styles = StyleSheet.create({
     gap: 10,
     minHeight: 70,
     paddingVertical: 13,
-    paddingHorizontal: 12,
+    paddingHorizontal: 0,
     borderRadius: 10,
   },
   entrySymbol: {
@@ -1181,8 +1346,8 @@ const styles = StyleSheet.create({
   catalogAudit: {
     marginHorizontal: 4,
     marginTop: 10,
-    fontSize: 11,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 20,
   },
   catalogBlocked: {
     alignItems: 'center',
@@ -1197,28 +1362,30 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    height: 82,
-    justifyContent: 'flex-end',
+    bottom: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    zIndex: 3,
   },
   actionBar: {
     paddingHorizontal: 20,
     paddingBottom: 12,
-    paddingTop: 16,
+    paddingTop: 12,
     flexDirection: 'row',
     gap: 12,
     alignItems: 'center',
   },
   shelfBtn: {
-    width: 48,
-    height: 44,
+    width: 64,
+    minHeight: 52,
     borderRadius: 9,
-    borderWidth: 1,
+    gap: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   readBtn: {
     flex: 1,
-    height: 50,
+    minHeight: 52,
+    paddingVertical: 9,
     borderRadius: 9,
     paddingHorizontal: 12,
     flexDirection: 'row',
@@ -1235,8 +1402,8 @@ const styles = StyleSheet.create({
   readBtnText: {
     flexShrink: 1,
     color: '#f6f3e9',
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 15,
+    lineHeight: 22,
     fontWeight: Platform.select({ ios: '600', android: 'bold' }),
   },
 });

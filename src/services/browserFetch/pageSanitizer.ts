@@ -143,15 +143,14 @@ export const PAGE_SANITIZER_JS = String.raw`(function () {
   }
   installStyle();
   clean(document);
-  var pending = [], timer = null;
+  var pending = [];
   function enqueue(node) {
     if (!node || node.nodeType!==1 && node.nodeType!==9) return;
     if (pending.indexOf(node)<0) pending.push(node);
     if (pending.length>32) pending=[document];
-    if (timer===null) timer=setTimeout(flush,80);
   }
   function flush() {
-    timer=null; installStyle();
+    installStyle();
     var batch=pending; pending=[];
     for (var i=0;i<batch.length;i++) {
       var covered=false;
@@ -159,20 +158,22 @@ export const PAGE_SANITIZER_JS = String.raw`(function () {
       if (!covered) clean(batch[i]);
     }
   }
-  // 只处理变化的子树并合并同一批变动，长目录不再每次广告改 src 就全页扫描。
+  // MutationObserver 在浏览器绘制前执行：同批变动合并后立即净化，不能用定时器延迟。
+  // 笔趣阁会反复重写背景广告切片的 important 样式，延迟 80ms 会让每次重写露出数帧。
+  // 仍只扫描变化子树，长目录不会因为单张广告更新而重复全页扫描。
   new MutationObserver(function(records) {
     for (var i=0;i<records.length;i++) {
       var r=records[i];
       if (r.type==='attributes') enqueue(r.target);
       else for (var j=0;j<r.addedNodes.length;j++) enqueue(r.addedNodes[j].nodeType===1 ? r.addedNodes[j] : r.target);
     }
-    installStyle();
+    flush();
   }).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['src','data-src','srcset','href','class','id','style']});
-  document.addEventListener('load',function(event) { enqueue(event.target); },true);
-  document.addEventListener('DOMContentLoaded',function() { enqueue(document); });
-  window.addEventListener('load',function() { enqueue(document); });
+  document.addEventListener('load',function(event) { enqueue(event.target); flush(); },true);
+  document.addEventListener('DOMContentLoaded',function() { enqueue(document); flush(); });
+  window.addEventListener('load',function() { enqueue(document); flush(); });
   // CSS/图片可能晚于首轮 DOM 到达，只补一次整体排版检查，不启动周期性全页扫描。
-  setTimeout(function() { enqueue(document); },1500);
+  setTimeout(function() { enqueue(document); flush(); },1500);
   window.open=function(value) {
     // 允许真实点击触发的同站搜索/阅读在当前页打开，阻止定时器与外域广告弹窗。
     if (value && sameSite(value) && window.event && window.event.isTrusted) location.assign(value);

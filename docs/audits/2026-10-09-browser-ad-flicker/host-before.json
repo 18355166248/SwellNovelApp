@@ -1,0 +1,25 @@
+{
+  "url": "https://www.bqquge.org/6",
+  "installed": true,
+  "examinedHosts": 80,
+  "visibleAtSnapshot": 0,
+  "tileCount": 40,
+  "sample": {
+    "tag": "DIV",
+    "id": "HXysOi_0_0",
+    "cls": "HXysOi",
+    "hidden": true,
+    "style": "height: 34px; bottom: 102px; left: 0px; background-position: 0px 0px; background-size: 428px 136px !important; display: none !important;",
+    "computed": {
+      "position": "fixed",
+      "display": "none",
+      "z": "2147483646"
+    },
+    "size": {
+      "w": 0,
+      "h": 0
+    },
+    "shadow": false,
+    "html": "<div class=\"HXysOi\" id=\"HXysOi_0_0\" style=\"height: 34px; bottom: 102px; left: 0px; background-position: 0px 0px; background-size: 428px 136px !important; display: none !important;\" data-nvl-hidden=\"\"></div>"
+  }
+}
