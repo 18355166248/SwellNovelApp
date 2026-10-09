@@ -55,6 +55,10 @@ import {
 } from '../../utils/catalogRepair';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
+  enrichBookMetadata,
+  needsBookMetadata,
+} from '../../services/recognize/enrichBookMetadata';
+import {
   fetchRenderedChapterPage,
   cleanRenderedText,
 } from '../../services/browserFetch/bridge';
@@ -476,13 +480,19 @@ export const useAddRecognizedBook = () => {
       }
       const metas = normalizeOnlineCatalog(data.chapters);
       const bookId = recognizedBookImportId(data.url, data.host);
+      // 目录页可能完全没有封面/作者；通用补全仅查书籍资料，失败不影响已确认的完整目录。
+      const metadata =
+        data.metadataChecked || !needsBookMetadata(data)
+          ? data
+          : (await enrichBookMetadata(data)).book;
 
       const now = Date.now();
       const book: Book = {
         id: bookId,
-        title: data.title?.trim() || '',
-        author: data.author?.trim() || '',
-        cover: data.cover || undefined,
+        title: metadata.title?.trim() || '',
+        author: metadata.author?.trim() || '',
+        cover: metadata.cover || undefined,
+        description: metadata.description,
         addedAt: now,
         updatedAt: now,
         progress: 0,

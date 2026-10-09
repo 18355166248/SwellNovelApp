@@ -6,16 +6,18 @@
  * 浏览器渲染后的结果，因此天然规避 CORS、Cloudflare JS 挑战、以及 JS 动态渲染。
  * 通用启发式：命中一批“第N章”式锚点即判为目录页；不依赖具体站点结构，未知站也能认。
  */
-import {
-  findDivBlock,
-  removeNonContentElements,
-} from '../source/htmlContainers';
+// RN 自带 URL 会把根相对链接拼到当前目录路径后，导致真机分页读到 HTML 却解析出 0 章。
+// 这里只显式使用标准实现；注入脚本仍由 WebView 自己的浏览器 URL 执行。
+import { StandardURL as URL } from '../../utils/standardUrl';
+import { extractBookMetadata, type MetadataExtraction } from './bookMetadata';
+import { BOOK_METADATA_EXTRACTOR_JS } from './bookMetadataScript.generated';
+import { removeNonContentElements } from '../source/htmlContainers';
 export interface RecognizedChapter {
   title: string;
   url: string;
 }
 
-export interface RecognizedBook {
+export interface RecognizedBook extends Partial<MetadataExtraction> {
   ok: boolean;
   isDetail: boolean;
   url: string;
@@ -27,6 +29,8 @@ export interface RecognizedBook {
   /** 当前目录页发现的其他分页链接（不含当前页），加入时由 WebView 聚合。 */
   pageUrls?: string[];
   error?: string;
+  /** 浏览器预览已尝试补资料，加入时复用结果，不重复占用隐藏 WebView。 */
+  metadataChecked?: boolean;
 }
 
 /** postMessage 的消息类型标识，供 WebView onMessage 分辨。 */
@@ -250,15 +254,20 @@ export const RECOGNIZER_JS = `(function(){
     if (!author) { var bt = document.body.innerText || ''; var am = bt.match(/作者[：:\\s]*([^\\n\\r，,。]{1,20})/); author = am ? am[1].trim() : ''; }
     var cover = meta('meta[property="og:image"]');
     if (!cover && mingBook) { var bookImage = document.querySelector('img[src*="/images/mzwid/' + mingBook[1] + '."]'); cover = bookImage ? bookImage.getAttribute('src') : ''; }
-    // 笔趣阁、书库不一定提供 og:image，只读取明确封面容器，不能取整页第一张广告/Logo。
-    if (!cover) { var coverImage = document.querySelector('.bookdetail > img') || document.querySelector('.cover > img') || document.querySelector('.book-cover > img') || document.querySelector('#fmimg > img'); cover = coverImage ? (coverImage.getAttribute('data-src') || coverImage.getAttribute('src') || '') : ''; }
     try { var coverUrl = cover ? new URL(cover, location.href) : null; cover = coverUrl && /^https?:$/.test(coverUrl.protocol) ? coverUrl.href : ''; } catch(ignore) { cover = ''; }
+    // 资料补全失败只能丢失可选资料，不能让已经识别出的章节目录一起失败。
+    var metadata = { metadataLinks: [], metadataRules: {} };
+    try { metadata = (${BOOK_METADATA_EXTRACTOR_JS})(document.documentElement ? document.documentElement.outerHTML : '', location.href, URL); } catch(ignore) { metadata.metadataIssues = ['metadata-extractor-error: ' + String(ignore)]; }
     var payload = {
       type: '${RECOGNIZE_MESSAGE}', ok: true,
       isDetail: chapters.length >= ${MIN_CHAPTERS},
       url: location.href, host: location.host,
       requestId: requestId,
-      title: title, author: author, cover: cover,
+      title: (mingBook ? title : metadata.title) || title,
+      author: metadata.author || author, cover: metadata.cover || cover,
+      description: metadata.description,
+      metadataLinks: metadata.metadataLinks, metadataRules: metadata.metadataRules,
+      metadataIssues: metadata.metadataIssues,
       chapters: chapters.slice(0, 5000), pageUrls: pageUrls.slice(0, ${MAX_CATALOG_PAGES})
     };
     post(payload);
@@ -432,6 +441,7 @@ function htmlMeta(html: string, property: string): string {
  * 这条兜底链路避开部分广告站阻断顶层 WebView postMessage 的兼容性问题。
  */
 export function recognizeBookHtml(html: string, url: string): RecognizedBook {
+  const metadata = extractBookMetadata(html, url, URL);
   const chapters = parseRecognizedChaptersHtml(html, url);
   let host = '';
   let mingBookId = '';
@@ -480,25 +490,8 @@ export function recognizeBookHtml(html: string, url: string): RecognizedBook {
         'i',
       ).exec(html)?.[1]
     : '';
-  // 与可见网页采用相同的容器优先级；先去脚本，避免广告字符串伪装成封面节点。
-  const cleanHtml = removeNonContentElements(html);
-  const coverBlocks = [
-    findDivBlock(cleanHtml, 'class', 'bookdetail'),
-    findDivBlock(cleanHtml, 'class', 'cover'),
-    findDivBlock(cleanHtml, 'class', 'book-cover'),
-    findDivBlock(cleanHtml, 'id', 'fmimg'),
-  ];
-  const containerCover = coverBlocks
-    .map(block => {
-      const image = /<img\b[^>]*>/i.exec(block?.inner || '')?.[0] || '';
-      return htmlText(
-        /\bdata-src\s*=\s*["']([^"']+)["']/i.exec(image)?.[1] ||
-          /\bsrc\s*=\s*["']([^"']+)["']/i.exec(image)?.[1] ||
-          '',
-      );
-    })
-    .find(Boolean);
-  const rawCover = htmlMeta(html, 'og:image') || mingCover || containerCover;
+  // 通用封面规则只维护在共享提取器，保留明智屋按书号定位的兼容路径。
+  const rawCover = metadata.cover || mingCover;
   let cover = '';
   try {
     const coverUrl = rawCover ? new URL(rawCover, url) : null;
@@ -511,9 +504,10 @@ export function recognizeBookHtml(html: string, url: string): RecognizedBook {
     isDetail: chapters.length >= MIN_CHAPTERS,
     url,
     host,
-    title,
-    author,
-    cover,
+    ...metadata,
+    title: mingTitle || metadata.title || title,
+    author: metadata.author || author,
+    cover: metadata.cover || cover,
     chapters,
     pageUrls: parseRecognizedPageUrlsHtml(html, url),
   };

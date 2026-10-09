@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "generate:metadata-script": "node scripts/generate-book-metadata-script.cjs",
+    "prestart": "npm run generate:metadata-script",
+    "prebuild:web": "npm run generate:metadata-script",
     "start": "react-native start --port 8082",
     "web": "webpack serve --mode development",
     "build:web": "webpack --mode production",
@@ -45,6 +48,7 @@
     "react-native-linear-gradient": "^2.8.3",
     "react-native-safe-area-context": "^5.5.2",
     "react-native-screens": "^4.23.0",
+    "react-native-url-polyfill": "4.0.0",
     "react-native-vector-icons": "^10.3.0",
     "react-native-web": "^0.21.2",
     "react-native-webview": "^13.17.0"

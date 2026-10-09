@@ -6,6 +6,10 @@ import { Book, Chapter } from '../store/types/book';
 import { resolveSource } from '../services/source/registry';
 import type { ParsedChapter } from '../services/source/types';
 import { normalizedChapterIdentity } from './catalogRepair';
+import {
+  enrichBookMetadata,
+  needsBookMetadata,
+} from '../services/recognize/enrichBookMetadata';
 
 export interface OnlineBookResult {
   book: Book;
@@ -84,6 +88,22 @@ export async function addOnlineBook(url: string): Promise<OnlineBookResult> {
   const info = await source.parseBookInfo(trimmed);
   if (!info.title.trim() || !info.sourceBookId.trim()) {
     throw new Error('未获取到有效书籍信息，请确认链接并稍后重试');
+  }
+  if (needsBookMetadata(info)) {
+    const { book: metadata } = await enrichBookMetadata({
+      ...info,
+      ok: true,
+      isDetail: true,
+      url: trimmed,
+      host: '',
+      chapters: [],
+    });
+    Object.assign(info, {
+      title: metadata.title || info.title,
+      author: metadata.author || info.author,
+      cover: metadata.cover,
+      description: metadata.description || info.description,
+    });
   }
   const metas = normalizeOnlineCatalog(await source.parseCatalog(info));
 

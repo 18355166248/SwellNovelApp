@@ -37,6 +37,10 @@ jest.mock('../src/store', () => ({
   ...jest.requireActual('../src/store'),
   useEnsureChapterContent: () => mockEnsureChapter,
 }));
+// 页面交互用例不发起资料网络请求；补资料的抓取/取消/合并由独立回归与真机验证。
+jest.mock('../src/store/hooks/useBookMetadataRepair', () => ({
+  useBookMetadataRepair: jest.fn(),
+}));
 
 it('browses, searches and closes the catalog without opening a reader or changing progress; selection opens the correct chapter', async () => {
   jest.clearAllMocks();

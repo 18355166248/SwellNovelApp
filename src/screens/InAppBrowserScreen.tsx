@@ -17,7 +17,12 @@ import {
   Platform,
 } from 'react-native';
 import { WebView as RNWebView } from 'react-native-webview';
-import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import {
+  RouteProp,
+  useNavigation,
+  useRoute,
+  useIsFocused,
+} from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
@@ -34,6 +39,7 @@ import {
   RecognizedBook,
 } from '../services/recognize/recognizer';
 import { fetchRenderedHtml } from '../services/browserFetch/bridge';
+import { useRecognizedBookMetadata } from '../services/recognize/useRecognizedBookMetadata';
 import { PAGE_SANITIZER_JS } from '../services/browserFetch/pageSanitizer';
 import {
   SOURCES,
@@ -106,9 +112,11 @@ export default function InAppBrowserScreen() {
   const [historyReady, setHistoryReady] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [canGoBack, setCanGoBack] = React.useState(false);
-  const [recognized, setRecognized] = React.useState<RecognizedBook | null>(
+  const [recognizedPage, setRecognized] = React.useState<RecognizedBook | null>(
     null,
   );
+  const { book: recognized, loading: metadataLoading } =
+    useRecognizedBookMetadata(recognizedPage, useIsFocused());
   const [recognizing, setRecognizing] = React.useState(false);
   const [recognizeMessage, setRecognizeMessage] = React.useState('');
   const [adding, setAdding] = React.useState(false);
@@ -785,6 +793,30 @@ export default function InAppBrowserScreen() {
                     ? ` · ${recognized.pageUrls.length + 1} 页目录`
                     : '')}
               </Text>
+              {metadataLoading && (
+                <Text
+                  style={{
+                    fontSize: 11,
+                    color: theme.colors.textSecondary,
+                    marginTop: 3,
+                  }}
+                >
+                  正在补全书籍资料…
+                </Text>
+              )}
+              {!metadataLoading &&
+                !recognized.cover &&
+                recognized.metadataIssues?.includes('placeholder-cover') && (
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: theme.colors.textSecondary,
+                      marginTop: 3,
+                    }}
+                  >
+                    本站未提供原封面，暂用默认封面
+                  </Text>
+                )}
               {!!addMessage && (
                 <Text
                   numberOfLines={2}

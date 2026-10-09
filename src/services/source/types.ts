@@ -60,6 +60,8 @@ export interface BookSource {
   extractId(url: string): string | undefined;
   /** 由站内书籍 id 拼出详情页 URL（供搜索结果规范化到详情页）。 */
   detailUrl(id: string): string;
+  /** 通用信息补全的额外候选地址，例如旧版详情页或已验证的镜像；无需另写补全流程。 */
+  metadataUrls?(url: string): string[];
   /** 解析详情页（也兼容传入目录页/正文页 URL，只要能取到书籍 id）。 */
   parseBookInfo(url: string): Promise<ParsedBookInfo>;
   /** 解析完整目录，返回按顺序排列的章节列表。 */

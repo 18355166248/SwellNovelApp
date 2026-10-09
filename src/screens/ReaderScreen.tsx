@@ -100,6 +100,7 @@ import {
   ReaderPageData,
 } from '../utils/paginate';
 import { getCharWidthMeasurer } from '../utils/charWidth';
+import { estimateReaderHeadingHeight } from '../utils/readerHeading';
 import { animateReaderPage } from '../utils/readerPageAnimation';
 import { getReaderKeyTurn } from '../utils/readerKeyboard';
 import { useWebReaderGestures } from './reader/useWebReaderGestures';
@@ -965,6 +966,58 @@ export default function ReaderScreen() {
   }, [viewportWidth]);
 
   const chapterTitleLineHeight = Math.ceil(display.titleSize * 1.25);
+  const headingLayoutKey = JSON.stringify([
+    chapter?.id,
+    chapter?.title || book?.title,
+    book?.title,
+    book?.author,
+    display.titleSize,
+    readerColumn.textWidth,
+    winDims.fontScale,
+  ]);
+  const headingLayoutKeyRef = React.useRef(headingLayoutKey);
+  headingLayoutKeyRef.current = headingLayoutKey;
+  const [headingLayout, setHeadingLayout] = React.useState<{
+    key: string;
+    height: number;
+  } | null>(null);
+  const estimateHeadingHeight = React.useCallback(
+    (title: string) =>
+      estimateReaderHeadingHeight({
+        title,
+        maxWidth: readerColumn.textWidth,
+        measure: getCharWidthMeasurer(
+          SERIF_FONT,
+          display.titleSize * winDims.fontScale,
+        ),
+        lineHeight: chapterTitleLineHeight * winDims.fontScale,
+        metaHeight: 15 * winDims.fontScale,
+      }),
+    [
+      chapterTitleLineHeight,
+      display.titleSize,
+      readerColumn.textWidth,
+      winDims.fontScale,
+    ],
+  );
+  const headingHeight =
+    headingLayout?.key === headingLayoutKey
+      ? headingLayout.height
+      : estimateHeadingHeight(chapter?.title || book?.title || '');
+  const handleHeadingLayout = React.useCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) => {
+      const height = Math.ceil(event.nativeEvent.layout.height);
+      // 标题换行后按真实高度重新分页；拒绝旧章迟到的布局回调，避免覆盖新章正文预算。
+      if (headingLayoutKeyRef.current !== headingLayoutKey || height <= 0)
+        return;
+      setHeadingLayout(previous =>
+        previous?.key === headingLayoutKey && previous.height === height
+          ? previous
+          : { key: headingLayoutKey, height },
+      );
+    },
+    [headingLayoutKey],
+  );
 
   // 左右翻页先按真实字符宽度断行、组页，再交给 FlatList 虚拟渲染，避免大章节一次性挂载所有页面。
   const pageMetrics = React.useMemo(() => {
@@ -975,8 +1028,7 @@ export default function ReaderScreen() {
     );
     const lineHeight = display.fontSize * display.lineHeight;
     // 首页扣除标题区（章节名 + meta + 间距）真实占用的高度，消除首页尾部留白。
-    const headerHeight = chapterTitleLineHeight + 8 + 15 + 24;
-    const firstBodyHeight = Math.max(lineHeight, bodyHeight - headerHeight);
+    const firstBodyHeight = Math.max(lineHeight, bodyHeight - headingHeight);
 
     return {
       maxWidth,
@@ -989,7 +1041,7 @@ export default function ReaderScreen() {
     display.fontSize,
     display.lineHeight,
     display.paraGap,
-    chapterTitleLineHeight,
+    headingHeight,
     readerTopPadding,
     viewportHeight,
     readerColumn.textWidth,
@@ -1520,12 +1572,18 @@ export default function ReaderScreen() {
               cacheReaderLines(estimatedLinesCache, lineCacheKey, lines);
             }
 
+            // 相邻章各自按标题长度预留高度，不能沿用当前章的单行/多行标题预算。
+            const targetFirstBodyHeight = Math.max(
+              pageMetrics.lineHeight,
+              pageMetrics.bodyHeight -
+                estimateHeadingHeight(target.title || book?.title || ''),
+            );
             const pagesCacheKey = readerPagesCacheKey({
               lineCacheKey,
               lineHeight: pageMetrics.lineHeight,
               paraGap: pageMetrics.paraGap,
               bodyHeight: pageMetrics.bodyHeight,
-              firstBodyHeight: pageMetrics.firstBodyHeight,
+              firstBodyHeight: targetFirstBodyHeight,
             });
             if (!readerPagesCache.has(pagesCacheKey)) {
               await yieldToReaderInteraction();
@@ -1536,7 +1594,7 @@ export default function ReaderScreen() {
                 lineHeight: pageMetrics.lineHeight,
                 paraGap: pageMetrics.paraGap,
                 bodyHeight: pageMetrics.bodyHeight,
-                firstBodyHeight: pageMetrics.firstBodyHeight,
+                firstBodyHeight: targetFirstBodyHeight,
               });
               cacheReaderPages(pagesCacheKey, preparedPages);
               devInfo('[ReaderPerf] neighbor pagination', {
@@ -1568,13 +1626,14 @@ export default function ReaderScreen() {
     readerFocused,
     taskSignal,
     bodyFont,
+    book?.title,
     book?.source?.name,
     chapterIndex,
     chapters,
     display.fontSize,
     display.lineHeight,
     pageMetrics.bodyHeight,
-    pageMetrics.firstBodyHeight,
+    estimateHeadingHeight,
     pageMetrics.lineHeight,
     pageMetrics.maxWidth,
     pageMetrics.paraGap,
@@ -2258,10 +2317,11 @@ export default function ReaderScreen() {
             style={styles.pagePressTarget}
           >
             {item.showHeader && (
-              <>
+              <View
+                testID="reader-chapter-heading"
+                onLayout={handleHeadingLayout}
+              >
                 <Text
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
                   style={[
                     styles.chapterTitle,
                     {
@@ -2280,7 +2340,7 @@ export default function ReaderScreen() {
                 >
                   {book?.title} · {book?.author}
                 </Text>
-              </>
+              </View>
             )}
             {item.blocks.length === 0 ? (
               <Text
@@ -2357,6 +2417,7 @@ export default function ReaderScreen() {
       display.theme.text,
       display.titleSize,
       chapterTitleLineHeight,
+      handleHeadingLayout,
       handlePagedReaderPress,
       isExcerptRange,
       pages.length,

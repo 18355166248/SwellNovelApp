@@ -355,7 +355,7 @@ describe('browser catalog recognizer', () => {
     );
 
     expect(book.isDetail).toBe(true);
-    expect(book.title).toBe('测试小说章节列表');
+    expect(book.title).toBe('测试小说');
     expect(book.chapters).toHaveLength(5);
   });
 

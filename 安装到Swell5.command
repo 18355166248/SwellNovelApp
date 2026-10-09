@@ -58,6 +58,8 @@ fail_with_log() {
 
 cd "$PROJECT_DIR" || exit 1
 : > "$LOG_PATH"
+# 注入脚本必须在构建前从 TS 源更新，避免 Hermes 只返回函数字节码字符串。
+node scripts/generate-book-metadata-script.cjs || fail_with_log "生成网页资料提取脚本失败。"
 
 echo "========================================="
 echo "  SwellNovelApp → Swell5 一键续装"

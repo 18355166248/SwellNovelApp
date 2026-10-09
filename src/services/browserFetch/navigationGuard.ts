@@ -1,4 +1,7 @@
 /** 小说站会通过顶层跳转带走搜索结果/目录，保护已适配站点的正常浏览链路。 */
+// 当前页校验需要可写的 hash 和标准路径规范化；RN 自带 URL 不支持这些完整语义。
+import { StandardURL as URL } from '../../utils/standardUrl';
+
 function hostOf(url: string): string {
   try {
     const parsed = new URL(url);

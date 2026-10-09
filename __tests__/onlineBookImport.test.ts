@@ -32,6 +32,7 @@ import {
 import { getSourceById } from '../src/services/source/registry';
 import type { Book, Chapter } from '../src/store/types/book';
 import type { RecognizedBook } from '../src/services/recognize/recognizer';
+import { fetchRenderedHtml } from '../src/services/browserFetch/bridge';
 
 let mockStore = createStore();
 jest.mock('jotai', () => ({
@@ -45,6 +46,10 @@ jest.mock('../src/utils/libraryStorage', () => ({
 jest.mock('../src/utils/addOnlineBook', () => ({
   ...jest.requireActual('../src/utils/addOnlineBook'),
   addOnlineBook: jest.fn(),
+}));
+jest.mock('../src/services/browserFetch/bridge', () => ({
+  ...jest.requireActual('../src/services/browserFetch/bridge'),
+  fetchRenderedHtml: jest.fn(),
 }));
 
 const ORIGIN = 'http://wap.xuanhuange.info';
@@ -113,6 +118,9 @@ beforeEach(() => {
   jest.mocked(loadBookChapters).mockResolvedValue(null);
   jest.mocked(saveBookChapters).mockResolvedValue(undefined);
   jest.mocked(addOnlineBook).mockResolvedValue(result());
+  jest
+    .mocked(fetchRenderedHtml)
+    .mockRejectedValue(new Error('test metadata offline'));
 });
 
 afterEach(() => {
@@ -210,6 +218,26 @@ it('浏览器再次识别插入新章节时保留原章身份、缓存和阅读�
   });
   expect(mockStore.get(currentChapterIndexAtom)).toBe(1);
   expect(book.currentChapterId).toBe(previous[0].id);
+});
+
+it('浏览器目录导入通过通用资料补全取得封面，同时保留完整章节', async () => {
+  jest
+    .mocked(fetchRenderedHtml)
+    .mockResolvedValue(
+      `<h1>${TITLE}</h1><div class="block_img2"><img src="/cover.jpg"></div>`,
+    );
+  const book = await useAddRecognizedBook()(recognized());
+  expect(book.cover).toBe(`${ORIGIN}/cover.jpg`);
+  expect(mockStore.get(chaptersAtom)[book.id]).toHaveLength(3);
+});
+
+it('浏览器预览已尝试补全时入库复用结果，不再次抓资料或丢失目录', async () => {
+  const book = await useAddRecognizedBook()({
+    ...recognized(),
+    metadataChecked: true,
+  });
+  expect(fetchRenderedHtml).not.toHaveBeenCalled();
+  expect(mockStore.get(chaptersAtom)[book.id]).toHaveLength(3);
 });
 
 it('重识别只得到目录第一页时保留完整旧目录，不丢失缓存', async () => {

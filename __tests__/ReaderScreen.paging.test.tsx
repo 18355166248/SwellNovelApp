@@ -21,6 +21,7 @@ import {
 import { ONLINE_CONTENT_VERSION } from '../src/services/source/contentQuality';
 import type { Chapter } from '../src/store/types/book';
 import { startReadingSession } from '../src/utils/readingSession';
+import type { ReaderPageData } from '../src/utils/paginate';
 
 jest.setTimeout(15000);
 jest.mock('../src/utils/devLog', () => ({ devInfo: jest.fn() }));
@@ -385,6 +386,54 @@ describe('ReaderScreen paging interactions', () => {
     expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
       Array.from(body.replace(/\n/g, '')).length,
     );
+  });
+
+  it('reserves measured multiline heading space without losing body text or the reading anchor', async () => {
+    await mount(0, false, [
+      { ...makeChapter(0), title: '第30章：只有一个人的榜单' },
+    ]);
+    const heading = () => {
+      const props = list().props;
+      const page = props.renderItem({ item: props.data[0], index: 0 });
+      return page.props.children.props.children[0];
+    };
+    const bodyText = (pages: ReaderPageData[]) =>
+      pages
+        .flatMap(page => page.blocks.map(block => block.text))
+        .join('')
+        .replace(/[\n　]/g, '');
+    const before = list().props.data;
+    await act(() =>
+      heading().props.onLayout({ nativeEvent: { layout: { height: 260 } } }),
+    );
+    const after = list().props.data;
+    expect(after[1].startOffset).toBeLessThan(before[1].startOffset);
+    expect(bodyText(after)).toBe(bodyText(before));
+    await visible();
+    await act(() => {
+      for (let i = 0; i < 3; i++) press(1000);
+    });
+    const position = store.get(readingHistoryAtom)['paging-test'].position;
+    await act(() =>
+      heading().props.onLayout({ nativeEvent: { layout: { height: 280 } } }),
+    );
+    await visible();
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+      position,
+    );
+  });
+
+  it('ignores heading measurements from a previous chapter', async () => {
+    await mount();
+    const props = list().props;
+    const oldHeading = props.renderItem({ item: props.data[0], index: 0 }).props
+      .children.props.children[0];
+    await act(() => store.set(currentChapterIndexAtom, 1));
+    const nextPages = list().props.data;
+    await act(() =>
+      oldHeading.props.onLayout({ nativeEvent: { layout: { height: 400 } } }),
+    );
+    expect(list().props.data).toBe(nextPages);
   });
 
   it('requires the new layout to be visible and keeps its character anchor', async () => {

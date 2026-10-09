@@ -40,6 +40,7 @@ import { getSourceById } from '../services/source/registry';
 import { isCompleteOnlineChapterCacheUsable } from '../services/source/contentQuality';
 import { COVER_GRADIENT_DIRECTION } from '../theme/readerThemes';
 import { detailPalette } from './bookDetail/detailPalette';
+import { useBookMetadataRepair } from '../store/hooks/useBookMetadataRepair';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type DetailRoute = RouteProp<RootStackParamList, 'BookDetail'>;
@@ -60,6 +61,7 @@ export default function BookDetailScreen() {
   const book = books.find(b => b.id === bookId);
   const focused = useIsFocused();
   const taskSignal = useScreenTaskSignal(navigation, bookId, focused);
+  useBookMetadataRepair(bookId, focused, taskSignal);
   const chapters = useBookChapters(bookId, taskSignal);
   const openChapter = useOpenChapter();
   const removeBook = useRemoveBook();
