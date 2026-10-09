@@ -21,6 +21,7 @@ describe('source proxy allowlists', () => {
     expect(readAllowedHosts('deploy/server.js')).toEqual(rootAllowlist);
     expect(rootAllowlist).toEqual(
       expect.arrayContaining([
+        '(^|\\.)xuanhuange\\.info$',
         '^html\\.duckduckgo\\.com$',
         '^www\\.bing\\.com$',
       ]),

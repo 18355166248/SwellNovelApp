@@ -5,13 +5,14 @@
 export const PAGE_SANITIZER_JS = String.raw`(function () {
   if (window.__nvlSanitizerInstalled) return true;
   window.__nvlSanitizerInstalled = true;
-  var roots = ['bookshuku.org','mingzw.net','bqquge.org'];
+  var roots = ['bookshuku.org','mingzw.net','xuanhuange.info','bqquge.org'];
   var host = location.hostname.toLowerCase();
   function siteRoot(name) {
     for (var i=0;i<roots.length;i++) if (name===roots[i] || name.endsWith('.'+roots[i])) return roots[i];
     return '';
   }
   var site = siteRoot(host);
+  var xuan = site === 'xuanhuange.info';
   var adSelector = [
     '#ad','#ads','#adbox','#ad-container','#ad_container','.ad','.ads','.adbox',
     '.ad-box','.ad-container','.advert','.advertisement','.adsbygoogle',
@@ -19,7 +20,8 @@ export const PAGE_SANITIZER_JS = String.raw`(function () {
     '[class^="ad_"]','[class^="ads_"]','[class*="-ad-"]','[class*="_ad_"]',
     '[data-ad-client]','[data-ad-slot]'
   ].join(',');
-  var candidates = adSelector+',a[href],img,iframe,object,embed,video,audio,ins,[style],[class],style[id]';
+  var xuanSelector = 'h5[id^="swipercontainer"],h5[id^="gsagewad"],h5[id^="diantan"],h5[id^="alabelbox"],h5[id^="ababoxjia"],h5[id^="anshua"],iframe[id^="iframeid"]';
+  var candidates = adSelector+',a[href],img,iframe,object,embed,video,audio,ins,[style],[class],style[id]'+(xuan ? ','+xuanSelector : '');
   var hidden = 'data-nvl-hidden';
   var css = document.createElement('style');
   css.id = '__nvl_clean_style';
@@ -47,6 +49,7 @@ export const PAGE_SANITIZER_JS = String.raw`(function () {
     if (site==='bqquge.org') return /^\/\d+(?:\/\d+)?\/?$/.test(p);
     if (site==='bookshuku.org') return /^\/(?:bookinfo\/\d+\.html|read\/\d+[\w.-]*\/?|txt\/\d+[\w./-]*)$/i.test(p);
     if (site==='mingzw.net') return /^\/(?:mi|mzw)(?:book|chapter|read)\/\d+[\w.-]*\.html$/i.test(p);
+    if (xuan) return /^\/(?:wapbook-\d+[\w./-]*|book\/\d+[\w./-]*|read\/\d+[\w./-]*)$/i.test(p);
     return false;
   }
   function critical(node) {
@@ -82,6 +85,7 @@ export const PAGE_SANITIZER_JS = String.raw`(function () {
     if (!node || node.nodeType!==1 || !node.isConnected || node===css) return;
     if (node.hasAttribute(hidden)) { hide(node); return; }
     if (verification(node)) return;
+    if (xuan && node.matches(xuanSelector)) { hide(node); return; }
     if (node.tagName==='STYLE') {
       // 笔趣阁实测广告脚本会给 body 加 100px 底部占位，并生成透明点击网格。
       if (site && /_style_id$/.test(node.id) && /body\s*\{position:initial\s*!important;min-height:/.test(node.textContent||'') && /padding-bottom:100px/.test(node.textContent||'')) node.remove();

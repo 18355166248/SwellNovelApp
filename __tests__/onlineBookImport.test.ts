@@ -47,18 +47,18 @@ jest.mock('../src/utils/addOnlineBook', () => ({
   addOnlineBook: jest.fn(),
 }));
 
-const ORIGIN = 'http://www.bqquge.org';
+const ORIGIN = 'http://wap.xuanhuange.info';
 const TITLE = '道诡异仙';
-const sourceUrl = (chapter: number) => `${ORIGIN}/170446/${chapter}`;
-const catalogUrl = `${ORIGIN}/170446/`;
-const incomingBook = (id = 'bqquge:170446'): Book => ({
+const sourceUrl = (chapter: number) => `${ORIGIN}/wapbook-170446/${chapter}/`;
+const catalogUrl = `${ORIGIN}/wapbook-170446/`;
+const incomingBook = (id = 'xuanhuange:170446'): Book => ({
   id,
   title: TITLE,
   author: '狐尾的笔',
   addedAt: 10,
   updatedAt: 10,
   progress: 0,
-  source: { name: 'bqquge', bookUrl: catalogUrl },
+  source: { name: 'xuanhuange', bookUrl: catalogUrl },
 });
 const chapter = (
   bookId: string,
@@ -88,7 +88,7 @@ const result = (
 const recognized = (sequences = [1, 2, 3]): RecognizedBook => ({
   ok: true,
   isDetail: true,
-  host: 'www.bqquge.org',
+  host: 'wap.xuanhuange.info',
   url: catalogUrl,
   title: TITLE,
   author: '狐尾的笔',
@@ -109,8 +109,6 @@ const deferred = <T>() => {
 
 beforeEach(() => {
   mockStore = createStore();
-  // 通用识别导入用例保留直接使用已识别目录的路径；专用目录用例在下方单独开启。
-  jest.replaceProperty(getSourceById('bqquge')!, 'preferDirectImport', false);
   jest.clearAllMocks();
   jest.mocked(loadBookChapters).mockResolvedValue(null);
   jest.mocked(saveBookChapters).mockResolvedValue(undefined);
@@ -125,10 +123,10 @@ afterEach(() => {
 it('目录持久化失败不会先显示成功或留下空壳书，下次添加可以重试', async () => {
   jest.mocked(saveBookChapters).mockRejectedValueOnce(new Error('存储已满'));
   const add = useAddOnlineBook();
-  await expect(add(`${ORIGIN}/170446/`)).rejects.toThrow('存储已满');
+  await expect(add(`${ORIGIN}/info-170446/`)).rejects.toThrow('存储已满');
   expect(mockStore.get(booksAtom)).toEqual([]);
   expect(mockStore.get(chaptersAtom)).toEqual({});
-  await expect(add(`${ORIGIN}/170446/`)).resolves.toMatchObject({
+  await expect(add(`${ORIGIN}/info-170446/`)).resolves.toMatchObject({
     title: TITLE,
   });
   expect(mockStore.get(booksAtom)).toHaveLength(1);
@@ -136,8 +134,8 @@ it('目录持久化失败不会先显示成功或留下空壳书，下次添加�
 
 it('搜索重新添加回收站的浏览器旧书会还原并保留正文、书签、续读和用户状态', async () => {
   const old: Book = {
-    ...incomingBook('browser:www.bqquge.org:170446'),
-    source: { name: 'www.bqquge.org', bookUrl: catalogUrl },
+    ...incomingBook('browser:wap.xuanhuange.info:170446'),
+    source: { name: 'wap.xuanhuange.info', bookUrl: catalogUrl },
     addedAt: 1,
     lastReadAt: 2,
     finishedAt: 3,
@@ -169,7 +167,7 @@ it('搜索重新添加回收站的浏览器旧书会还原并保留正文、书�
       },
     ],
   });
-  const book = await useAddOnlineBook()(`${ORIGIN}/170446/`);
+  const book = await useAddOnlineBook()(`${ORIGIN}/info-170446/`);
   expect(mockStore.get(booksAtom)).toHaveLength(1);
   expect(book).toMatchObject({
     id: old.id,
@@ -205,7 +203,7 @@ it('浏览器再次识别插入新章节时保留原章身份、缓存和阅读�
   mockStore.set(selectedBookIdAtom, old.id);
   mockStore.set(currentChapterIndexAtom, 0);
   const book = await useAddRecognizedBook()(recognized());
-  expect(book.source?.name).toBe('bqquge');
+  expect(book.source?.name).toBe('xuanhuange');
   expect(mockStore.get(chaptersAtom)[old.id][1]).toMatchObject({
     id: previous[0].id,
     content: previous[0].content,
@@ -234,7 +232,7 @@ it('重识别只得到目录第一页时保留完整旧目录，不丢失缓存'
 it('浏览器和搜索同时添加同书时共用请求结果，只发布一本书', async () => {
   const waiting = deferred<OnlineBookResult>();
   jest.mocked(addOnlineBook).mockReturnValue(waiting.promise);
-  const first = useAddOnlineBook()(`${ORIGIN}/170446/`);
+  const first = useAddOnlineBook()(`${ORIGIN}/info-170446/`);
   const second = useAddRecognizedBook()(recognized());
   expect(first).toBe(second);
   waiting.resolve(result());
@@ -247,17 +245,17 @@ it('浏览器和搜索同时添加同书时共用请求结果，只发布一本�
 it('不同书的网络解析不会等待前一本超时，入库仍分别完成', async () => {
   const waiting = deferred<OnlineBookResult>();
   const secondBook = {
-    ...incomingBook('bqquge:999999'),
+    ...incomingBook('xuanhuange:999999'),
     title: '另一本书',
-    source: { name: 'bqquge', bookUrl: `${ORIGIN}/999999/` },
+    source: { name: 'xuanhuange', bookUrl: `${ORIGIN}/wapbook-999999/` },
   };
   jest
     .mocked(addOnlineBook)
     .mockReturnValueOnce(waiting.promise)
     .mockResolvedValueOnce(result(secondBook));
   const add = useAddOnlineBook();
-  const first = add(`${ORIGIN}/170446/`);
-  const second = add(`${ORIGIN}/999999/`);
+  const first = add(`${ORIGIN}/info-170446/`);
+  const second = add(`${ORIGIN}/info-999999/`);
   expect(addOnlineBook).toHaveBeenCalledTimes(2);
   await expect(second).resolves.toMatchObject({ id: secondBook.id });
   waiting.resolve(result());
@@ -277,7 +275,7 @@ it('等待目录保存期间阅读器新缓存的正文不会被导入快照覆�
     savingStarted.resolve();
     return waiting.promise;
   });
-  const importing = useAddOnlineBook()(`${ORIGIN}/170446/`);
+  const importing = useAddOnlineBook()(`${ORIGIN}/info-170446/`);
   await savingStarted.promise;
   const cached = {
     ...previous[0],
@@ -311,7 +309,7 @@ it('目录去重会规范站点入口，过滤非正文网页，并保留章节�
       { title: '第一章', url: sourceUrl(1) },
       {
         title: '重复',
-        url: sourceUrl(1).replace('http://', 'https://'),
+        url: sourceUrl(1).replace('http://wap.', 'https://www.'),
       },
       // 非网页章节链接仅作为过滤回归样本，不会执行。
       // eslint-disable-next-line no-script-url
@@ -330,8 +328,8 @@ it('未知站点不能只根据相同年份书号生成重复 id，已知书源�
   ).not.toBe(
     recognizedBookImportId('https://example.com/2026/book-b', 'example.com'),
   );
-  expect(recognizedBookImportId(catalogUrl, 'www.bqquge.org')).toBe(
-    'bqquge:170446',
+  expect(recognizedBookImportId(catalogUrl, 'wap.xuanhuange.info')).toBe(
+    'xuanhuange:170446',
   );
 });
 
@@ -345,7 +343,7 @@ it('全本缓存会补抓只缓存首个子页的章节，不能把它算作已�
   mockStore.set(booksAtom, [old]);
   mockStore.set(chaptersAtom, { [old.id]: [partial] });
   const parse = jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockResolvedValue({ content: '完整正文。'.repeat(100), complete: true });
   const progress = jest.fn();
   await expect(useCacheWholeBook()(old.id, progress)).resolves.toEqual({
@@ -375,7 +373,7 @@ it('全本缓存接纳正常短尾页，同时确认整章正文保存完整', a
   mockStore.set(booksAtom, [old]);
   mockStore.set(chaptersAtom, { [old.id]: [chapter(old.id, 'first', 1)] });
   jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockResolvedValueOnce({
       content: '首页正文。'.repeat(100),
       nextPageUrl: `${sourceUrl(1)}2.html`,
@@ -397,7 +395,7 @@ it('下一分页成环会结束缓存，不追加重复正文或误报完成', a
   mockStore.set(booksAtom, [old]);
   mockStore.set(chaptersAtom, { [old.id]: [chapter(old.id, 'first', 1)] });
   const parse = jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockResolvedValue({
       content: '首页正文。'.repeat(100),
       nextPageUrl: sourceUrl(1),
@@ -416,7 +414,7 @@ it('全本下载后落盘失败必须提示失败，不能误报可离线阅读'
   mockStore.set(booksAtom, [old]);
   mockStore.set(chaptersAtom, { [old.id]: [chapter(old.id, 'first', 1)] });
   jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockResolvedValue({ content: '完整正文。'.repeat(100), complete: true });
   jest.mocked(saveBookChapters).mockRejectedValueOnce(new Error('disk full'));
   await expect(useCacheWholeBook()(old.id)).rejects.toThrow('disk full');
@@ -460,7 +458,7 @@ it('逐页续载允许正常短尾页，缓存完整正文而不是误报失败'
   mockStore.set(booksAtom, [book]);
   mockStore.set(chaptersAtom, { [book.id]: [current] });
   jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockResolvedValue({ content: '完。', complete: true });
   const loaded = await useLoadNextChapterPage()(book.id, 0);
   expect(loaded?.content).toBe(`${current.content}\n完。`);
@@ -479,7 +477,7 @@ it('续页回到已读分页时拒绝追加，已缓存正文与重试入口保�
   mockStore.set(booksAtom, [book]);
   mockStore.set(chaptersAtom, { [book.id]: [current] });
   const parse = jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockResolvedValue({
       content: '错误的重复页',
       nextPageUrl: current.sourceUrl,
@@ -503,7 +501,7 @@ it('落盘恢复的已读分页列表仍拦截循环，不发起重复网络请�
   };
   mockStore.set(booksAtom, [book]);
   mockStore.set(chaptersAtom, { [book.id]: [current] });
-  const parse = jest.spyOn(getSourceById('bqquge')!, 'parseChapterContent');
+  const parse = jest.spyOn(getSourceById('xuanhuange')!, 'parseChapterContent');
   await expect(useLoadNextChapterPage()(book.id, 0)).rejects.toThrow(
     '链接异常',
   );
@@ -543,7 +541,6 @@ it.each([
 ])(
   '浏览器识别 %s 后重取专用目录，保留注册书源和正文能力',
   async (source, url) => {
-    jest.replaceProperty(getSourceById(source)!, 'preferDirectImport', true);
     const book = {
       ...incomingBook(`${source}:1`),
       cover: 'https://covers.test/book.jpg',
@@ -579,7 +576,7 @@ describe('启动追更只检查过期书籍', () => {
     mockStore.set(chaptersAtom, {
       stale: [chapter('stale', 'stale-0', 1, true)],
     });
-    const source = getSourceById('bqquge')!;
+    const source = getSourceById('xuanhuange')!;
     const catalog = jest.spyOn(source, 'parseCatalog').mockResolvedValue([
       { title: '第1章', url: sourceUrl(1) },
       { title: '第2章', url: sourceUrl(2) },
@@ -623,7 +620,7 @@ it('加载中返回会取消底层正文，迟到结果不缓存，重新打开�
   mockStore.set(chaptersAtom, { [book.id]: [original] });
   const late = deferred<{ content: string }>();
   const parse = jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockReturnValueOnce(late.promise);
   const ensure = useEnsureChapterContent();
   const controller = new AbortController();
@@ -651,7 +648,7 @@ it('目录长标题在正文加载与缓存后保持原样，不降级为“章�
     [book.id]: [{ ...chapter(book.id, 'long-title', 1), title }],
   });
   jest
-    .spyOn(getSourceById('bqquge')!, 'parseChapterContent')
+    .spyOn(getSourceById('xuanhuange')!, 'parseChapterContent')
     .mockResolvedValue({
       content: '完整正文。'.repeat(100),
       complete: true,

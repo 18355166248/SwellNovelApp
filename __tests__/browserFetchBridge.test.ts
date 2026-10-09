@@ -13,7 +13,7 @@ describe('browser chapter page extraction', () => {
       expect(() => Function(createScript('syntax-test'))).not.toThrow();
     },
   );
-  const current = 'http://novels.example.info/read/170446/100.html';
+  const current = 'http://wap.xuanhuange.info/read/170446/100.html';
 
   it('保留同站点的明确下一页链接', () => {
     expect(
@@ -27,7 +27,7 @@ describe('browser chapter page extraction', () => {
       ),
     ).toEqual({
       content: '正文内容',
-      nextPageUrl: 'http://novels.example.info/read/170446/100_2.html',
+      nextPageUrl: 'http://wap.xuanhuange.info/read/170446/100_2.html',
     });
   });
 

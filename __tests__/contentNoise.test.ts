@@ -5,12 +5,12 @@ import {
 } from '../src/services/source/contentNoise';
 
 describe('正文噪声清理', () => {
-  it('删除小说站在正文里插的翻页提示与域名水印', () => {
+  it('删除玄幻阁在正文里插的翻页提示与域名水印', () => {
     // 用户实际读到的《道诡异仙》第一章尾部。
     const raw = [
       '他睁开眼，看见白色的墙。',
       '(本章未完, 请点击下一页继续阅读)',
-      '最新网址:novels.example.info',
+      '最新网址:wap.xuanhuange.info',
     ].join('\n');
     expect(stripContentNoise(raw)).toBe('他睁开眼，看见白色的墙。');
   });
@@ -40,14 +40,14 @@ describe('正文噪声清理', () => {
 
   it('域名水印的常见措辞都能整行删除', () => {
     for (const line of [
-      '最新网址:novels.example.info',
+      '最新网址:wap.xuanhuange.info',
       '最新网址：www.example.com',
       '本站最新地址:abc.top',
       '记住本站网址：xyz.cc',
       '天才一秒记住本站地址',
       '手机版阅读网址：m.example.net',
-      'novels.example.info',
-      'http://novels.example.info/read/170446/',
+      'wap.xuanhuange.info',
+      'http://wap.xuanhuange.info/read/170446/',
     ]) {
       expect(isNoiseLine(line)).toBe(true);
     }

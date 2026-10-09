@@ -97,13 +97,13 @@ describe('online chapter content quality', () => {
   it('浏览器识别来源单独失效旧缓存，不影响内置书源缓存', () => {
     const valid = '有效正文。'.repeat(80);
     const current = chapter(valid, ONLINE_CONTENT_VERSION);
-    expect(isOnlineChapterCacheUsable(current, 'novels.example.info')).toBe(
+    expect(isOnlineChapterCacheUsable(current, 'wap.xuanhuange.info')).toBe(
       false,
     );
     expect(
       isOnlineChapterCacheUsable(
         { ...current, browserContentVersion: BROWSER_CONTENT_VERSION },
-        'novels.example.info',
+        'wap.xuanhuange.info',
       ),
     ).toBe(true);
     expect(isOnlineChapterCacheUsable(current, 'mingzw')).toBe(true);
@@ -117,7 +117,7 @@ describe('online chapter content quality', () => {
           ...chapter(valid, ONLINE_CONTENT_VERSION),
           browserContentVersion: 1,
         },
-        'novels.example.info',
+        'wap.xuanhuange.info',
       ),
     ).toBe(false);
   });

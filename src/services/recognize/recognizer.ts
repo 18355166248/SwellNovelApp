@@ -41,6 +41,7 @@ const CATALOG_ROUTES: {
   host: string;
   book: string;
   chapter: string;
+  chapterAlias?: string;
 }[] = [
   {
     host: '(^|\\.)bookshuku\\.org$',
@@ -53,6 +54,13 @@ const CATALOG_ROUTES: {
     chapter: '^/(?:miread|mzwread)/(?:[^/]*_)?(\\d+)_(\\d+)\\.html$',
   },
   {
+    host: '(^|\\.)xuanhuange\\.info$',
+    book: '/(?:info|wapbook)-(\\d+)',
+    // 手机章节与旧 read 路由共用书号、章节号身份，避免别名重复与跨书混入。
+    chapter: '^/read/(\\d+)/(\\d+)\\.html$',
+    chapterAlias: '^/wapbook-(\\d+)-(\\d+)/?$',
+  },
+  {
     host: '(^|\\.)bqquge\\.org$',
     book: '^/(\\d+)(?:/|$)',
     chapter: '^/(\\d+)/(\\d+)/?$',
@@ -61,6 +69,25 @@ const CATALOG_ROUTES: {
 const MAX_CHAPTER_TITLE_LENGTH = 200;
 const NAV_TITLE_RE =
   /^(?:目录|目錄|首页|首頁|上一[章页頁]|下一[章页頁]|返回书页|返回書頁)$/;
+
+/**
+ * 已知站点的详情页本身不展示章节，需要先换算到目录页再执行通用识别。
+ * 只转换同站、可从路径确定书号的路由，避免根据页面文案猜测并跳到广告链接。
+ */
+export function getRecognitionTargetUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (/(^|\.)xuanhuange\.info$/i.test(parsed.hostname)) {
+      const match = /^\/info-(\d+)\/?$/i.exec(parsed.pathname);
+      if (match) {
+        return `${parsed.protocol}//${parsed.host}/wapbook-${match[1]}/`;
+      }
+    }
+  } catch {
+    // 地址栏会负责提示非法 URL；识别器保持原值，避免生成不可控地址。
+  }
+  return url;
+}
 
 /**
  * 注入页面执行的识别脚本（纯字符串，DOM-only）。结果经 window.ReactNativeWebView
@@ -112,6 +139,7 @@ export const RECOGNIZER_JS = `(function(){
           // 首页/搜索结果没有当前书号，不能退回按章名拼出一本推荐区假书。
           if (!book) return '';
           var chapter = new RegExp(rule.chapter, 'i').exec(target.pathname);
+          if (!chapter && rule.chapterAlias) chapter = new RegExp(rule.chapterAlias, 'i').exec(target.pathname);
           return host.test(target.hostname) && chapter && chapter[1] === book[1] ? rule.host + ':' + book[1] + ':' + chapter[2] : '';
         }
         return reChap.test(title) ? target.href : '';
@@ -262,7 +290,11 @@ function catalogChapterIdentity(
       const book = new RegExp(rule.book, 'i').exec(base.pathname);
       // 首页/搜索结果没有当前书号，不能混入推荐区的章节。
       if (!book) return '';
-      const chapter = new RegExp(rule.chapter, 'i').exec(target.pathname);
+      const chapter =
+        new RegExp(rule.chapter, 'i').exec(target.pathname) ||
+        (rule.chapterAlias
+          ? new RegExp(rule.chapterAlias, 'i').exec(target.pathname)
+          : null);
       return host.test(target.hostname) && chapter && chapter[1] === book[1]
         ? `${rule.host}:${book[1]}:${chapter[2]}`
         : '';
