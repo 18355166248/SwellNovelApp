@@ -1,0 +1,85 @@
+src/services/browserFetch/pageSanitizer.ts
+  s_c19edc1c619064::t_426718e57ced5c 8,22
+__tests__/sameOnlineBook.test.ts
+  s_c19edc1c619064::t_af603a7359e4bc 53
+  s_c19edc1c619064::t_426718e57ced5c 15,21-24,31-32,40-41,43,47-48,50,52,55,58,60
+  s_c19edc1c619064::t_99af376d8507fa 25,33-35,42,49,54,59
+docs/audits/2026-10-09-xuanhuange-hotspot-retest.md
+  s_c19edc1c619064::t_ab8b6300246480 1-7,9-30,33
+  s_c19edc1c619064::t_f3e4881de4a925 40-41
+  s_c19edc1c619064::t_98cee7bfd84696 34-39
+  s_c19edc1c619064::t_f6f580d4d230c0 31-32
+  s_c19edc1c619064::t_7cfe312bf03065 8
+scripts/verify-sources.cjs
+  s_c19edc1c619064::t_ef55d09165fb3f 274-275
+  s_c19edc1c619064::t_cb15e72bb94c0a 7,25-28,33,35-36,38,41,46,111,157-158,193,238-271
+  s_0aa467594d1940::t_2005a7b4b35680 34,37
+src/screens/InAppBrowserScreen.tsx
+  s_c19edc1c619064::t_426718e57ced5c 349
+  s_c19edc1c619064::t_6a7513581f4c67 418-427
+__tests__/navigationGuard.test.ts
+  s_c19edc1c619064::t_426718e57ced5c 8,12,15,19,26,38
+docs/audits/2026-10-08-source-stability/bookshuku.json
+  s_c19edc1c619064::t_b7e3b97a1ca773 6-12,15,18,20-21,25,28,30-31,35,38,40-42,44,47,50-51,54-55,61,64-65,67-68,70,72-73,75,77-78,80,82-83,85,87-88,90,92-93,95,97-98,100,102-103,105,107-108,110,112-113,115,117-118,120,122-131,134,137,139-140,144,147,149-150,154,157,159-161,163,166,169-170,173-174,180,183-184,186-187,189,191-192,194,196-197,199,201-202,204,206-207,209,211-212,214,216-217,219,221-222,224,226-227,229,231-232,234,236-237,239,241-499
+  s_0aa467594d1940::t_19dd4ee391c567 1-5,13-14,16-17,19,22-24,26-27,29,32-34,36-37,39,43,45-46,48-49,52-53,56-60,62-63,66,69,71,74,76,79,81,84,86,89,91,94,96,99,101,104,106,109,111,114,116,119,121,132-133,135-136,138,141-143,145-146,148,151-153,155-156,158,162,164-165,167-168,171-172,175-179,181-182,185,188,190,193,195,198,200,203,205,208,210,213,215,218,220,223,225,228,230,233,235,238,240
+src/services/source/contentNoise.ts
+  s_c19edc1c619064::t_426718e57ced5c 5,47,72
+src/services/recognize/recognizer.ts
+  s_c19edc1c619064::t_ef55d09165fb3f 40-44
+  s_c19edc1c619064::t_426718e57ced5c 173,190
+  s_c19edc1c619064::t_32051491e209f0 37,179-182,199-202,234,325-333,366-369
+  s_c19edc1c619064::t_6f52dd390f07df 189,191-196,295-297,319,321,338,342,344-354,358
+__tests__/contentNoise.test.ts
+  s_c19edc1c619064::t_426718e57ced5c 8,13,35-37,43,49-50
+__tests__/chapterPages.test.ts
+  s_c19edc1c619064::t_426718e57ced5c 6
+__tests__/recognizer.test.ts
+  s_c19edc1c619064::t_32051491e209f0 258,263
+  s_c19edc1c619064::t_426718e57ced5c 141,143-144,165,168,175,180,187,312,314,316,320-321
+docs/audits/2026-10-08-source-stability/README.md
+  s_c19edc1c619064::t_25b53f6d3624e0 1-2,5-11,13-57
+  s_c19edc1c619064::t_98cee7bfd84696 3-4
+  s_c19edc1c619064::t_7ad8f98e567abd 12
+__tests__/onlineContentQuality.test.ts
+  s_c19edc1c619064::t_426718e57ced5c 100,106,120
+__tests__/onlineBookImport.test.ts
+  s_c19edc1c619064::t_af603a7359e4bc 112-113,260,314,546
+  s_c19edc1c619064::t_426718e57ced5c 50,52-54,61,91,128,131,139-140,172,208,237,250,252,259,280,333-334,348,378,400,419,463,482,506,582,626,654
+__tests__/recognizerStability.test.ts
+  s_c19edc1c619064::t_426718e57ced5c 1,3,6,8-9,13-59,62-81,83-95,97-106,109,111,114,116-122,124-131,133-147
+  s_c19edc1c619064::t_6c5b14c35d1de8 10,12,96,112-113,115,132
+__tests__/browserFetchBridge.test.ts
+  s_c19edc1c619064::t_426718e57ced5c 16,30
+docs/audits/2026-10-08-source-stability/bqquge.json
+  s_c19edc1c619064::t_ed3ca54ce752b1 1-868
+docs/audits/2026-10-08-source-stability/mingzw.json
+  s_c19edc1c619064::t_c928a146e00c35 1-382
+docs/audits/2026-10-08-source-stability/recognizer-parity.json
+  s_c19edc1c619064::t_64bc77093605a8 1-97
+docs/audits/2026-10-08-source-stability/xuanhuange-network.json
+  s_c19edc1c619064::t_750aca1e6b2baa 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.1",
+  "base_commit_sha": "9a39bc69a8093355d31f863a7470b444cf06a122",
+  "prompts": {},
+  "sessions": {
+    "s_0aa467594d1940": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11a5a-cc09-7f92-bc8a-572f22ffab61",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    },
+    "s_c19edc1c619064": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b61-fc54-7992-a80f-527a59a57530",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "lang.jiang <lang.jiang@ximalaya.com>"
+    }
+  }
+}
