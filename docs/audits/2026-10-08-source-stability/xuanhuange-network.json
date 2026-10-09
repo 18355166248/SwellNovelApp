@@ -1,0 +1,71 @@
+{
+  "checkedAt": "2026-10-08T12:29:59.505Z",
+  "transport": "Mac curl with mobile User-Agent; no website HTML obtained",
+  "status": "network-blocked",
+  "results": [
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-192466/",
+      "round": 1,
+      "ms": 5013,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 80 after 5001 ms: Timeout was reached"
+    },
+    {
+      "url": "https://wap.xuanhuange.info/wapbook-192466/",
+      "round": 1,
+      "ms": 5011,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 443 after 5001 ms: Timeout was reached"
+    },
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-192466-63654391/",
+      "round": 1,
+      "ms": 5011,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 80 after 5001 ms: Timeout was reached"
+    },
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-170446/",
+      "round": 1,
+      "ms": 5010,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 80 after 5003 ms: Timeout was reached"
+    },
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-192466/",
+      "round": 2,
+      "ms": 5024,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 80 after 5011 ms: Timeout was reached"
+    },
+    {
+      "url": "https://wap.xuanhuange.info/wapbook-192466/",
+      "round": 2,
+      "ms": 5022,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 443 after 5005 ms: Timeout was reached"
+    },
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-192466-63654391/",
+      "round": 2,
+      "ms": 5024,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 80 after 5010 ms: Timeout was reached"
+    },
+    {
+      "url": "http://wap.xuanhuange.info/wapbook-170446/",
+      "round": 2,
+      "ms": 5015,
+      "exitCode": 28,
+      "httpStatus": 0,
+      "error": "curl: (28) Failed to connect to wap.xuanhuange.info port 80 after 5003 ms: Timeout was reached"
+    }
+  ]
+}

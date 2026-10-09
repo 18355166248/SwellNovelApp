@@ -3,7 +3,7 @@ import {
   type ChapterPageResult,
 } from '../src/services/source/chapterPages';
 
-const base = 'http://wap.xuanhuange.info/read/170446/';
+const base = 'http://novels.example.info/read/170446/';
 
 /** 用固定页表模拟站点分页，并记录实际请求顺序。 */
 const sitePages = (pages: Record<string, ChapterPageResult>) => {

@@ -1,0 +1,97 @@
+{
+  "checkedAt": "2026-10-08T12:33:32.873Z",
+  "transport": "Live curl HTML + JSDOM; site scripts disabled; not native WebView",
+  "results": [
+    {
+      "source": "bqquge",
+      "title": "都重生了谁考公务员啊",
+      "url": "https://www.bqquge.org/19",
+      "expectedCount": 891,
+      "htmlCount": 891,
+      "domCount": 891,
+      "chaptersIdentical": true,
+      "pagesIdentical": true,
+      "countMatchesSource": true,
+      "metadataIdentical": true,
+      "status": "passed"
+    },
+    {
+      "source": "bqquge",
+      "title": "捞尸人",
+      "url": "https://www.bqquge.org/2",
+      "expectedCount": 753,
+      "htmlCount": 753,
+      "domCount": 753,
+      "chaptersIdentical": true,
+      "pagesIdentical": true,
+      "countMatchesSource": true,
+      "metadataIdentical": true,
+      "status": "passed"
+    },
+    {
+      "source": "bqquge",
+      "title": "夜无疆",
+      "url": "https://www.bqquge.org/1",
+      "expectedCount": 938,
+      "htmlCount": 938,
+      "domCount": 938,
+      "chaptersIdentical": true,
+      "pagesIdentical": true,
+      "countMatchesSource": true,
+      "metadataIdentical": true,
+      "status": "passed"
+    },
+    {
+      "source": "mingzw",
+      "title": "都重生了誰考公務員啊",
+      "url": "https://tw.mingzw.net/mzwchapter/42628.html",
+      "expectedCount": 782,
+      "htmlCount": 782,
+      "domCount": 782,
+      "chaptersIdentical": true,
+      "pagesIdentical": true,
+      "countMatchesSource": true,
+      "metadataIdentical": true,
+      "status": "passed"
+    },
+    {
+      "source": "mingzw",
+      "title": "凡人修仙傳",
+      "url": "https://tw.mingzw.net/mzwchapter/17482.html",
+      "expectedCount": 2455,
+      "htmlCount": 2455,
+      "domCount": 2455,
+      "chaptersIdentical": true,
+      "pagesIdentical": true,
+      "countMatchesSource": true,
+      "metadataIdentical": true,
+      "status": "passed"
+    },
+    {
+      "source": "bookshuku",
+      "title": "夜无疆",
+      "url": "http://wap.bookshuku.org/read/132737.html",
+      "expectedCount": 862,
+      "htmlCount": 862,
+      "domCount": 862,
+      "chaptersIdentical": true,
+      "pagesIdentical": true,
+      "countMatchesSource": true,
+      "metadataIdentical": true,
+      "status": "passed"
+    },
+    {
+      "source": "bookshuku",
+      "title": "道诡异仙",
+      "url": "http://wap.bookshuku.org/read/117811.html",
+      "expectedCount": 1073,
+      "htmlCount": 1073,
+      "domCount": 1073,
+      "chaptersIdentical": true,
+      "pagesIdentical": true,
+      "countMatchesSource": true,
+      "metadataIdentical": true,
+      "status": "passed"
+    }
+  ]
+}

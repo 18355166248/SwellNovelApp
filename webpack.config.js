@@ -143,7 +143,6 @@ module.exports = (_env, argv) => {
         const ALLOWED_HOSTS = [
           /(^|\.)bookshuku\.org$/i,
           /(^|\.)mingzw\.net$/i,
-          /(^|\.)xuanhuange\.info$/i,
           /^(?:www\.)?bqquge\.org$/i,
           /^html\.duckduckgo\.com$/i,
           /^www\.bing\.com$/i,

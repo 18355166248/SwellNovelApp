@@ -40,7 +40,6 @@ app.use(
 const ALLOWED_HOSTS = [
   /(^|\.)bookshuku\.org$/i,
   /(^|\.)mingzw\.net$/i,
-  /(^|\.)xuanhuange\.info$/i,
   /^(?:www\.)?bqquge\.org$/i,
   // 搜索页只用固定引擎定位已登记书源，仍不是开放代理。
   /^html\.duckduckgo\.com$/i,

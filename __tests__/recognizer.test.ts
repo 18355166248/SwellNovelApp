@@ -2,7 +2,6 @@ import { JSDOM } from 'jsdom';
 import {
   RECOGNIZER_JS,
   expandRecognizedCatalog,
-  getRecognitionTargetUrl,
   parseRecognizedChaptersHtml,
   parseRecognizedPageUrlsHtml,
   recognizeBookHtml,
@@ -79,7 +78,6 @@ describe('browser catalog recognizer', () => {
   it.each([
     ['bookshuku.org', '/bookinfo/19.html', '/read/19_', '.html'],
     ['mingzw.net', '/mzwchapter/19.html', '/mzwread/19_', '.html'],
-    ['wap.xuanhuange.info', '/wapbook-19/', '/read/19/', '.html'],
     ['www.bqquge.org', '/19', '/19/', ''],
   ])(
     '%s 的 DOM 与 HTML 识别保留长标题和感言、排除其他书及站外广告',
@@ -140,10 +138,10 @@ describe('browser catalog recognizer', () => {
   );
   it('DOM 识别脚本的下一页和尾页链接不会扰乱完整分页顺序', () => {
     const posted = jest.fn();
-    const origin = 'http://wap.xuanhuange.info';
+    const origin = 'https://catalog.example.test';
     const anchors = [
-      { textContent: '下一页', href: `${origin}/wapbook-170446_2/` },
-      { textContent: '尾页', href: `${origin}/wapbook-170446_4/` },
+      { textContent: '下一页', href: `${origin}/book-170446_2/` },
+      { textContent: '尾页', href: `${origin}/book-170446_4/` },
     ].map(anchor => ({
       ...anchor,
       parentElement: { querySelectorAll: () => anchors },
@@ -164,29 +162,29 @@ describe('browser catalog recognizer', () => {
     )(
       { ReactNativeWebView: { postMessage: posted } },
       doc,
-      new URL(`${origin}/wapbook-170446/`),
+      new URL(`${origin}/book-170446/`),
     );
     expect(JSON.parse(posted.mock.calls[0][0]).pageUrls).toEqual(
-      [2, 3, 4].map(page => `${origin}/wapbook-170446_${page}/`),
+      [2, 3, 4].map(page => `${origin}/book-170446_${page}/`),
     );
   });
 
   it.each([1, 2])(
     '从第 %i 页导入时按页码合并，不将尾页夹在中间',
     async currentPage => {
-      const base = 'http://wap.xuanhuange.info/wapbook-170446';
+      const base = 'https://catalog.example.test/book-170446';
       const url = (page: number) =>
         page === 1 ? `${base}/` : `${base}_${page}/`;
       const chapter = (page: number) => ({
         title: `第${page}章`,
-        url: `http://wap.xuanhuange.info/read/170446/${page}.html`,
+        url: `https://catalog.example.test/read/170446/${page}.html`,
       });
       const result = await expandRecognizedCatalog(
         {
           ok: true,
           isDetail: true,
           url: url(currentPage),
-          host: 'wap.xuanhuange.info',
+          host: 'catalog.example.test',
           chapters: [chapter(currentPage)],
           pageUrls: [4, 2, 3, 1].map(url),
         },
@@ -226,18 +224,6 @@ describe('browser catalog recognizer', () => {
       jest.useRealTimers();
     }
   });
-  it('玄幻阁详情页自动换算到同书号目录页', () => {
-    expect(
-      getRecognitionTargetUrl('http://wap.xuanhuange.info/info-170446/'),
-    ).toBe('http://wap.xuanhuange.info/wapbook-170446/');
-    expect(
-      getRecognitionTargetUrl('http://wap.xuanhuange.info/wapbook-170446/'),
-    ).toBe('http://wap.xuanhuange.info/wapbook-170446/');
-    expect(getRecognitionTargetUrl('http://example.com/info-170446/')).toBe(
-      'http://example.com/info-170446/',
-    );
-  });
-
   it('从分页 HTML 提取并归一化章节链接', () => {
     expect(
       parseRecognizedChaptersHtml(
@@ -269,12 +255,12 @@ describe('browser catalog recognizer', () => {
   });
 
   it('分页模板不能使用站外广告的下一页链接', () => {
-    expect(
+    expect(() =>
       parseRecognizedPageUrlsHtml(
         '<a href="https://ad.example/book-9_2/">下一页</a><div>第1/3页</div>',
         'https://example.com/book-9/',
       ),
-    ).toEqual([]);
+    ).toThrow('无法确认完整目录');
   });
 
   it('合并全部分页后才返回目录，章节链接去重', async () => {
@@ -323,23 +309,22 @@ describe('browser catalog recognizer', () => {
     expect(book.chapters).toHaveLength(5);
   });
 
-  it('根据玄幻阁的页数文案与下一页链接补齐 27 页目录', () => {
+  it('根据目录的页数文案与下一页链接补齐 27 页目录', () => {
     const pages = parseRecognizedPageUrlsHtml(
-      `<div class="page"><a href="/wapbook-170446_2/">下一页</a><a href="/wapbook-170446_27/">尾页</a></div>
+      `<div class="page"><a href="/book-170446_2/">下一页</a><a href="/book-170446_27/">尾页</a></div>
        <div>(第1/27页)当前40条/页</div>`,
-      'http://wap.xuanhuange.info/wapbook-170446/',
+      'https://catalog.example.test/book-170446/',
     );
 
     expect(pages).toHaveLength(26);
-    expect(pages[0]).toBe('http://wap.xuanhuange.info/wapbook-170446_2/');
-    expect(pages.at(-1)).toBe('http://wap.xuanhuange.info/wapbook-170446_27/');
+    expect(pages[0]).toBe('https://catalog.example.test/book-170446_2/');
+    expect(pages.at(-1)).toBe('https://catalog.example.test/book-170446_27/');
   });
 });
 
 it.each([
   ['bookshuku.org', '/read/19_', '.html'],
   ['mingzw.net', '/mzwread/19_', '.html'],
-  ['wap.xuanhuange.info', '/read/19/', '.html'],
   ['www.bqquge.org', '/19/', ''],
 ])(
   '%s 的首页及搜索页不会把推荐区最新章节识别成一本书',

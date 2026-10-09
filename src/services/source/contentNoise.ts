@@ -2,7 +2,7 @@
  * 正文噪声清理的单一来源。
  *
  * 免费小说站会把站点水印、翻页引导直接排进正文段落里，例如
- * “(本章未完, 请点击下一页继续阅读)”“最新网址:wap.xuanhuange.info”。
+ * “(本章未完, 请点击下一页继续阅读)”“最新网址:novels.example.info”。
  * 各站措辞相近，但括号、逗号、全半角常有出入——bookshuku 原先写死了全角逗号
  * 的两条正则，遇到半角写法就漏网，浏览器识别源更是一条都没有。规则统一放在
  * 这里：加一条即对所有书源与浏览器识别源同时生效，不必在各解析器里各写一份。
@@ -44,7 +44,7 @@ interface NoiseRule {
 const LINE_RULES: readonly NoiseRule[] = [
   {
     id: 'latest-url',
-    note: '玄幻阁等站排在章节尾部的“最新网址:wap.xuanhuange.info”',
+    note: '小说站排在章节尾部的“最新网址:novels.example.info”',
     pattern: /^(?:本书|本站)?最新(?:网址|地址|域名)\s*[:：]/,
   },
   {
@@ -69,7 +69,7 @@ const LINE_RULES: readonly NoiseRule[] = [
   },
   {
     id: 'bare-url',
-    note: '整行只剩域名或链接的水印，如“wap.xuanhuange.info”',
+    note: '整行只剩域名或链接的水印，如“novels.example.info”',
     pattern:
       /^(?:https?:\/\/)?(?:[\w-]+\.)+(?:com|net|org|info|cc|xyz|top|vip|club|me|la|tv)(?:\/\S*)?$/i,
   },

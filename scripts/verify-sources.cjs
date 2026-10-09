@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const ts = require('typescript');
 
 require.extensions['.ts'] = (module, filename) => {
@@ -21,18 +22,28 @@ const args = process.argv.slice(2);
 const outputArg = args.find(value => value.startsWith('--output='));
 const searchArg = args.find(value => value.startsWith('--search='));
 const dohArg = args.find(value => value.startsWith('--doh-url='));
+const repeatArg = args.find(value => value.startsWith('--repeat='));
+const repeat = Number(repeatArg?.slice(9) || 1);
+if (!Number.isInteger(repeat) || repeat < 1 || repeat > 5)
+  throw new Error('--repeat 必须为 1–5');
 const dohUrl = dohArg?.slice(10);
 if (dohUrl && new URL(dohUrl).protocol !== 'https:')
   throw new Error('DoH 必须使用 HTTPS');
 const output = path.resolve(outputArg?.slice(9) || '/tmp/novel-source-qa.json');
-const urls = args.filter(value => /^https?:\/\//.test(value));
+const inputUrls = [
+  ...new Set(args.filter(value => /^https?:\/\//.test(value))),
+];
+const urls = inputUrls.flatMap(url =>
+  Array.from({ length: repeat }, () => url),
+);
 if (!urls.length && !searchArg) {
   console.error(
-    'Usage: node scripts/verify-sources.cjs [--output=FILE] [--search=KEYWORD] [--doh-url=HTTPS_URL] URL...',
+    'Usage: node scripts/verify-sources.cjs [--output=FILE] [--repeat=1..5] [--search=KEYWORD] [--doh-url=HTTPS_URL] URL...',
   );
   process.exit(1);
 }
 const requests = [];
+const digest = value => createHash('sha256').update(value).digest('hex');
 let activeSignal;
 
 // 保留 App 自己的代理选择、重试、解码和解析逻辑，只将底层传输换成可复核的 curl。
@@ -97,6 +108,7 @@ async function run() {
   const report = {
     checkedAt: new Date().toISOString(),
     transport: 'App fetchHtml with curl transport; native WebView unavailable',
+    repeat,
     ...(dohUrl ? { dohUrl } : {}),
     results,
   };
@@ -142,6 +154,8 @@ async function run() {
         throw new Error('目录含重复章节地址');
       result.catalog = {
         count: chapters.length,
+        // 只保留摘要即可比对完整目录顺序，不保存全文或用条数相同代替内容一致。
+        sha256: digest(JSON.stringify(chapters)),
         first: chapters[0],
         last: chapters.at(-1),
         numbers: catalogNumberSummary(chapters),
@@ -176,6 +190,7 @@ async function run() {
           )
             throw new Error('正文质量校验失败');
           sample.chars = content.length;
+          sample.sha256 = digest(content);
           sample.complete =
             typeof parsed === 'string' ? undefined : parsed.complete;
           sample.pages =
@@ -220,9 +235,44 @@ async function run() {
     }
   }
   console.log(`Report: ${output}`);
+  if (repeat > 1) {
+    report.stability = inputUrls.map(url => {
+      const rounds = results.filter(result => result.url === url);
+      const successful = rounds.filter(result => result.status === 'passed');
+      const signature = result =>
+        JSON.stringify({
+          title: result.title,
+          author: result.author,
+          catalog: result.catalog?.sha256,
+          samples: result.samples.map(sample => ({
+            index: sample.index,
+            title: sample.title,
+            url: sample.url,
+            sha256: sample.sha256,
+            complete: sample.complete,
+          })),
+        });
+      // 更新中的网站可能合法增加章节；变化单列，不能伪称稳定，也不能直接断言解析错误。
+      return {
+        url,
+        title: rounds[0]?.title,
+        rounds: rounds.length,
+        passed: successful.length,
+        status:
+          successful.length !== repeat
+            ? 'failed'
+            : new Set(successful.map(signature)).size === 1
+            ? 'stable'
+            : 'changed',
+      };
+    });
+    saveReport();
+    console.log(JSON.stringify({ stability: report.stability }));
+  }
   if (
     report.search?.error ||
-    results.some(result => result.status !== 'passed')
+    results.some(result => result.status !== 'passed') ||
+    report.stability?.some(result => result.status !== 'stable')
   )
     process.exitCode = 2;
 }

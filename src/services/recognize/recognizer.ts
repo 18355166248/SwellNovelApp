@@ -34,9 +34,14 @@ export const RECOGNIZE_MESSAGE = 'nvl-recognize';
 
 /** 判定为目录页所需的最小章节锚点数，低于此认为不是书籍页。 */
 export const MIN_CHAPTERS = 5;
+const MAX_CATALOG_PAGES = 200;
 
 // 已知站点优先按同书正文路由识别，不能只靠“第N章”漏掉感言，也不能收进推荐区其他书。
-const CATALOG_ROUTES = [
+const CATALOG_ROUTES: {
+  host: string;
+  book: string;
+  chapter: string;
+}[] = [
   {
     host: '(^|\\.)bookshuku\\.org$',
     book: '/(?:bookinfo|read)/(\\d+)',
@@ -48,11 +53,6 @@ const CATALOG_ROUTES = [
     chapter: '^/(?:miread|mzwread)/(?:[^/]*_)?(\\d+)_(\\d+)\\.html$',
   },
   {
-    host: '(^|\\.)xuanhuange\\.info$',
-    book: '/(?:info|wapbook)-(\\d+)',
-    chapter: '^/read/(\\d+)/(\\d+)\\.html$',
-  },
-  {
     host: '(^|\\.)bqquge\\.org$',
     book: '^/(\\d+)(?:/|$)',
     chapter: '^/(\\d+)/(\\d+)/?$',
@@ -61,25 +61,6 @@ const CATALOG_ROUTES = [
 const MAX_CHAPTER_TITLE_LENGTH = 200;
 const NAV_TITLE_RE =
   /^(?:目录|目錄|首页|首頁|上一[章页頁]|下一[章页頁]|返回书页|返回書頁)$/;
-
-/**
- * 已知站点的详情页本身不展示章节，需要先换算到目录页再执行通用识别。
- * 只转换同站、可从路径确定书号的路由，避免根据页面文案猜测并跳到广告链接。
- */
-export function getRecognitionTargetUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    if (/(^|\.)xuanhuange\.info$/i.test(parsed.hostname)) {
-      const match = /^\/info-(\d+)\/?$/i.exec(parsed.pathname);
-      if (match) {
-        return `${parsed.protocol}//${parsed.host}/wapbook-${match[1]}/`;
-      }
-    }
-  } catch {
-    // 地址栏会负责提示非法 URL；识别器保持原值，避免生成不可控地址。
-  }
-  return url;
-}
 
 /**
  * 注入页面执行的识别脚本（纯字符串，DOM-only）。结果经 window.ReactNativeWebView
@@ -189,23 +170,36 @@ export const RECOGNIZER_JS = `(function(){
       pageSeen[ph] = 1;
       pageUrls.push(ph);
     }
-    // 玄幻阁等站点仅渲染“下一页/尾页”，但会在文案中给出总页数（第 1/27 页）。
+    // 部分站点仅渲染“下一页/尾页”，但会在文案中给出总页数（第 1/27 页）。
     // 从这两个分页链接的 URL 模板补齐中间页，避免只导入第一页或末页。
     var pageText = document.body ? (document.body.innerText || '') : '';
     var pageInfo = pageText.match(/第\\s*(\\d+)\\s*\\/\\s*(\\d+)\\s*页/);
     var currentPage = pageInfo ? parseInt(pageInfo[1], 10) : 0;
     var totalPages = pageInfo ? parseInt(pageInfo[2], 10) : 0;
+    // 已声明多页却超出处理范围时不能把当前页当完整目录交给入库。
+    if (pageInfo && (currentPage < 1 || currentPage > totalPages || totalPages > ${MAX_CATALOG_PAGES})) {
+      throw new Error('目录页数异常或超过支持上限，无法确认完整目录');
+    }
     var templateLink = null;
     for (var r = 0; r < as.length; r++) {
       var rt = (as[r].textContent || '').replace(/\\s+/g, ' ').trim();
       if (!/^(上一页|下一页|上页|下页|首页|尾页|末页)$/.test(rt) || !as[r].href) continue;
       try {
         var ru = new URL(as[r].href, location.href);
-        var rm = /^(.*[_-])\\d+(\\/?)$/.exec(ru.pathname);
-        if (ru.host === location.host && rm) { templateLink = { origin: ru.origin, prefix: rm[1], suffix: rm[2] }; break; }
+        var rm = /^(.*[_-])(\\d+)(\\/?)$/.exec(ru.pathname);
+        // “首页”的目录路径也以书号数字结尾，不能把书号误当页码。
+        // 模板必须属于当前目录，且链接页码落在页面声明的范围内。
+        var basePath = location.pathname.replace(/\\/$/, '');
+        if (ru.host === location.host && rm && Number(rm[2]) >= 1 && Number(rm[2]) <= totalPages &&
+          (basePath === rm[1].slice(0, -1) || basePath === rm[1] + currentPage)) {
+          templateLink = { origin: ru.origin, prefix: rm[1], suffix: rm[3] }; break;
+        }
       } catch(ignore) {}
     }
-    if (templateLink && totalPages > 1 && totalPages <= 200) {
+    if (totalPages > 1 && !templateLink) {
+      throw new Error('未找到有效的目录分页链接，无法确认完整目录');
+    }
+    if (templateLink && totalPages > 1 && totalPages <= ${MAX_CATALOG_PAGES}) {
       // 明确知道总页数时按页码重新生成，不能把先遇到的尾页排在第二页之后。
       pageUrls = []; pageSeen = {};
       for (var pn = 1; pn <= totalPages; pn++) {
@@ -237,7 +231,7 @@ export const RECOGNIZER_JS = `(function(){
       url: location.href, host: location.host,
       requestId: requestId,
       title: title, author: author, cover: cover,
-      chapters: chapters.slice(0, 5000), pageUrls: pageUrls.slice(0, 100)
+      chapters: chapters.slice(0, 5000), pageUrls: pageUrls.slice(0, ${MAX_CATALOG_PAGES})
     };
     post(payload);
   } catch (e) {
@@ -298,7 +292,9 @@ export function parseRecognizedChaptersHtml(
   const seen = new Set<string>();
   const re = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let match: RegExpExecArray | null;
-  while ((match = re.exec(html)) !== null) {
+  // HTML 兜底应与真实 DOM 一致，脚本字符串或注释中的伪锚点不属于目录。
+  const cleanHtml = removeNonContentElements(html);
+  while ((match = re.exec(cleanHtml)) !== null) {
     const title = match[2]
       .replace(/<[^>]+>/g, '')
       .replace(/&nbsp;/gi, ' ')
@@ -320,29 +316,46 @@ export function parseRecognizedPageUrlsHtml(
   baseUrl: string,
 ): string[] {
   const anchors = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const cleanHtml = removeNonContentElements(html);
   const pageInfo = /第\s*(\d+)\s*\/\s*(\d+)\s*页/.exec(
-    html.replace(/<[^>]+>/g, ' '),
+    cleanHtml.replace(/<[^>]+>/g, ' '),
   );
   const currentPage = Number(pageInfo?.[1] || 1);
   const totalPages = Number(pageInfo?.[2] || 0);
-  if (!Number.isInteger(totalPages) || totalPages <= 1 || totalPages > 200)
-    return [];
+  if (
+    pageInfo &&
+    (currentPage < 1 ||
+      currentPage > totalPages ||
+      totalPages > MAX_CATALOG_PAGES)
+  ) {
+    throw new Error('目录页数异常或超过支持上限，无法确认完整目录');
+  }
+  if (!Number.isInteger(totalPages) || totalPages <= 1) return [];
 
   let template: { origin: string; prefix: string; suffix: string } | null =
     null;
   let match: RegExpExecArray | null;
-  while ((match = anchors.exec(html)) !== null) {
+  while ((match = anchors.exec(cleanHtml)) !== null) {
     const text = htmlText(match[2]);
     if (!/^(上一页|下一页|上页|下页|首页|尾页|末页)$/.test(text)) continue;
     try {
+      const base = new URL(baseUrl);
       const target = new URL(resolveHref(baseUrl, match[1]));
-      if (target.origin !== new URL(baseUrl).origin) continue;
-      const pathMatch = /^(.*[_-])\d+(\/?)$/.exec(target.pathname);
-      if (pathMatch) {
+      if (target.origin !== base.origin) continue;
+      const pathMatch = /^(.*[_-])(\d+)(\/?)$/.exec(target.pathname);
+      // 仅从当前目录的有效分页取模板，避免首页书号或其他书的“下一页”污染整本目录。
+      const basePath = base.pathname.replace(/\/$/, '');
+      if (
+        pathMatch &&
+        Number(pathMatch[2]) >= 1 &&
+        Number(pathMatch[2]) <= totalPages &&
+        (basePath === pathMatch[1].slice(0, -1) ||
+          basePath === pathMatch[1] + currentPage)
+      ) {
         template = {
           origin: target.origin,
           prefix: pathMatch[1],
-          suffix: pathMatch[2],
+          suffix: pathMatch[3],
         };
         break;
       }
@@ -350,7 +363,10 @@ export function parseRecognizedPageUrlsHtml(
       // 非标准 href 无法作为分页模板。
     }
   }
-  if (!template) return [];
+  // 站点声明了多页但无法可靠定位分页时，拒绝发布残目录，交给界面显示可重试失败。
+  if (!template) {
+    throw new Error('未找到有效的目录分页链接，无法确认完整目录');
+  }
   return Array.from({ length: totalPages }, (_, index) => index + 1)
     .filter(page => page !== currentPage)
     .map(

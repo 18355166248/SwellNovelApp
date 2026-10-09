@@ -28,7 +28,6 @@ import {
   RECOGNIZER_JS,
   RECOGNIZE_MESSAGE,
   expandRecognizedCatalog,
-  getRecognitionTargetUrl,
   inputToUrl,
   recognizeBookHtml,
   RecognizedBook,
@@ -316,19 +315,6 @@ export default function InAppBrowserScreen() {
         });
     };
 
-    const recognitionTargetUrl = getRecognitionTargetUrl(pageUrl);
-    if (recognitionTargetUrl !== pageUrl) {
-      // 玄幻阁 info 页只有书籍资料，没有章节锚点。直接读取同书号目录，避免用户手动跳页。
-      recognizeTimerRef.current = setTimeout(() => {
-        if (manualRecognizeRef.current !== requestId) return;
-        setRecognizing(false);
-        setRecognizeMessage('识别超时：请刷新后在书籍详情页或章节列表页重试');
-        manualRecognizeRef.current = '';
-      }, 40000);
-      readFromHiddenWebView(recognitionTargetUrl);
-      return;
-    }
-
     // 当前可见页面已经由用户亲自打开，优先注入并使用自定义 URL 回传，避免站点覆盖
     // ReactNativeWebView 消息对象后导致按钮没有反馈。若 4 秒没有回传才切隐藏页兜底。
     recognizeFallbackTimerRef.current = setTimeout(readFromHiddenWebView, 4000);
@@ -360,10 +346,7 @@ export default function InAppBrowserScreen() {
             recognized,
             url =>
               fetchRenderedHtml(url, {
-                // 玄幻阁目录为静态 HTML；但连续翻 27 页时部分页会晚于首屏完成渲染，
-                // 取 1.2 秒以提升长目录稳定性，同时避免 5 秒等待让整本导入过慢。
-                // 其他站点仍沿用较长等待，避免把延迟渲染页面误判为空目录。
-                waitMs: recognized.host === 'wap.xuanhuange.info' ? 1200 : 5000,
+                waitMs: 5000,
                 timeout: 20000,
                 priority: 'high',
               }),
@@ -432,15 +415,18 @@ export default function InAppBrowserScreen() {
           onPress={() => webRef.current?.reload()}
           style={[styles.barBtn, !url && { opacity: 0.35 }]}
         >
-          <Icon name="refresh" size={19} color={theme.colors.text} />
+          {/* 加载提示使用工具栏的固定尺寸，避免从 2px 容器溢出后被原生网页盖住。 */}
+          {loading ? (
+            <ActivityIndicator
+              accessibilityLabel="网页加载中"
+              size="small"
+              color={theme.colors.primary}
+            />
+          ) : (
+            <Icon name="refresh" size={19} color={theme.colors.text} />
+          )}
         </Pressable>
       </View>
-
-      {loading && (
-        <View style={styles.progressLine}>
-          <ActivityIndicator size="small" color={theme.colors.primary} />
-        </View>
-      )}
 
       {!historyReady ? (
         <View style={styles.startLoading}>
@@ -848,7 +834,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
   },
   input: { flex: 1, fontSize: 13.5, padding: 0 },
-  progressLine: { height: 2, justifyContent: 'center' },
   startLoading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   startPage: { flex: 1 },
   startPageContent: { padding: 20, paddingBottom: 36 },

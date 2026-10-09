@@ -91,7 +91,6 @@ it('不能因为容器广告标记、短文字就误伤搜索或章节相邻内�
 it.each([
   ['https://wap.bookshuku.org/bookinfo/19.html', '/read/19_1.html'],
   ['https://tw.mingzw.net/mzwchapter/19.html', '/miread/19_1.html'],
-  ['http://wap.xuanhuange.info/wapbook-19_2/', '/read/19/1.html'],
 ])('保留 %s 章节与封面，隐藏广告推广', (url, chapter) => {
   page(
     `<a id="chapter" href="${chapter}">第1章 成人直播</a><div class="cover" id="cover"><img src="/image/19.jpg"></div><a id="ad" href="https://ad.test">立即下载APP</a>`,
@@ -101,17 +100,6 @@ it.each([
   expect(hidden('chapter')).toBe(false);
   expect(hidden('cover')).toBe(false);
   expect(hidden('ad')).toBe(true);
-});
-
-it('玄幻阁的随机广告容器仅在对应域名隐藏', () => {
-  page(
-    '<h5 id="swipercontainer1024"><iframe src="/ad"></iframe></h5>',
-    'http://wap.xuanhuange.info/wapbook-19_2/',
-  );
-  install();
-  expect(
-    dom.window.document.querySelector('h5')?.hasAttribute('data-nvl-hidden'),
-  ).toBe(true);
 });
 
 it('通用网页保留普通图片、外部书籍推荐和正常 frame，隐藏明确广告', () => {

@@ -119,9 +119,7 @@ describe.each([
     expect(queries.some(query => query.includes('site:bookshuku.org'))).toBe(
       true,
     );
-    expect(queries.some(query => query.includes('site:xuanhuange.info'))).toBe(
-      true,
-    );
+    expect(queries.some(query => query.includes('site:bqquge.org'))).toBe(true);
     expect(queries.every(query => !query.includes(' OR '))).toBe(true);
   });
 

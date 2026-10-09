@@ -1,0 +1,499 @@
+{
+  "checkedAt": "2026-10-08T12:27:10.508Z",
+  "transport": "App fetchHtml with curl transport; native WebView unavailable",
+  "repeat": 2,
+  "results": [
+    {
+      "url": "http://wap.bookshuku.org/bookinfo/132737.html",
+      "source": "bookshuku",
+      "status": "passed",
+      "samples": [
+        {
+          "index": 0,
+          "title": "第1章 永夜",
+          "url": "http://wap.bookshuku.org/read/132737_1.html",
+          "status": "passed",
+          "chars": 2582,
+          "sha256": "af6ecbc57a70434ac5d259c9bf309aeeaf463b127da72d4e285ab6bfef120bc9",
+          "complete": true,
+          "parsedTitle": "第1章"
+        },
+        {
+          "index": 431,
+          "title": "第425章 大彻大悟",
+          "url": "http://wap.bookshuku.org/read/132737_432.html",
+          "status": "passed",
+          "chars": 5262,
+          "sha256": "7cea99468dbb2e5edd296ec20ed1fb723e64dd96ad90cea847ac40121d4f8a6e",
+          "complete": true,
+          "parsedTitle": "第425章"
+        },
+        {
+          "index": 861,
+          "title": "第838章 拳光照破夜幕",
+          "url": "http://wap.bookshuku.org/read/132737_862.html",
+          "status": "passed",
+          "chars": 5394,
+          "sha256": "ebd90e135a58bd35f871241c3b2f58367123b8e3a78b68fd0198406aca4133d2",
+          "complete": true,
+          "parsedTitle": "第838章"
+        }
+      ],
+      "title": "夜无疆",
+      "author": "辰东",
+      "catalog": {
+        "count": 862,
+        "sha256": "cda22e9f68b79b251c29204e30503a492642ebbc3fe18e91ef3b43104849c998",
+        "first": {
+          "url": "http://wap.bookshuku.org/read/132737_1.html",
+          "title": "第1章 永夜"
+        },
+        "last": {
+          "url": "http://wap.bookshuku.org/read/132737_862.html",
+          "title": "第838章 拳光照破夜幕"
+        },
+        "numbers": {
+          "entries": 862,
+          "maxNumber": 838,
+          "coveredNumbers": 838,
+          "numberedEntries": 838,
+          "unnumberedEntries": 24,
+          "mergedExtraNumbers": 0,
+          "repeatedNumberEntries": 0,
+          "unmatchedNumbers": []
+        }
+      },
+      "ms": 25921,
+      "requests": [
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/bookinfo/132737.html",
+          "status": 200,
+          "ms": 644
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737.html",
+          "status": 200,
+          "ms": 2552
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_1.html",
+          "status": 200,
+          "ms": 1081
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_1_2.html",
+          "status": 200,
+          "ms": 1002
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_1_3.html",
+          "status": 200,
+          "ms": 6636
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_432.html",
+          "status": 200,
+          "ms": 6200
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_432_2.html",
+          "status": 200,
+          "ms": 2933
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_432_3.html",
+          "status": 200,
+          "ms": 1242
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_862.html",
+          "status": 200,
+          "ms": 1131
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_862_2.html",
+          "status": 200,
+          "ms": 843
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_862_3.html",
+          "status": 200,
+          "ms": 1604
+        }
+      ]
+    },
+    {
+      "url": "http://wap.bookshuku.org/bookinfo/132737.html",
+      "source": "bookshuku",
+      "status": "passed",
+      "samples": [
+        {
+          "index": 0,
+          "title": "第1章 永夜",
+          "url": "http://wap.bookshuku.org/read/132737_1.html",
+          "status": "passed",
+          "chars": 2582,
+          "sha256": "af6ecbc57a70434ac5d259c9bf309aeeaf463b127da72d4e285ab6bfef120bc9",
+          "complete": true,
+          "parsedTitle": "第1章"
+        },
+        {
+          "index": 431,
+          "title": "第425章 大彻大悟",
+          "url": "http://wap.bookshuku.org/read/132737_432.html",
+          "status": "passed",
+          "chars": 5262,
+          "sha256": "7cea99468dbb2e5edd296ec20ed1fb723e64dd96ad90cea847ac40121d4f8a6e",
+          "complete": true,
+          "parsedTitle": "第425章"
+        },
+        {
+          "index": 861,
+          "title": "第838章 拳光照破夜幕",
+          "url": "http://wap.bookshuku.org/read/132737_862.html",
+          "status": "passed",
+          "chars": 5394,
+          "sha256": "ebd90e135a58bd35f871241c3b2f58367123b8e3a78b68fd0198406aca4133d2",
+          "complete": true,
+          "parsedTitle": "第838章"
+        }
+      ],
+      "title": "夜无疆",
+      "author": "辰东",
+      "catalog": {
+        "count": 862,
+        "sha256": "cda22e9f68b79b251c29204e30503a492642ebbc3fe18e91ef3b43104849c998",
+        "first": {
+          "url": "http://wap.bookshuku.org/read/132737_1.html",
+          "title": "第1章 永夜"
+        },
+        "last": {
+          "url": "http://wap.bookshuku.org/read/132737_862.html",
+          "title": "第838章 拳光照破夜幕"
+        },
+        "numbers": {
+          "entries": 862,
+          "maxNumber": 838,
+          "coveredNumbers": 838,
+          "numberedEntries": 838,
+          "unnumberedEntries": 24,
+          "mergedExtraNumbers": 0,
+          "repeatedNumberEntries": 0,
+          "unmatchedNumbers": []
+        }
+      },
+      "ms": 33354,
+      "requests": [
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/bookinfo/132737.html",
+          "status": 200,
+          "ms": 3676
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737.html",
+          "status": 200,
+          "ms": 2127
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_1.html",
+          "status": 200,
+          "ms": 2230
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_1_2.html",
+          "status": 200,
+          "ms": 5637
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_1_3.html",
+          "status": 200,
+          "ms": 5061
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_432.html",
+          "status": 200,
+          "ms": 1881
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_432_2.html",
+          "status": 200,
+          "ms": 2444
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_432_3.html",
+          "status": 200,
+          "ms": 5579
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_862.html",
+          "status": 200,
+          "ms": 3062
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_862_2.html",
+          "status": 200,
+          "ms": 797
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/132737_862_3.html",
+          "status": 200,
+          "ms": 845
+        }
+      ]
+    },
+    {
+      "url": "http://wap.bookshuku.org/bookinfo/117811.html",
+      "source": "bookshuku",
+      "status": "passed",
+      "samples": [
+        {
+          "index": 0,
+          "title": "第一章 师傅",
+          "url": "http://wap.bookshuku.org/read/117811_2.html",
+          "status": "passed",
+          "chars": 2751,
+          "sha256": "7071ad9cbc5855d4f8ac5a4371ca68eb4e233b45490987d8c4e686da84d5f6c4",
+          "complete": true,
+          "parsedTitle": "第一章"
+        },
+        {
+          "index": 536,
+          "title": "第五百三十四章 大齐",
+          "url": "http://wap.bookshuku.org/read/117811_540.html",
+          "status": "passed",
+          "chars": 2089,
+          "sha256": "41285483c271552ea6024dd612f0201abd879d8989c0e44548c2cb8fc367d99e",
+          "complete": true,
+          "parsedTitle": "第五百三十四章"
+        },
+        {
+          "index": 1072,
+          "title": "红中传：2",
+          "url": "http://wap.bookshuku.org/read/117811_1076.html",
+          "status": "passed",
+          "chars": 2362,
+          "sha256": "5503626dfe91cb99542f6fe3879f14fae3f8bf36a6f2c9f572ca235bdfa5ec27",
+          "complete": true,
+          "parsedTitle": "道诡异仙"
+        }
+      ],
+      "title": "道诡异仙",
+      "author": "狐尾的笔",
+      "catalog": {
+        "count": 1073,
+        "sha256": "0988a5190f59dab1ea78bd0417102d293fadd4430115a499867bd7be18ac6a2a",
+        "first": {
+          "url": "http://wap.bookshuku.org/read/117811_2.html",
+          "title": "第一章 师傅"
+        },
+        "last": {
+          "url": "http://wap.bookshuku.org/read/117811_1076.html",
+          "title": "红中传：2"
+        },
+        "numbers": {
+          "entries": 1073,
+          "maxNumber": 1021,
+          "coveredNumbers": 1019,
+          "numberedEntries": 1023,
+          "unnumberedEntries": 50,
+          "mergedExtraNumbers": 0,
+          "repeatedNumberEntries": 4,
+          "unmatchedNumbers": [811, 846]
+        }
+      },
+      "ms": 12035,
+      "requests": [
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/bookinfo/117811.html",
+          "status": 200,
+          "ms": 761
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811.html",
+          "status": 200,
+          "ms": 2536
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_2.html",
+          "status": 200,
+          "ms": 911
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_2_2.html",
+          "status": 200,
+          "ms": 794
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_2_3.html",
+          "status": 200,
+          "ms": 868
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_540.html",
+          "status": 200,
+          "ms": 776
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_540_2.html",
+          "status": 200,
+          "ms": 1201
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_540_3.html",
+          "status": 200,
+          "ms": 1100
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_1076.html",
+          "status": 200,
+          "ms": 836
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_1076_2.html",
+          "status": 200,
+          "ms": 1118
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_1076_3.html",
+          "status": 200,
+          "ms": 1111
+        }
+      ]
+    },
+    {
+      "url": "http://wap.bookshuku.org/bookinfo/117811.html",
+      "source": "bookshuku",
+      "status": "passed",
+      "samples": [
+        {
+          "index": 0,
+          "title": "第一章 师傅",
+          "url": "http://wap.bookshuku.org/read/117811_2.html",
+          "status": "passed",
+          "chars": 2751,
+          "sha256": "7071ad9cbc5855d4f8ac5a4371ca68eb4e233b45490987d8c4e686da84d5f6c4",
+          "complete": true,
+          "parsedTitle": "第一章"
+        },
+        {
+          "index": 536,
+          "title": "第五百三十四章 大齐",
+          "url": "http://wap.bookshuku.org/read/117811_540.html",
+          "status": "passed",
+          "chars": 2089,
+          "sha256": "41285483c271552ea6024dd612f0201abd879d8989c0e44548c2cb8fc367d99e",
+          "complete": true,
+          "parsedTitle": "第五百三十四章"
+        },
+        {
+          "index": 1072,
+          "title": "红中传：2",
+          "url": "http://wap.bookshuku.org/read/117811_1076.html",
+          "status": "passed",
+          "chars": 2362,
+          "sha256": "5503626dfe91cb99542f6fe3879f14fae3f8bf36a6f2c9f572ca235bdfa5ec27",
+          "complete": true,
+          "parsedTitle": "道诡异仙"
+        }
+      ],
+      "title": "道诡异仙",
+      "author": "狐尾的笔",
+      "catalog": {
+        "count": 1073,
+        "sha256": "0988a5190f59dab1ea78bd0417102d293fadd4430115a499867bd7be18ac6a2a",
+        "first": {
+          "url": "http://wap.bookshuku.org/read/117811_2.html",
+          "title": "第一章 师傅"
+        },
+        "last": {
+          "url": "http://wap.bookshuku.org/read/117811_1076.html",
+          "title": "红中传：2"
+        },
+        "numbers": {
+          "entries": 1073,
+          "maxNumber": 1021,
+          "coveredNumbers": 1019,
+          "numberedEntries": 1023,
+          "unnumberedEntries": 50,
+          "mergedExtraNumbers": 0,
+          "repeatedNumberEntries": 4,
+          "unmatchedNumbers": [811, 846]
+        }
+      },
+      "ms": 32443,
+      "requests": [
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/bookinfo/117811.html",
+          "status": 200,
+          "ms": 1072
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811.html",
+          "status": 200,
+          "ms": 2245
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_2.html",
+          "status": 200,
+          "ms": 2173
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_2_2.html",
+          "status": 200,
+          "ms": 1862
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_2_3.html",
+          "status": 200,
+          "ms": 5031
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_540.html",
+          "status": 200,
+          "ms": 2050
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_540_2.html",
+          "status": 200,
+          "ms": 2732
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_540_3.html",
+          "status": 200,
+          "ms": 9953
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_1076.html",
+          "status": 200,
+          "ms": 940
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_1076_2.html",
+          "status": 200,
+          "ms": 2280
+        },
+        {
+          "url": "http://101.43.11.224:11008/proxy/http/wap.bookshuku.org/read/117811_1076_3.html",
+          "status": 200,
+          "ms": 2081
+        }
+      ]
+    }
+  ],
+  "stability": [
+    {
+      "url": "http://wap.bookshuku.org/bookinfo/132737.html",
+      "title": "夜无疆",
+      "rounds": 2,
+      "passed": 2,
+      "status": "stable"
+    },
+    {
+      "url": "http://wap.bookshuku.org/bookinfo/117811.html",
+      "title": "道诡异仙",
+      "rounds": 2,
+      "passed": 2,
+      "status": "stable"
+    }
+  ]
+}

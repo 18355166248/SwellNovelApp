@@ -11,12 +11,7 @@ function hostOf(url: string): string {
 }
 
 // 与注册书源的站点范围一致；不能只防护目录，首页搜索的结果页也会触发广告跳转。
-const SOURCE_ROOTS = [
-  'bookshuku.org',
-  'mingzw.net',
-  'xuanhuange.info',
-  'bqquge.org',
-];
+const SOURCE_ROOTS = ['bookshuku.org', 'mingzw.net', 'bqquge.org'];
 function sourceRoot(host: string): string | undefined {
   return SOURCE_ROOTS.find(root => host === root || host.endsWith(`.${root}`));
 }
