@@ -98,6 +98,43 @@ describe('书架与阅读进度退出保存', () => {
     expect(save).toHaveBeenCalledTimes(count);
   });
 
+  it('切后台与重新启动保留每本书的跳转记录，不被当前续读位置覆盖', async () => {
+    await mount();
+    const record = {
+      id: 'return',
+      bookId: book.id,
+      chapterId: 'c1',
+      chapterTitle: '第一章',
+      position: 350,
+      updatedAt: 2,
+    };
+    await act(() => {
+      store.set(booksAtom, [
+        { ...book, currentChapterId: 'c2', readingRecords: [record] },
+      ]);
+      store.set(readingHistoryAtom, {
+        [book.id]: {
+          bookId: book.id,
+          chapterId: 'c2',
+          position: 100,
+          updatedAt: 3,
+        },
+      });
+      changeState('background');
+    });
+    const persisted = JSON.parse(JSON.stringify(save.mock.calls.at(-1)[0]));
+    expect(persisted.books[0].readingRecords).toEqual([record]);
+    await act(() => tree.unmount());
+    load.mockResolvedValue({ ...persisted, chapters: {} });
+    store = createStore();
+    await mount();
+    expect(store.get(booksAtom)[0].readingRecords).toEqual([record]);
+    expect(store.get(readingHistoryAtom)[book.id]).toMatchObject({
+      chapterId: 'c2',
+      position: 100,
+    });
+  });
+
   it('前台连续变更仍合并保存，卸载前提交最终状态', async () => {
     await mount();
     await act(() => store.set(booksAtom, [book]));

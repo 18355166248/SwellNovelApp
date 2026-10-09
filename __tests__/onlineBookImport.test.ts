@@ -496,6 +496,33 @@ describe('网站目录更新事务', () => {
     expect(mockStore.get(booksAtom)[0].unreadUpdates).toBe(1);
   });
 
+  it('追更迁移独立阅读记录，修正旧id后保留字符位置', async () => {
+    const { book, chapters } = setup();
+    mockStore.set(booksAtom, [
+      {
+        ...book,
+        readingRecords: [
+          {
+            id: 'saved',
+            bookId: book.id,
+            chapterId: 'legacy-id',
+            chapterTitle: '旧标题',
+            sourceUrl: sourceUrl(2),
+            position: 180,
+            updatedAt: 2,
+          },
+        ],
+      },
+    ]);
+    catalog([3, 1, 2, 4]);
+    await useCheckBookUpdate()(book.id);
+    expect(mockStore.get(booksAtom)[0].readingRecords?.[0]).toMatchObject({
+      chapterId: chapters[1].id,
+      chapterTitle: '第2章',
+      position: 180,
+    });
+  });
+
   it('等长目录重排也同步身份与标题，不丢缓存', async () => {
     const { book } = setup();
     catalog([3, 1, 2]);
@@ -727,6 +754,17 @@ it('浏览器再次识别插入新章节时保留原章身份、缓存和阅读�
     ...incomingBook(),
     currentChapterId: 'stable-second',
     progress: 70,
+    readingRecords: [
+      {
+        id: 'saved',
+        bookId: incomingBook().id,
+        chapterId: 'legacy-second',
+        chapterTitle: '旧标题',
+        sourceUrl: sourceUrl(2),
+        position: 180,
+        updatedAt: 2,
+      },
+    ],
   };
   const previous = [
     chapter(old.id, 'stable-second', 2, true),
@@ -744,6 +782,11 @@ it('浏览器再次识别插入新章节时保留原章身份、缓存和阅读�
   });
   expect(mockStore.get(currentChapterIndexAtom)).toBe(1);
   expect(book.currentChapterId).toBe(previous[0].id);
+  expect(book.readingRecords?.[0]).toMatchObject({
+    chapterId: previous[0].id,
+    chapterTitle: '第2章',
+    position: 180,
+  });
 });
 
 it('浏览器目录导入通过通用资料补全取得封面，同时保留完整章节', async () => {

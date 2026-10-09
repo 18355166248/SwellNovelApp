@@ -1,3 +1,6 @@
+import ReadingRecordsList from '../components/ReadingRecordsList';
+import { displayReadingRecords } from '../utils/readingRecords';
+import { usePreserveReadingPosition } from '../store/hooks/useOpenChapter';
 import { useScreenTaskSignal } from '../store/hooks/useScreenTaskSignal';
 import { forwardAbort, isAbortError } from '../utils/abort';
 import React from 'react';
@@ -429,6 +432,7 @@ export default function ReaderScreen() {
   const chapterIndex = useCurrentChapterIndex() ?? 0;
   const content = useCurrentChapterContent();
   const openChapter = useOpenChapter();
+  const preservePosition = usePreserveReadingPosition();
   const updateProgress = useUpdateReadingProgress();
   const bookHistory = useCurrentBookHistory();
   // 在线书章节正文按需抓取，用 ref 持有以免作为副作用依赖导致重复触发。
@@ -628,7 +632,7 @@ export default function ReaderScreen() {
 
   const [drawerOrder, setDrawerOrder] = React.useState<'asc' | 'desc'>('asc');
   const [drawerTab, setDrawerTab] = React.useState<
-    'toc' | 'search' | 'notes' | 'marks'
+    'toc' | 'search' | 'notes' | 'marks' | 'history'
   >('toc');
   const [drawerQuery, setDrawerQuery] = React.useState('');
   const [textSearchInput, setTextSearchInput] = React.useState('');
@@ -1658,6 +1662,24 @@ export default function ReaderScreen() {
     setToolbarVisible(false);
   }, [setToolbarVisible]);
 
+  const preserveReaderPosition = React.useCallback(
+    (targetChapterId: string | undefined, targetPosition?: number) => {
+      if (!readingEngaged || !pageInteractionReady || !chapter) {
+        // 从书架仅预览目录时正文尚未参与阅读，仍需保护这本书已有的续读记录。
+        preservePosition(bookId, targetChapterId, targetPosition);
+        return;
+      }
+      // 滚动位置的回写有节流；跳转前直接保存已展示的字符偏移，不能等旧章 effect 再结算。
+      preservePosition(bookId, targetChapterId, targetPosition, {
+        bookId,
+        chapterId: chapter.id,
+        position: currentOffsetRef.current,
+        updatedAt: Date.now(),
+      });
+    },
+    [bookId, chapter, pageInteractionReady, preservePosition, readingEngaged],
+  );
+
   const goToChapter = React.useCallback(
     (idx: number, intent: ChapterNavigationIntent = 'direct') => {
       if (idx < 0 || idx >= total) return;
@@ -1668,6 +1690,8 @@ export default function ReaderScreen() {
       // 新章节的首帧可能早于上方清锁 effect；事件阶段同步收口，确保用户一看到
       // 正文就能立即反向翻回，不会吞掉这次手势。
       chapterSwitchTargetRef.current = null;
+      if (intent === 'direct' && idx !== chapterIndex)
+        preserveReaderPosition(chapters[idx]?.id);
       const targetReady = hasUsableChapterContent(
         chapters[idx],
         book?.source?.name,
@@ -1690,7 +1714,7 @@ export default function ReaderScreen() {
         transitionRef.current = undefined;
         // 同一章节重试/重开时 chapter.id 不变；显式触发正文加载 effect。
         if (!targetReady) setContentReloadKey(key => key + 1);
-        openChapter(bookId, idx);
+        openChapter(bookId, idx, { preservePreviousPosition: false });
       };
 
       if (idx !== chapterIndex) {
@@ -1723,6 +1747,7 @@ export default function ReaderScreen() {
       isOnline,
       lockChapterTurn,
       openChapter,
+      preserveReaderPosition,
       status,
       total,
     ],
@@ -1883,6 +1908,7 @@ export default function ReaderScreen() {
     (chapterId: string, position: number) => {
       const idx = chapters.findIndex(c => c.id === chapterId);
       if (idx < 0) return;
+      preserveReaderPosition(chapterId, position);
       // 同章同位置的回跳也要重新定位；不能只依赖 position 变化触发布局 effect。
       // 先清掉旧滚动的延迟回写，防止书签刚跳过去就被上一落点覆盖。
       if (scrollProgressTimerRef.current) {
@@ -1910,7 +1936,14 @@ export default function ReaderScreen() {
         setScrollPosition(position);
       }
     },
-    [chapters, chapterIndex, goToChapter, pages, settings.pageMode],
+    [
+      chapters,
+      chapterIndex,
+      goToChapter,
+      pages,
+      settings.pageMode,
+      preserveReaderPosition,
+    ],
   );
 
   // Web 键盘监听用 ref 取最新 goToPage，避免闭包过期。
@@ -3242,7 +3275,19 @@ export default function ReaderScreen() {
             label="目录"
             color={display.chrome.ink}
             onPress={() => {
+              setDrawerTab('toc');
               setDrawerPositioning(true);
+              setDrawerOpen(true);
+              setToolbarVisible(false);
+            }}
+          />
+          <ReaderAction
+            icon="history"
+            label="记录"
+            color={display.chrome.ink}
+            onPress={() => {
+              setDrawerTab('history');
+              setDrawerPositioning(false);
               setDrawerOpen(true);
               setToolbarVisible(false);
             }}
@@ -4135,47 +4180,55 @@ export default function ReaderScreen() {
                   ? `可搜索 ${searchableChapterCount} / ${total} 章正文`
                   : drawerTab === 'notes'
                   ? `共 ${excerpts.length} 条摘抄`
+                  : drawerTab === 'history'
+                  ? '最近阅读与跳转前的位置'
                   : `共 ${plainBookmarks.length} 条书签`}
               </Text>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                {(['toc', 'search', 'notes', 'marks'] as const).map(tab => {
-                  const active = drawerTab === tab;
-                  const tabLabel =
-                    tab === 'toc'
-                      ? '目录'
-                      : tab === 'search'
-                      ? '全文'
-                      : tab === 'notes'
-                      ? '摘抄'
-                      : '书签';
-                  return (
-                    <Pressable
-                      key={tab}
-                      accessibilityRole="tab"
-                      accessibilityLabel={tabLabel}
-                      accessibilityState={{ selected: active }}
-                      onPress={() => setDrawerTab(tab)}
-                      style={{
-                        paddingVertical: 5,
-                        paddingHorizontal: 14,
-                        borderRadius: 14,
-                        backgroundColor: active
-                          ? NOVEL_ACCENT
-                          : display.chrome.field,
-                      }}
-                    >
-                      <Text
+                {(['toc', 'search', 'notes', 'marks', 'history'] as const).map(
+                  tab => {
+                    const active = drawerTab === tab;
+                    const tabLabel =
+                      tab === 'toc'
+                        ? '目录'
+                        : tab === 'search'
+                        ? '全文'
+                        : tab === 'notes'
+                        ? '摘抄'
+                        : tab === 'history'
+                        ? '记录'
+                        : '书签';
+                    return (
+                      <Pressable
+                        key={tab}
+                        accessibilityRole="tab"
+                        accessibilityLabel={
+                          tab === 'history' ? '阅读记录' : tabLabel
+                        }
+                        accessibilityState={{ selected: active }}
+                        onPress={() => setDrawerTab(tab)}
                         style={{
-                          fontSize: 12.5,
-                          color: active ? '#fff' : display.chrome.sheetSub,
-                          fontWeight: active ? '600' : '400',
+                          paddingVertical: 5,
+                          paddingHorizontal: 10,
+                          borderRadius: 14,
+                          backgroundColor: active
+                            ? NOVEL_ACCENT
+                            : display.chrome.field,
                         }}
                       >
-                        {tabLabel}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+                        <Text
+                          style={{
+                            fontSize: 12.5,
+                            color: active ? '#fff' : display.chrome.sheetSub,
+                            fontWeight: active ? '600' : '400',
+                          }}
+                        >
+                          {tabLabel}
+                        </Text>
+                      </Pressable>
+                    );
+                  },
+                )}
               </View>
               {(drawerTab === 'toc' || drawerTab === 'search') && (
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
@@ -4245,7 +4298,18 @@ export default function ReaderScreen() {
                 </View>
               )}
             </View>
-            {drawerTab === 'marks' ? (
+            {drawerTab === 'history' ? (
+              <ReadingRecordsList
+                records={displayReadingRecords(book, bookHistory, chapters)}
+                chapters={chapters}
+                ink={display.chrome.sheetInk}
+                sub={display.chrome.sheetSub}
+                accent={NOVEL_ACCENT}
+                onSelect={record =>
+                  jumpToBookmark(record.chapterId, record.position)
+                }
+              />
+            ) : drawerTab === 'marks' ? (
               <ScrollView
                 style={{ flex: 1 }}
                 contentContainerStyle={{

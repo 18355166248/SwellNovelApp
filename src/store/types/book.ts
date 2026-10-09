@@ -25,6 +25,8 @@ export interface Book {
   finishedAt?: number; // 首次读到 100% 的时间，用于年度阅读记录
   progress: number; // 阅读进度 0-100
   currentChapterId?: string;
+  /** 目录等主动跳转前的位置快照，与当前续读位置独立保存。 */
+  readingRecords?: ReadingRecord[];
   totalChapters?: number;
   // 存在则为网络书源书籍：本地 TXT 无此字段。章节正文按需从 source 抓取并缓存。
   source?: BookSourceRef;
@@ -65,4 +67,10 @@ export interface ReadingHistory {
   chapterId: string;
   position: number;
   updatedAt: number;
+}
+
+export interface ReadingRecord extends ReadingHistory {
+  id: string;
+  chapterTitle: string;
+  sourceUrl?: string;
 }

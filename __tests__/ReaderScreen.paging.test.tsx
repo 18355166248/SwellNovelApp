@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { createStore, Provider } from 'jotai';
 import ReaderScreen from '../src/screens/ReaderScreen';
+import { ThemeProvider } from '../src/theme/ThemeContext';
 import {
   booksAtom,
   bookmarksAtom,
@@ -59,7 +60,10 @@ jest.mock('@react-navigation/native', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
-jest.mock('../src/components', () => ({ Icon: () => null }));
+jest.mock('../src/components', () => ({
+  Icon: () => null,
+  Text: require('../src/components/Text').Text,
+}));
 jest.mock('../src/services/webdav/useWebDavAutoBackup', () => ({
   useWebDavAutoBackup: () => ({ trackReadingPosition: jest.fn() }),
 }));
@@ -162,7 +166,9 @@ describe('ReaderScreen paging interactions', () => {
     await act(() => {
       tree = Renderer.create(
         <Provider store={store}>
-          <ReaderScreen />
+          <ThemeProvider>
+            <ReaderScreen />
+          </ThemeProvider>
         </Provider>,
       );
     });
@@ -209,6 +215,73 @@ describe('ReaderScreen paging interactions', () => {
     );
   });
 
+  it('书架只预览目录时跳到别章，也保护上次真实阅读位置', async () => {
+    mockOpenDrawer = true;
+    await mount(0, true, [makeChapter(0, ''), makeChapter(1, '')], {
+      pageMode: 'scroll',
+      position: 1500,
+    });
+    const directory = tree.root.findByType(FlatList).props;
+    await act(() =>
+      directory.renderItem({ item: directory.data[1] }).props.onPress(),
+    );
+    await act(() => jest.advanceTimersByTime(40));
+    expect(store.get(booksAtom)[0].readingRecords?.[0]).toMatchObject({
+      chapterId: 'paging-chapter-0',
+      position: 1500,
+    });
+  });
+
+  it('目录跳转后可从记录恢复原章原页，返回时同时保留离开章的位置', async () => {
+    await mount(0, false, undefined, { position: 1500 });
+    const initialPage = list().props.initialScrollIndex;
+    const originalPosition =
+      store.get(readingHistoryAtom)['paging-test'].position;
+    expect(initialPage).toBeGreaterThan(0);
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '目录' })[0]
+        .props.onPress(),
+    );
+    const directory = tree.root
+      .findAllByType(FlatList)
+      .find(node => node.props.data?.[0]?.c)!;
+    await act(() =>
+      directory.props
+        .renderItem({ item: directory.props.data[1] })
+        .props.onPress(),
+    );
+    await act(() => jest.advanceTimersByTime(40));
+    await visible();
+    expect(store.get(readingHistoryAtom)['paging-test'].chapterId).toBe(
+      'paging-chapter-1',
+    );
+    expect(store.get(booksAtom)[0].readingRecords?.[0]).toMatchObject({
+      chapterId: 'paging-chapter-0',
+      position: originalPosition,
+    });
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '记录' })[0]
+        .props.onPress(),
+    );
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '返回跳转前位置 第1章' })[0]
+        .props.onPress(),
+    );
+    await act(() => jest.advanceTimersByTime(40));
+    await visible();
+    expect(list().props.initialScrollIndex).toBe(initialPage);
+    expect(store.get(readingHistoryAtom)['paging-test']).toMatchObject({
+      chapterId: 'paging-chapter-0',
+      position: originalPosition,
+    });
+    expect(store.get(booksAtom)[0].readingRecords?.[0].chapterId).toBe(
+      'paging-chapter-1',
+    );
+  });
+
   it('pauses reading time in the directory and when another screen covers the reader', async () => {
     await mount();
     const session = startReadingSession as jest.Mock;
@@ -232,7 +305,9 @@ describe('ReaderScreen paging interactions', () => {
     await act(() =>
       tree.update(
         <Provider store={store}>
-          <ReaderScreen />
+          <ThemeProvider>
+            <ReaderScreen />
+          </ThemeProvider>
         </Provider>,
       ),
     );
@@ -648,6 +723,60 @@ describe('ReaderScreen paging interactions', () => {
       position: 0,
     });
     expect(store.get(booksAtom)[0].progress).toBe(50);
+  });
+
+  it('滚动节流尚未写回时跳目录，记录保存屏幕实际位置并可返回', async () => {
+    await mount(0, false, undefined, { pageMode: 'scroll' });
+    const scroll = () =>
+      tree.root
+        .findAllByType(ScrollView)
+        .find(node => node.props.testID === 'reader-scroll-view')!;
+    await act(() => {
+      scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      scroll().props.onContentSizeChange(300, 5000);
+    });
+    await act(() => jest.advanceTimersByTime(20));
+    await act(() =>
+      scroll().props.onScroll({ nativeEvent: { contentOffset: { y: 2200 } } }),
+    );
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(0);
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '目录' })[0]
+        .props.onPress(),
+    );
+    const directory = tree.root.findByType(FlatList).props;
+    await act(() =>
+      directory.renderItem({ item: directory.data[1] }).props.onPress(),
+    );
+    const position = Math.round(Array.from(body.replace(/\n/g, '')).length / 2);
+    expect(store.get(booksAtom)[0].readingRecords?.[0].position).toBe(position);
+    await act(() => jest.advanceTimersByTime(40));
+    await act(() => {
+      scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      scroll().props.onContentSizeChange(300, 5000);
+    });
+    await act(() => jest.advanceTimersByTime(20));
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '记录' })[0]
+        .props.onPress(),
+    );
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '返回跳转前位置 第1章' })[0]
+        .props.onPress(),
+    );
+    await act(() => jest.advanceTimersByTime(40));
+    await act(() => {
+      scroll().props.onLayout({ nativeEvent: { layout: { height: 600 } } });
+      scroll().props.onContentSizeChange(300, 5000);
+    });
+    await act(() => jest.advanceTimersByTime(20));
+    expect(store.get(readingHistoryAtom)['paging-test']).toMatchObject({
+      chapterId: 'paging-chapter-0',
+      position,
+    });
   });
 
   it('saves the latest scroll offset synchronously when leaving before the throttle expires', async () => {

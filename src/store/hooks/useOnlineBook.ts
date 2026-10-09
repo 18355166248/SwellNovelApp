@@ -53,6 +53,7 @@ import {
   repairCatalogPreservingIdentity,
   normalizedChapterIdentity,
 } from '../../utils/catalogRepair';
+import { migrateReadingRecords } from '../../utils/readingRecords';
 import type { RecognizedBook } from '../../services/recognize/recognizer';
 import {
   recognizeBookHtml,
@@ -496,6 +497,10 @@ async function saveImportedBook(
         : incomingBook.source,
     totalChapters: repaired.chapters.length,
     currentChapterId: references.currentChapterId,
+    readingRecords: migrateReadingRecords(
+      latestBook?.readingRecords,
+      repaired.chapters,
+    ),
     progress: latestBook
       ? progressAfterCatalogRepair(
           latestBook,
@@ -1325,6 +1330,7 @@ export const useCheckBookUpdate = () => {
               ? {
                   ...b,
                   currentChapterId: references.currentChapterId,
+                  readingRecords: migrateReadingRecords(b.readingRecords, next),
                   progress: progressAfterCatalogRepair(
                     b,
                     existing,

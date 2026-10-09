@@ -16,6 +16,16 @@ const meta: LibraryMeta = {
       addedAt: 1,
       updatedAt: 1,
       progress: 42,
+      readingRecords: [
+        {
+          id: 'return-point',
+          bookId: 'book-1',
+          chapterId: 'chapter-1',
+          chapterTitle: '第一章',
+          position: 350,
+          updatedAt: 2,
+        },
+      ],
     },
   ],
   readingHistory: {

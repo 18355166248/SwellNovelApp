@@ -357,3 +357,81 @@ it('长书已阅读但总进度为0%时显示续读，未知网站也能检查�
   });
   await act(() => tree.unmount());
 });
+
+it('详情页查看记录不改续读，选择后恢复字符偏移并保留刚离开的位置', async () => {
+  jest.clearAllMocks();
+  mockFocused = true;
+  const store = createStore();
+  store.set(booksAtom, [
+    {
+      id: 'catalog-test',
+      title: '测试小说',
+      author: '作者',
+      addedAt: 1,
+      updatedAt: 1,
+      progress: 75,
+      currentChapterId: 'c2',
+      readingRecords: [
+        {
+          id: 'saved',
+          bookId: 'catalog-test',
+          chapterId: 'c1',
+          chapterTitle: '第一章',
+          position: 500,
+          updatedAt: 2,
+        },
+      ],
+    },
+  ]);
+  store.set(chaptersAtom, {
+    'catalog-test': [1, 2].map(n => ({
+      id: `c${n}`,
+      bookId: 'catalog-test',
+      title: `第${n}章`,
+      content: '字'.repeat(1000),
+      order: n - 1,
+    })),
+  });
+  store.set(readingHistoryAtom, {
+    'catalog-test': {
+      bookId: 'catalog-test',
+      chapterId: 'c2',
+      position: 200,
+      updatedAt: 3,
+    },
+  });
+  const original = store.get(readingHistoryAtom);
+  let tree!: Renderer.ReactTestRenderer;
+  await act(() => {
+    tree = Renderer.create(
+      <Provider store={store}>
+        <ThemeProvider>
+          <BookDetailScreen />
+        </ThemeProvider>
+      </Provider>,
+    );
+  });
+  const press = async (label: string) => {
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: label })[0]
+        .props.onPress(),
+    );
+  };
+  await press('查看阅读记录');
+  expect(store.get(readingHistoryAtom)).toBe(original);
+  expect(mockNavigation.navigate).not.toHaveBeenCalled();
+  await press('返回跳转前位置 第1章');
+  expect(store.get(readingHistoryAtom)['catalog-test']).toMatchObject({
+    chapterId: 'c1',
+    position: 500,
+  });
+  expect(store.get(booksAtom)[0].readingRecords?.[0]).toMatchObject({
+    chapterId: 'c2',
+    position: 200,
+  });
+  expect(mockNavigation.navigate).toHaveBeenCalledWith('Reader', {
+    bookId: 'catalog-test',
+  });
+  await act(() => tree.unmount());
+});

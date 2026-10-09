@@ -1,3 +1,7 @@
+import { useAtomValue } from 'jotai';
+import { readingHistoryAtom } from '../store/atoms';
+import { displayReadingRecords } from '../utils/readingRecords';
+import { ReadingRecordsModal } from '../components/ReadingRecordsList';
 import { forwardAbort, isAbortError } from '../utils/abort';
 import { useScreenTaskSignal } from '../store/hooks/useScreenTaskSignal';
 import React from 'react';
@@ -80,19 +84,23 @@ export default function BookDetailScreen() {
   const [onlineMsg, setOnlineMsg] = React.useState('');
   const [showDeletePrompt, setShowDeletePrompt] = React.useState(false);
   const [catalogOpen, setCatalogOpen] = React.useState(false);
+  const [recordsOpen, setRecordsOpen] = React.useState(false);
+  const histories = useAtomValue(readingHistoryAtom);
   const [moreOpen, setMoreOpen] = React.useState(false);
   React.useLayoutEffect(() => {
     if (!focused) return;
     // 状态栏跟随当前可见背景，由原生导航控制，避免直接调用 StatusBar 与 iOS 控制器冲突。
     navigation.setOptions({
-      statusBarStyle: catalogOpen && !isDarkMode ? 'dark' : 'light',
+      statusBarStyle:
+        (catalogOpen || recordsOpen) && !isDarkMode ? 'dark' : 'light',
     });
-  }, [navigation, catalogOpen, isDarkMode, focused]);
+  }, [navigation, catalogOpen, recordsOpen, isDarkMode, focused]);
   React.useEffect(() => {
     // 页面失焦时同步收起临时浮层，返回书架后不能留下拦截点击的遮罩。
     if (!focused) {
       setMoreOpen(false);
       setCatalogOpen(false);
+      setRecordsOpen(false);
       setShowDeletePrompt(false);
     }
   }, [focused]);
@@ -694,6 +702,20 @@ export default function BookDetailScreen() {
               />
             </View>
           </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="查看阅读记录"
+            onPress={() => setRecordsOpen(true)}
+            style={styles.latest}
+          >
+            <Text style={[styles.latestLabel, { color: palette.accent }]}>
+              阅读记录
+            </Text>
+            <Text style={[styles.latestTitle, { color: palette.secondary }]}>
+              最近位置与目录跳转前的位置
+            </Text>
+            <Icon name="history" size={18} color={palette.accent} />
+          </Pressable>
           {latest && (
             <Pressable
               accessibilityRole="button"
@@ -784,6 +806,21 @@ export default function BookDetailScreen() {
         </View>
       )}
 
+      {recordsOpen && focused && (
+        <ReadingRecordsModal
+          canSelect={catalogReady}
+          records={displayReadingRecords(book, histories[bookId], chapters)}
+          chapters={chapters}
+          onClose={() => setRecordsOpen(false)}
+          onSelect={record => {
+            const index = chapters.findIndex(c => c.id === record.chapterId);
+            if (!catalogReady || index < 0) return;
+            openChapter(bookId, index, { restorePosition: record.position });
+            setRecordsOpen(false);
+            navigation.navigate('Reader', { bookId });
+          }}
+        />
+      )}
       {catalogOpen && (
         <BookCatalogModal
           chapters={chapters}

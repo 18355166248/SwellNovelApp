@@ -1,21 +1,52 @@
-/**
- * 打开指定书籍的某一章节：写入当前章节内容/索引并更新阅读进度。
- * 供 Bookshelf 的“继续阅读”卡片、BookDetail 的目录/继续阅读入口共用。
- */
-
-import { useAtomValue } from 'jotai';
-import { chaptersAtom } from '../atoms';
+/** 选章与位置恢复共用入口；目录跳转前保存独立快照，不能被下一章阅读进度覆盖。 */
+import { useCallback } from 'react';
+import type { ReadingHistory } from '../types/book';
+import { useStore } from 'jotai';
+import { booksAtom, chaptersAtom, readingHistoryAtom } from '../atoms';
 import { useSelectBook, useUpdateReadingProgress } from './useBooks';
 import { useSetChapterContent, useSetChapterIndex } from './useReader';
 import { calculateReadingProgress } from '../../utils/readingProgressPercent';
+import { preserveReadingPosition } from '../../utils/readingRecords';
 
 interface OpenChapterOptions {
-  /** 仅为目录抽屉准备上下文时设为 false，避免“查看目录”被记录成实际阅读。 */
   updateProgress?: boolean;
+  /** 顺序翻章不留跳转快照；目录、书签、阅读记录等主动跳转需要保护原位置。 */
+  preservePreviousPosition?: boolean;
+  restorePosition?: number;
 }
 
+export const usePreserveReadingPosition = () => {
+  const store = useStore();
+  return useCallback(
+    (
+      bookId: string,
+      targetChapterId?: string,
+      targetPosition?: number,
+      currentPosition?: ReadingHistory,
+    ) => {
+      const history = currentPosition ?? store.get(readingHistoryAtom)[bookId];
+      const chapters = store.get(chaptersAtom)[bookId] ?? [];
+      store.set(booksAtom, books =>
+        books.map(book =>
+          book.id === bookId
+            ? preserveReadingPosition(
+                book,
+                history,
+                chapters,
+                targetChapterId,
+                targetPosition,
+              )
+            : book,
+        ),
+      );
+    },
+    [store],
+  );
+};
+
 export const useOpenChapter = () => {
-  const chaptersMap = useAtomValue(chaptersAtom);
+  const store = useStore();
+  const preserve = usePreserveReadingPosition();
   const selectBook = useSelectBook();
   const setChapterIndex = useSetChapterIndex();
   const setChapterContent = useSetChapterContent();
@@ -26,21 +57,39 @@ export const useOpenChapter = () => {
     chapterIndex: number,
     options: OpenChapterOptions = {},
   ) => {
-    const chapters = chaptersMap[bookId] || [];
+    // 事件读取最新目录，避免异步回调持有旧章节数组；无效选章不能污染全局续读状态。
+    const chapters = store.get(chaptersAtom)[bookId] ?? [];
     const chapter = chapters[chapterIndex];
+    if (
+      !chapter ||
+      !store.get(booksAtom).some(b => b.id === bookId && !b.deletedAt)
+    )
+      return;
+    if (
+      options.updateProgress !== false &&
+      options.preservePreviousPosition !== false
+    )
+      preserve(bookId, chapter.id, options.restorePosition);
     selectBook(bookId);
     setChapterIndex(chapterIndex);
-    setChapterContent(chapter?.content || '');
-    if (chapter && chapters.length > 0 && options.updateProgress !== false) {
-      // 打开章节只代表到达章首，不能把整章都算作已读；尤其末章不能在进入时就记为 100%。
+    setChapterContent(chapter.content || '');
+    if (options.updateProgress !== false) {
+      const position = options.restorePosition;
+      const validPosition =
+        position === undefined
+          ? undefined
+          : Math.max(0, Number.isFinite(position) ? position : 0);
       const progress = calculateReadingProgress({
         chapterIndex,
         totalChapters: chapters.length,
-        chapterFraction: 0,
+        chapterFraction:
+          validPosition !== undefined && chapter.content.length
+            ? Math.min(1, validPosition / chapter.content.length)
+            : 0,
+        hasRemainingPages: !!chapter.nextPageUrl,
       });
-      // 只更新书籍进度/当前章，不写 readingHistory.position——页内偏移由阅读器
-      // 按实际翻页落盘，这里传 0 会把续读位置清成章首。
-      updateProgress(bookId, progress, chapter.id);
+      // 普通选章不清空原续读偏移；选中历史记录时显式恢复，阅读器按实际排版落到对应页。
+      updateProgress(bookId, progress, chapter.id, validPosition);
     }
   };
 };
