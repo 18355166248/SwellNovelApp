@@ -22,6 +22,7 @@ export {
   useBookmarks,
   useToggleBookmark,
   useSaveExcerpt,
+  useUpdateExcerptNote,
   useRemoveBookmark,
 } from './useBooks';
 

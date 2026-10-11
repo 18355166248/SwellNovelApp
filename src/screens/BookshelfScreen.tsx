@@ -702,6 +702,21 @@ export default function BookshelfScreen() {
                       </View>
                     </View>
                   </View>
+                  <Text
+                    numberOfLines={2}
+                    style={[styles.gridBookTitle, { color: theme.colors.text }]}
+                  >
+                    {b.title}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.gridBookAuthor,
+                      { color: theme.colors.textSecondary },
+                    ]}
+                  >
+                    {b.author || '作者未知'}
+                  </Text>
                   {selectionMode ? (
                     <View
                       style={[
@@ -1080,6 +1095,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   gridCover: { borderRadius: 0 },
+  gridBookTitle: {
+    fontSize: 12,
+    lineHeight: 18,
+    minHeight: 36,
+    marginTop: 8,
+    fontWeight: '600',
+  },
+  gridBookAuthor: { fontSize: 10, lineHeight: 15, marginTop: 2 },
   badgeText: {
     flexShrink: 1,
     fontSize: 9,

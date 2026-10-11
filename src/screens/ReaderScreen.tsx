@@ -1,4 +1,6 @@
 import ReadingRecordsList from '../components/ReadingRecordsList';
+import ReaderExcerptSheet, { ExcerptDraft } from './reader/ReaderExcerptSheet';
+import { confirmAction } from '../utils/confirm';
 import { displayReadingRecords } from '../utils/readingRecords';
 import { usePreserveReadingPosition } from '../store/hooks/useOpenChapter';
 import { useScreenTaskSignal } from '../store/hooks/useScreenTaskSignal';
@@ -23,7 +25,6 @@ import {
   useWindowDimensions,
   InteractionManager,
   AppState,
-  KeyboardAvoidingView,
 } from 'react-native';
 import {
   useNavigation,
@@ -61,6 +62,7 @@ import {
   useBookmarks,
   useToggleBookmark,
   useSaveExcerpt,
+  useUpdateExcerptNote,
   useRemoveBookmark,
   useEnsureChapterContent,
   useLoadNextChapterPage,
@@ -149,13 +151,6 @@ import {
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRoute = RouteProp<RootStackParamList, 'Reader'>;
 type DrawerChapterItem = { c: Chapter; idx: number };
-
-interface ExcerptDraft {
-  chapterId: string;
-  position: number;
-  excerpt: string;
-  note: string;
-}
 
 function hasUsableChapterContent(
   chapter: Chapter | undefined,
@@ -495,6 +490,7 @@ export default function ReaderScreen() {
   const bookmarks = useBookmarks(bookId);
   const toggleBookmark = useToggleBookmark();
   const saveExcerpt = useSaveExcerpt();
+  const updateExcerptNote = useUpdateExcerptNote();
   const removeBookmark = useRemoveBookmark();
   const plainBookmarks = React.useMemo(
     () => bookmarks.filter(item => !item.excerpt),
@@ -525,6 +521,39 @@ export default function ReaderScreen() {
     setReadingEngaged(true);
     setDrawerOpen(false);
   }, []);
+
+  // 所有关闭入口共用脏状态保护；查看或取消编辑不能顺带改变正文的续读落点。
+  const closeExcerptDraft = React.useCallback(
+    (afterClose?: () => void) => {
+      const close = () => {
+        setExcerptDraft(null);
+        if (excerptDraft?.returnToList) setDrawerOpen(true);
+        afterClose?.();
+      };
+      if (
+        excerptDraft &&
+        excerptDraft.note.trim() !== excerptDraft.originalNote.trim()
+      ) {
+        confirmAction(
+          '放弃修改？',
+          '笔记尚未保存，关闭后会丢失本次修改。',
+          close,
+          '放弃修改',
+        );
+      } else {
+        close();
+      }
+    },
+    [excerptDraft],
+  );
+
+  const confirmRemoveBookmark = (bookmarkId: string, excerpt = false) => {
+    confirmAction(
+      excerpt ? '删除摘抄' : '删除书签',
+      excerpt ? '确定删除这条摘抄和笔记？' : '确定删除这个书签？',
+      () => removeBookmark(bookId, bookmarkId),
+    );
+  };
 
   React.useEffect(() => {
     // 阅读页每次进入都从竖屏开始，离开前也恢复竖屏，避免横屏状态泄漏到书架等页面。
@@ -935,6 +964,11 @@ export default function ReaderScreen() {
         fallbackPosition,
       );
       if (!resolved) return;
+      // 再次长按已保存的位置时带回原笔记，避免空草稿覆盖已有想法。
+      const previous = excerpts.find(
+        item =>
+          item.chapterId === chapter.id && item.position === resolved.position,
+      );
       setSettingsOpen(false);
       setBackgroundOpen(false);
       setDrawerOpen(false);
@@ -943,10 +977,20 @@ export default function ReaderScreen() {
         chapterId: chapter.id,
         position: resolved.position,
         excerpt: resolved.excerpt,
-        note: '',
+        note: previous?.note ?? '',
+        originalNote: previous?.note ?? '',
+        bookmarkId: previous?.id,
+        saved: !!previous,
       });
     },
-    [chapter, chapterSourceContent, setToolbarVisible],
+    [chapter, chapterSourceContent, excerpts, setToolbarVisible],
+  );
+  const excerptBookmark = excerpts.find(
+    item => item.id === excerptDraft?.bookmarkId,
+  );
+  const excerptAnchor = excerptBookmark ?? excerptDraft;
+  const excerptChapter = chapters.find(
+    item => item.id === excerptAnchor?.chapterId,
   );
   const topChapterLabel = formatReaderChapterLabel(chapter, chapterIndex);
 
@@ -2246,7 +2290,7 @@ export default function ReaderScreen() {
     if (Platform.OS !== 'android') return;
     const onBack = () => {
       if (excerptDraft) {
-        setExcerptDraft(null);
+        closeExcerptDraft();
         return true;
       }
       if (backgroundOpen) {
@@ -2274,6 +2318,7 @@ export default function ReaderScreen() {
     closeBackgroundStudio,
     closeDrawerAndStartReading,
     excerptDraft,
+    closeExcerptDraft,
     settingsOpen,
     drawerOpen,
     isToolbarVisible,
@@ -3322,131 +3367,54 @@ export default function ReaderScreen() {
       </Animated.View>
 
       {excerptDraft ? (
-        <>
-          <View style={[styles.overlay, styles.excerptOverlay]}>
-            <Pressable
-              style={StyleSheet.absoluteFill}
-              onPress={() => setExcerptDraft(null)}
-            />
-          </View>
-          <KeyboardAvoidingView
-            pointerEvents="box-none"
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.excerptKeyboardLayer}
-          >
-            <View
-              style={[
-                styles.excerptSheet,
-                { backgroundColor: display.chrome.sheetBg },
-              ]}
-            >
-              <View style={styles.excerptHeader}>
-                <View>
-                  <Text
-                    style={[
-                      styles.excerptTitle,
-                      { color: display.chrome.sheetInk },
-                    ]}
-                  >
-                    保存摘抄
-                  </Text>
-                  <Text
-                    style={{
-                      color: display.chrome.sheetSub,
-                      fontSize: 11,
-                      marginTop: 2,
-                    }}
-                  >
-                    {chapter?.title || `第 ${chapterIndex + 1} 章`}
-                  </Text>
-                </View>
-                <Pressable
-                  accessibilityLabel="关闭摘抄面板"
-                  onPress={() => setExcerptDraft(null)}
-                  style={styles.excerptClose}
-                >
-                  <Icon
-                    name="close"
-                    size={20}
-                    color={display.chrome.sheetSub}
-                  />
-                </Pressable>
-              </View>
-              <View
-                style={[
-                  styles.excerptPreview,
-                  { backgroundColor: display.chrome.field },
-                ]}
-              >
-                <Text
-                  numberOfLines={5}
-                  style={{
-                    color: display.chrome.sheetInk,
-                    fontSize: 13,
-                    lineHeight: 20,
-                  }}
-                >
-                  {excerptDraft.excerpt}
-                </Text>
-              </View>
-              <TextInput
-                value={excerptDraft.note}
-                onChangeText={note =>
-                  setExcerptDraft(current =>
-                    current ? { ...current, note } : current,
+        <ReaderExcerptSheet
+          draft={excerptDraft}
+          chapterTitle={excerptChapter?.title || '原章节暂不可用'}
+          bottomInset={insets.bottom}
+          colors={{
+            background: display.chrome.sheetBg,
+            field: display.chrome.field,
+            ink: display.chrome.sheetInk,
+            sub: display.chrome.sheetSub,
+            border: display.chrome.hair,
+          }}
+          onChangeNote={note =>
+            setExcerptDraft(current =>
+              current ? { ...current, note } : current,
+            )
+          }
+          onClose={() => closeExcerptDraft()}
+          onSave={() => {
+            if (excerptDraft.bookmarkId) {
+              updateExcerptNote(
+                bookId,
+                excerptDraft.bookmarkId,
+                excerptDraft.note,
+              );
+            } else {
+              saveExcerpt(
+                bookId,
+                excerptDraft.chapterId,
+                excerptDraft.position,
+                excerptDraft.excerpt,
+                excerptDraft.note,
+              );
+            }
+            setExcerptDraft(null);
+            if (excerptDraft.returnToList) setDrawerOpen(true);
+          }}
+          onReturnToText={
+            excerptDraft.saved && excerptChapter && excerptAnchor
+              ? () =>
+                  closeExcerptDraft(() =>
+                    jumpToBookmark(
+                      excerptAnchor.chapterId,
+                      excerptAnchor.position,
+                    ),
                   )
-                }
-                multiline
-                maxLength={500}
-                placeholder="写一句想法（可选）"
-                placeholderTextColor={display.chrome.sheetSub}
-                style={[
-                  styles.excerptNoteInput,
-                  {
-                    color: display.chrome.sheetInk,
-                    borderColor: display.chrome.hair,
-                  },
-                ]}
-              />
-              <View style={styles.excerptActions}>
-                <Pressable
-                  onPress={() => setExcerptDraft(null)}
-                  style={[
-                    styles.excerptActionButton,
-                    { borderColor: display.chrome.hair },
-                  ]}
-                >
-                  <Text
-                    style={{ color: display.chrome.sheetSub, fontSize: 13 }}
-                  >
-                    取消
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    saveExcerpt(
-                      bookId,
-                      excerptDraft.chapterId,
-                      excerptDraft.position,
-                      excerptDraft.excerpt,
-                      excerptDraft.note,
-                    );
-                    setExcerptDraft(null);
-                  }}
-                  style={[
-                    styles.excerptActionButton,
-                    {
-                      backgroundColor: NOVEL_ACCENT,
-                      borderColor: NOVEL_ACCENT,
-                    },
-                  ]}
-                >
-                  <Text style={styles.excerptSaveText}>保存</Text>
-                </Pressable>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </>
+              : undefined
+          }
+        />
       ) : null}
 
       {sheetTransition.mounted && (
@@ -4304,7 +4272,7 @@ export default function ReaderScreen() {
                 chapters={chapters}
                 ink={display.chrome.sheetInk}
                 sub={display.chrome.sheetSub}
-                accent={NOVEL_ACCENT}
+                accent={display.chrome.sheetInk}
                 onSelect={record =>
                   jumpToBookmark(record.chapterId, record.position)
                 }
@@ -4340,22 +4308,27 @@ export default function ReaderScreen() {
                       bm,
                       idx: chapters.findIndex(c => c.id === bm.chapterId),
                     }))
-                    .filter(x => x.idx >= 0)
-                    .sort((a, b) => a.idx - b.idx)
+                    .sort(
+                      (a, b) =>
+                        (a.idx < 0 ? Infinity : a.idx) -
+                        (b.idx < 0 ? Infinity : b.idx),
+                    )
                     .map(({ bm, idx }) => (
                       <Pressable
                         key={bm.id}
                         accessibilityRole="button"
-                        accessibilityLabel={`跳转到${
-                          chapters[idx]?.title || `第 ${idx + 1} 章`
-                        }的书签`}
+                        accessibilityLabel={
+                          idx < 0
+                            ? '原章节暂不可用的书签，长按可删除'
+                            : `跳转到${
+                                chapters[idx]?.title || `第 ${idx + 1} 章`
+                              }的书签`
+                        }
                         accessibilityHint="长按可删除书签"
                         onPress={() =>
-                          jumpToBookmark(bm.chapterId, bm.position)
+                          idx >= 0 && jumpToBookmark(bm.chapterId, bm.position)
                         }
-                        onLongPress={() =>
-                          toggleBookmark(bookId, bm.chapterId, bm.position)
-                        }
+                        onLongPress={() => confirmRemoveBookmark(bm.id)}
                         delayLongPress={350}
                         style={styles.chapterRow}
                       >
@@ -4367,13 +4340,13 @@ export default function ReaderScreen() {
                         />
                         <View style={{ flex: 1 }}>
                           <Text
-                            numberOfLines={1}
                             style={{
                               fontSize: 13.5,
+                              lineHeight: 21,
                               color: display.chrome.sheetInk,
                             }}
                           >
-                            {chapters[idx]?.title || `第 ${idx + 1} 章`}
+                            {chapters[idx]?.title || '原章节暂不可用'}
                           </Text>
                           <Text
                             style={{
@@ -4382,9 +4355,11 @@ export default function ReaderScreen() {
                               marginTop: 2,
                             }}
                           >
-                            {`${isOnline ? '目录第' : '第'} ${idx + 1} ${
-                              isOnline ? '项' : '章'
-                            } · 长按删除`}
+                            {idx < 0
+                              ? '书签仍已保留 · 长按删除'
+                              : `${isOnline ? '目录第' : '第'} ${idx + 1} ${
+                                  isOnline ? '项' : '章'
+                                } · 长按删除`}
                           </Text>
                         </View>
                       </Pressable>
@@ -4427,30 +4402,39 @@ export default function ReaderScreen() {
                         chapterItem => chapterItem.id === item.chapterId,
                       ),
                     }))
-                    .filter(entry => entry.idx >= 0)
+                    // 目录暂时缺项不代表摘抄丢失；仍允许查看、编辑与删除原记录。
                     .sort(
                       (a, b) =>
-                        a.idx - b.idx || a.item.position - b.item.position,
+                        (a.idx < 0 ? Infinity : a.idx) -
+                          (b.idx < 0 ? Infinity : b.idx) ||
+                        a.item.position - b.item.position,
                     )
                     .map(({ item, idx }) => (
                       <Pressable
                         key={item.id}
+                        testID={`excerpt-item-${item.id}`}
                         accessibilityRole="button"
-                        accessibilityLabel={`跳转到摘抄：${item.excerpt}`}
-                        accessibilityHint="长按可删除摘抄"
-                        onPress={() =>
-                          jumpToBookmark(item.chapterId, item.position)
-                        }
-                        onLongPress={() =>
-                          Alert.alert('删除摘抄', '确定删除这条摘抄和笔记？', [
-                            { text: '取消', style: 'cancel' },
-                            {
-                              text: '删除',
-                              style: 'destructive',
-                              onPress: () => removeBookmark(bookId, item.id),
-                            },
-                          ])
-                        }
+                        accessibilityLabel={`查看摘抄与笔记：${
+                          idx >= 0
+                            ? displayChapterTitle(chapters[idx], idx)
+                            : '原章节暂不可用'
+                        }`}
+                        accessibilityHint="查看完整内容并编辑笔记，长按可删除摘抄"
+                        onPress={() => {
+                          setExcerptDraft({
+                            chapterId: item.chapterId,
+                            position: item.position,
+                            excerpt: item.excerpt!,
+                            note: item.note ?? '',
+                            originalNote: item.note ?? '',
+                            bookmarkId: item.id,
+                            saved: true,
+                            returnToList: true,
+                          });
+                          setDrawerOpen(false);
+                          setToolbarVisible(false);
+                        }}
+                        onLongPress={() => confirmRemoveBookmark(item.id, true)}
                         delayLongPress={350}
                         style={[
                           styles.excerptListItem,
@@ -4459,14 +4443,17 @@ export default function ReaderScreen() {
                       >
                         <View style={styles.excerptListHeader}>
                           <Text
-                            numberOfLines={1}
                             style={{
-                              color: NOVEL_ACCENT,
+                              color: display.chrome.sheetInk,
                               fontSize: 11,
+                              lineHeight: 17,
+                              fontWeight: '500',
                               flex: 1,
                             }}
                           >
-                            {displayChapterTitle(chapters[idx], idx)}
+                            {idx >= 0
+                              ? displayChapterTitle(chapters[idx], idx)
+                              : '原章节暂不可用 · 摘抄已保留'}
                           </Text>
                           <Text
                             style={{
@@ -4474,7 +4461,7 @@ export default function ReaderScreen() {
                               fontSize: 10,
                             }}
                           >
-                            长按删除
+                            查看 · 长按删除
                           </Text>
                         </View>
                         <Text
@@ -4980,78 +4967,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,.35)',
     zIndex: 3,
   },
-  excerptOverlay: {
-    zIndex: 7,
-  },
   drawerOverlay: {
     // 关闭手势只覆盖目录右侧正文，不能拦截目录内部的标签、搜索和章节点击。
     left: DRAWER_WIDTH,
     backgroundColor: 'transparent',
-  },
-  excerptKeyboardLayer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 8,
-  },
-  excerptSheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 24,
-  },
-  excerptHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  excerptTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  excerptClose: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  excerptPreview: {
-    borderRadius: 10,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    marginBottom: 12,
-  },
-  excerptNoteInput: {
-    minHeight: 76,
-    maxHeight: 120,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlignVertical: 'top',
-    marginBottom: 14,
-  },
-  excerptActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  excerptActionButton: {
-    flex: 1,
-    height: 42,
-    borderWidth: 1,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  excerptSaveText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
   },
   // 背景工作台本身就是实时预览，遮罩只做层级提示，不能像普通弹窗一样压暗正文。
   backgroundOverlay: {

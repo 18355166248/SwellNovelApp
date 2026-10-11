@@ -1,5 +1,18 @@
 import type { Bookmark } from '../store/types/book';
 
+/** 按稳定 id 修改笔记；编辑期间目录可能已重排，不能用打开时的旧章节位置重新插入。 */
+export function updateExcerptNote(
+  list: Bookmark[],
+  bookmarkId: string,
+  note: string,
+): Bookmark[] {
+  return list.map(item =>
+    item.id === bookmarkId && item.excerpt
+      ? { ...item, note: note.trim() || undefined }
+      : item,
+  );
+}
+
 /** 切换单章普通书签；摘抄与笔记虽然共用列表，但永远不能被该操作删除。 */
 export function togglePlainBookmark(
   list: Bookmark[],

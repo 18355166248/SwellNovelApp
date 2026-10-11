@@ -2,8 +2,10 @@ import React from 'react';
 import Renderer, { act } from 'react-test-renderer';
 import {
   AppState,
+  Alert,
   FlatList,
   ScrollView,
+  TextInput,
   type AppStateStatus,
 } from 'react-native';
 import { createStore, Provider } from 'jotai';
@@ -666,6 +668,179 @@ describe('ReaderScreen paging interactions', () => {
     await jump();
     expect(scrollTo).toHaveBeenCalledTimes(1);
     scrollTo.mockRestore();
+  });
+
+  const openNoteTab = async () => {
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '目录' })[0]
+        .props.onPress(),
+    );
+    await act(() =>
+      tree.root
+        .findAllByProps({
+          accessibilityLabel: '摘抄',
+          accessibilityRole: 'tab',
+        })[0]
+        .props.onPress(),
+    );
+  };
+
+  it('viewing and editing a saved note preserves the reading position and its remapped chapter reference', async () => {
+    await mount(0, false, undefined, { position: 1500 });
+    const saved = {
+      id: 'note-1',
+      bookId: 'paging-test',
+      chapterId: 'paging-chapter-1',
+      position: 200,
+      createdAt: 1,
+      excerpt: '另一章的摘抄',
+      note: '旧笔记',
+    };
+    await act(() => store.set(bookmarksAtom, { 'paging-test': [saved] }));
+    const before = store.get(readingHistoryAtom)['paging-test'];
+    await openNoteTab();
+    await act(() =>
+      tree.root.findByProps({ testID: 'excerpt-item-note-1' }).props.onPress(),
+    );
+    expect(store.get(currentChapterIndexAtom)).toBe(0);
+    expect(store.get(readingHistoryAtom)['paging-test']).toEqual(before);
+    const input = tree.root
+      .findAllByType(TextInput)
+      .find(node => node.props.accessibilityLabel === '摘抄笔记')!;
+    await act(() => {
+      input.props.onChangeText('修改后的笔记');
+      store.set(bookmarksAtom, {
+        'paging-test': [
+          { ...saved, chapterId: 'paging-chapter-0', position: 300 },
+        ],
+      });
+    });
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '保存摘抄笔记' })[0]
+        .props.onPress(),
+    );
+    expect(store.get(bookmarksAtom)['paging-test']).toEqual([
+      {
+        ...saved,
+        chapterId: 'paging-chapter-0',
+        position: 300,
+        note: '修改后的笔记',
+      },
+    ]);
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+      before.position,
+    );
+    expect(store.get(booksAtom)[0].readingRecords).toBeUndefined();
+  });
+
+  it('shows unavailable-chapter notes and confirms abandoning changed text', async () => {
+    await mount();
+    await act(() =>
+      store.set(bookmarksAtom, {
+        'paging-test': [
+          {
+            id: 'missing-note',
+            bookId: 'paging-test',
+            chapterId: 'removed-chapter',
+            position: 80,
+            createdAt: 1,
+            excerpt: '仍需保留的摘抄',
+            note: '原笔记',
+          },
+        ],
+      }),
+    );
+    await openNoteTab();
+    await act(() =>
+      tree.root
+        .findByProps({ testID: 'excerpt-item-missing-note' })
+        .props.onPress(),
+    );
+    expect(
+      tree.root.findAllByProps({ accessibilityLabel: '返回摘抄原文' })[0].props
+        .disabled,
+    ).toBe(true);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    try {
+      const input = tree.root
+        .findAllByType(TextInput)
+        .find(node => node.props.accessibilityLabel === '摘抄笔记')!;
+      await act(() => input.props.onChangeText('未保存的笔记'));
+      await act(() =>
+        tree.root
+          .findAllByProps({ accessibilityLabel: '关闭摘抄与笔记' })[0]
+          .props.onPress(),
+      );
+      expect(alert).toHaveBeenCalledWith(
+        '放弃修改？',
+        expect.any(String),
+        expect.any(Array),
+      );
+      expect(
+        tree.root.findAllByProps({ accessibilityLabel: '摘抄笔记' }).length,
+      ).toBeGreaterThan(0);
+      const buttons = alert.mock.calls[0][2]!;
+      await act(() =>
+        buttons.find(button => button.text === '放弃修改')!.onPress!(),
+      );
+      expect(
+        tree.root.findAllByProps({ accessibilityLabel: '摘抄笔记' }),
+      ).toHaveLength(0);
+      expect(store.get(bookmarksAtom)['paging-test'][0].note).toBe('原笔记');
+    } finally {
+      alert.mockRestore();
+    }
+  });
+
+  it('confirms bookmark deletion and preserves the same-chapter excerpt', async () => {
+    await mount();
+    const plain = {
+      id: 'plain',
+      bookId: 'paging-test',
+      chapterId: 'paging-chapter-0',
+      position: 50,
+      createdAt: 1,
+    };
+    const excerpt = {
+      ...plain,
+      id: 'excerpt',
+      excerpt: '同章摘抄',
+      note: '需要保留',
+    };
+    await act(() =>
+      store.set(bookmarksAtom, { 'paging-test': [plain, excerpt] }),
+    );
+    await act(() =>
+      tree.root
+        .findAllByProps({ accessibilityLabel: '目录' })[0]
+        .props.onPress(),
+    );
+    await act(() =>
+      tree.root
+        .findAllByProps({
+          accessibilityLabel: '书签',
+          accessibilityRole: 'tab',
+        })[0]
+        .props.onPress(),
+    );
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    try {
+      await act(() =>
+        tree.root
+          .findAllByProps({ accessibilityLabel: '跳转到第1章的书签' })[0]
+          .props.onLongPress(),
+      );
+      expect(store.get(bookmarksAtom)['paging-test']).toEqual([plain, excerpt]);
+      const buttons = alert.mock.calls[0][2]!;
+      await act(() =>
+        buttons.find(button => button.text === '删除')!.onPress!(),
+      );
+      expect(store.get(bookmarksAtom)['paging-test']).toEqual([excerpt]);
+    } finally {
+      alert.mockRestore();
+    }
   });
 
   it('keeps the scroll resume anchor through first-frame zero offsets and changed measurements', async () => {

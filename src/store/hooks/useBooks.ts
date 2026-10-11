@@ -18,7 +18,11 @@ import {
   readingHistoryAtom,
   bookmarksAtom,
 } from '../atoms';
-import { togglePlainBookmark, upsertExcerpt } from '../../utils/bookmarks';
+import {
+  togglePlainBookmark,
+  upsertExcerpt,
+  updateExcerptNote,
+} from '../../utils/bookmarks';
 import { Book, Chapter } from '../types/book';
 import {
   deleteBookChapters,
@@ -335,6 +339,17 @@ export const useSaveExcerpt = () => {
         ),
       };
     });
+  };
+};
+
+/** 修改已有摘抄的笔记，保留最新目录引用、正文、id 和创建时间。 */
+export const useUpdateExcerptNote = () => {
+  const setBookmarks = useSetAtom(bookmarksAtom);
+  return (bookId: string, bookmarkId: string, note: string) => {
+    setBookmarks(prev => ({
+      ...prev,
+      [bookId]: updateExcerptNote(prev[bookId] || [], bookmarkId, note),
+    }));
   };
 };
 

@@ -1,4 +1,8 @@
-import { togglePlainBookmark, upsertExcerpt } from '../src/utils/bookmarks';
+import {
+  togglePlainBookmark,
+  upsertExcerpt,
+  updateExcerptNote,
+} from '../src/utils/bookmarks';
 import type { Bookmark } from '../src/store/types/book';
 
 describe('togglePlainBookmark', () => {
@@ -22,13 +26,7 @@ describe('togglePlainBookmark', () => {
     };
 
     expect(
-      togglePlainBookmark(
-        [excerpt, plain],
-        'book-1',
-        'chapter-1',
-        10,
-        3,
-      ),
+      togglePlainBookmark([excerpt, plain], 'book-1', 'chapter-1', 10, 3),
     ).toEqual([excerpt]);
   });
 
@@ -107,5 +105,35 @@ describe('upsertExcerpt', () => {
       note: '补充笔记',
       createdAt: 100,
     });
+  });
+});
+
+describe('updateExcerptNote', () => {
+  const saved: Bookmark = {
+    id: 'excerpt',
+    bookId: 'book',
+    chapterId: 'remapped-chapter',
+    position: 123,
+    createdAt: 1,
+    excerpt: '原始摘抄',
+    note: '原始笔记',
+  };
+
+  it('updates only the note after directory references have changed', () => {
+    const result = updateExcerptNote([saved], saved.id, '  新笔记  ');
+    expect(result).toEqual([{ ...saved, note: '新笔记' }]);
+    expect(saved.note).toBe('原始笔记');
+  });
+
+  it('clears an optional note without deleting the quote', () => {
+    expect(updateExcerptNote([saved], saved.id, '  ')).toEqual([
+      { ...saved, note: undefined },
+    ]);
+  });
+
+  it('never resurrects a removed excerpt or modifies a plain bookmark', () => {
+    expect(updateExcerptNote([], saved.id, '笔记')).toEqual([]);
+    const plain = { ...saved, excerpt: undefined, note: undefined };
+    expect(updateExcerptNote([plain], plain.id, '笔记')).toEqual([plain]);
   });
 });
