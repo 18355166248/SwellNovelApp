@@ -2,10 +2,12 @@ import React from 'react';
 import Renderer, { act } from 'react-test-renderer';
 import {
   AppState,
+  Dimensions,
   Alert,
   FlatList,
   ScrollView,
   TextInput,
+  Text,
   type AppStateStatus,
 } from 'react-native';
 import { createStore, Provider } from 'jotai';
@@ -59,8 +61,14 @@ jest.mock('@react-navigation/native', () => ({
   }),
   useIsFocused: () => mockReaderFocused,
 }));
+let mockSafeAreaBottom = 0;
 jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => ({
+    top: 0,
+    right: 0,
+    bottom: mockSafeAreaBottom,
+    left: 0,
+  }),
 }));
 jest.mock('../src/components', () => ({
   Icon: () => null,
@@ -179,6 +187,7 @@ describe('ReaderScreen paging interactions', () => {
 
   beforeEach(() => {
     jest.useFakeTimers();
+    mockSafeAreaBottom = 0;
     mockReaderFocused = true;
     mockOpenDrawer = false;
     mockNavigationListeners.clear();
@@ -356,11 +365,19 @@ describe('ReaderScreen paging interactions', () => {
     });
     const props = list().props;
     const offset = props.data[3].startOffset;
-    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(offset);
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(0);
     await act(() =>
       props.onMomentumScrollEnd({
         nativeEvent: {
           contentOffset: { x: props.getItemLayout(null, 1).offset },
+        },
+      }),
+    );
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(0);
+    await act(() =>
+      props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: props.getItemLayout(null, 3).offset },
         },
       }),
     );
@@ -490,6 +507,13 @@ describe('ReaderScreen paging interactions', () => {
     await act(() => {
       for (let i = 0; i < 3; i++) press(1000);
     });
+    await act(() =>
+      list().props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: list().props.getItemLayout(null, 3).offset },
+        },
+      }),
+    );
     const position = store.get(readingHistoryAtom)['paging-test'].position;
     await act(() =>
       heading().props.onLayout({ nativeEvent: { layout: { height: 280 } } }),
@@ -498,6 +522,404 @@ describe('ReaderScreen paging interactions', () => {
     expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
       position,
     );
+  });
+
+  it('keeps the progress row above the gesture area outside the body budget', async () => {
+    mockSafeAreaBottom = 34;
+    await mount();
+    const props = list().props;
+    const page = props.renderItem({ item: props.data[1], index: 1 });
+    expect(page.props.style[1].paddingBottom).toBe(56);
+  });
+
+  it('repaginates a native extra line without dropping content or moving the reading anchor', async () => {
+    await mount();
+    await act(() => {
+      for (let i = 0; i < 3; i++) press(1000);
+    });
+    await act(() =>
+      list().props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: 3 * list().props.getItemLayout(null, 3).length },
+        },
+      }),
+    );
+    const position = store.get(readingHistoryAtom)['paging-test'].position;
+    const props = list().props;
+    const before: ReaderPageData[] = props.data;
+    const page = props.renderItem({ item: before[3], index: 3 });
+    const measuredBody = page.props.children.props.children[1];
+    const lineHeight =
+      measuredBody.props.children[0].props.style.lineHeight *
+      Dimensions.get('window').fontScale;
+    const panel = page.props.style[1];
+    const availableHeight =
+      Dimensions.get('window').height - panel.paddingTop - panel.paddingBottom;
+    await act(() =>
+      measuredBody.props.onLayout({
+        nativeEvent: { layout: { height: availableHeight + lineHeight * 0.2 } },
+      }),
+    );
+    await act(() => jest.advanceTimersByTime(20));
+    const after: ReaderPageData[] = list().props.data;
+    expect(after.slice(0, 3)).toEqual(before.slice(0, 3));
+    expect(after[3].startOffset).toBe(before[3].startOffset);
+    expect(after[4].startOffset).toBeLessThan(before[4].startOffset);
+    const content = (data: ReaderPageData[]) =>
+      data
+        .flatMap(item =>
+          item.blocks.map(block => block.text.replace(/[\n　]/g, '')),
+        )
+        .join('');
+    expect(content(after)).toBe(content(before));
+    await visible();
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+      position,
+    );
+    // 重排前的旧页回调不能继续缩小新会话的正文预算。
+    await act(() =>
+      measuredBody.props.onLayout({
+        nativeEvent: { layout: { height: availableHeight + lineHeight * 5 } },
+      }),
+    );
+    expect(list().props.data).toBe(after);
+  });
+
+  it('ignores an earlier mounted page measurement after turning forward', async () => {
+    await mount();
+    await act(() => {
+      for (let i = 0; i < 3; i++) press(1000);
+    });
+    await act(() =>
+      list().props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: 3 * list().props.getItemLayout(null, 3).length },
+        },
+      }),
+    );
+    const props = list().props;
+    const before: ReaderPageData[] = props.data;
+    const currentStart = before[3].startOffset;
+    const previousPage = props.renderItem({ item: before[1], index: 1 });
+    const panel = previousPage.props.style[1];
+    const availableHeight =
+      Dimensions.get('window').height - panel.paddingTop - panel.paddingBottom;
+    await act(() =>
+      previousPage.props.children.props.children[1].props.onLayout({
+        nativeEvent: { layout: { height: availableHeight + 20 } },
+      }),
+    );
+    // 虚拟列表保留前后页；已翻过页面的迟到测量不能移动当前页首、重建列表。
+    expect(list().props.data).toBe(before);
+    expect(list().props.data[list().props.initialScrollIndex].startOffset).toBe(
+      currentStart,
+    );
+  });
+
+  it('defers an overflowing target page measurement until the turn animation ends', async () => {
+    await mount();
+    await act(() => press(1000));
+    const props = list().props;
+    const before: ReaderPageData[] = props.data;
+    const target = props.renderItem({ item: before[1], index: 1 });
+    const panel = target.props.style[1];
+    const availableHeight =
+      Dimensions.get('window').height - panel.paddingTop - panel.paddingBottom;
+    await act(() =>
+      target.props.children.props.children[1].props.onLayout({
+        nativeEvent: { layout: { height: availableHeight + 20 } },
+      }),
+    );
+    expect(list().props.data).toBe(before);
+    await act(() =>
+      props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: props.getItemLayout(null, 1).length },
+        },
+      }),
+    );
+    await act(() => jest.advanceTimersByTime(20));
+    const after: ReaderPageData[] = list().props.data;
+    expect(after[1].startOffset).toBe(before[1].startOffset);
+    expect(after[2].startOffset).toBeLessThan(before[2].startOffset);
+    expect(list().props.initialScrollIndex).toBe(1);
+    expect(list().props.scrollEnabled).toBe(true);
+    expect(
+      tree.root.findAllByProps({ testID: 'reader-page-preparing' }),
+    ).toHaveLength(0);
+  });
+
+  it('retains unchanged prefetched heights across another page correction without reusing changed body heights', async () => {
+    await mount();
+    await act(() => {
+      for (let i = 0; i < 3; i++) press(1000);
+    });
+    const before: ReaderPageData[] = list().props.data;
+    const measureOverflow = (index: number) => {
+      const props = list().props;
+      const page = props.renderItem({ item: props.data[index], index });
+      const panel = page.props.style[1];
+      const budget =
+        Dimensions.get('window').height -
+        panel.paddingTop -
+        panel.paddingBottom;
+      page.props.children.props.children[1].props.onLayout({
+        nativeEvent: { layout: { height: budget + 20 } },
+      });
+    };
+    const settle = async (index: number) => {
+      const props = list().props;
+      await act(() =>
+        props.onMomentumScrollEnd({
+          nativeEvent: {
+            contentOffset: { x: props.getItemLayout(null, index).offset },
+          },
+        }),
+      );
+    };
+    await act(() => {
+      measureOverflow(1);
+      measureOverflow(3);
+    });
+    await settle(3);
+    await act(() => jest.advanceTimersByTime(20));
+    const afterThird: ReaderPageData[] = list().props.data;
+    expect(afterThird[4].startOffset).toBeLessThan(before[4].startOffset);
+    // 原生端同一尺寸不会再触发 onLayout；再次落定也不能用旧高度二次缩短正文。
+    await settle(3);
+    expect(list().props.data).toBe(afterThird);
+    await act(() => {
+      press(0);
+      press(0);
+    });
+    await settle(1);
+    await act(() => jest.advanceTimersByTime(20));
+    const afterFirst: ReaderPageData[] = list().props.data;
+    expect(afterFirst[1].startOffset).toBe(before[1].startOffset);
+    expect(afterFirst[2].startOffset).toBeLessThan(before[2].startOffset);
+    expect(list().props.scrollEnabled).toBe(true);
+  });
+
+  it.each(['body-first', 'text-first', 'text-only'])(
+    'uses native line boundaries with %s callbacks',
+    async order => {
+      await mount(0, false, [makeChapter(0, '测试正文'.repeat(2000))]);
+      await act(() => press(1000));
+      const props = list().props;
+      await act(() =>
+        props.onMomentumScrollEnd({
+          nativeEvent: {
+            contentOffset: { x: props.getItemLayout(null, 1).offset },
+          },
+        }),
+      );
+      const page = props.renderItem({ item: props.data[1], index: 1 });
+      const bodyView = page.props.children.props.children[1];
+      const nativeText = bodyView.props.children[0];
+      const panel = page.props.style[1];
+      const budget =
+        Dimensions.get('window').height -
+        panel.paddingTop -
+        panel.paddingBottom;
+      const text = nativeText.props.children;
+      const measureBody = () =>
+        bodyView.props.onLayout({
+          nativeEvent: { layout: { height: budget + 20 } },
+        });
+      const measureText = () =>
+        nativeText.props.onTextLayout({
+          nativeEvent: {
+            lines: [
+              { text: text.slice(0, 10), y: 0, height: budget / 2 },
+              { text: text.slice(10), y: budget / 2, height: budget / 2 + 20 },
+            ],
+          },
+        });
+      await act(() => {
+        if (order === 'text-only') {
+          measureText();
+        } else if (order === 'body-first') {
+          measureBody();
+          measureText();
+        } else {
+          measureText();
+          measureBody();
+        }
+      });
+      await act(() => jest.advanceTimersByTime(20));
+      expect(list().props.data[1].startOffset).toBe(props.data[1].startOffset);
+      expect(list().props.data[2].startOffset).toBe(
+        props.data[1].startOffset + 10,
+      );
+      const textOf = (pages: ReaderPageData[]) =>
+        pages
+          .flatMap(p => p.blocks.map(b => b.text.replace(/[\n　]/g, '')))
+          .join('');
+      expect(textOf(list().props.data)).toBe(textOf(props.data));
+    },
+  );
+
+  it('keeps displayed progress at the settled page while rapid clicks accumulate targets', async () => {
+    await mount();
+    const label = () =>
+      tree.root
+        .findAllByType(Text)
+        .map(node => node.props.children)
+        .find(value => typeof value === 'string' && value.startsWith('本章 '));
+    await act(() => {
+      press(1000);
+      press(1000);
+      press(1000);
+    });
+    expect(label()).toMatch(/^本章 1 \/ /);
+    const props = list().props;
+    await act(() =>
+      props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: props.getItemLayout(null, 3).offset },
+        },
+      }),
+    );
+    expect(label()).toMatch(/^本章 4 \/ /);
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+      props.data[3].startOffset,
+    );
+  });
+
+  it('shows the physical page during animation without losing the accumulated target', async () => {
+    await mount();
+    const label = () =>
+      tree.root
+        .findAllByType(Text)
+        .map(node => node.props.children)
+        .find(value => typeof value === 'string' && value.startsWith('本章 '));
+    await act(() => {
+      press(1000);
+      press(1000);
+      press(1000);
+    });
+    const props = list().props;
+    await act(() =>
+      props.onScroll({
+        nativeEvent: {
+          contentOffset: { x: props.getItemLayout(null, 2).offset },
+        },
+      }),
+    );
+    expect(label()).toMatch(/^本章 3 \/ /);
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+      props.data[2].startOffset,
+    );
+    await act(() =>
+      props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: props.getItemLayout(null, 1).offset },
+        },
+      }),
+    );
+    expect(label()).toMatch(/^本章 3 \/ /);
+    await act(() =>
+      props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: props.getItemLayout(null, 3).offset },
+        },
+      }),
+    );
+    expect(label()).toMatch(/^本章 4 \/ /);
+  });
+
+  it('recovers native taps captured during an animation without double turns', async () => {
+    await mount();
+    await act(() => press(1000));
+    const props = list().props;
+    const x = props.getItemLayout(null, 0).length - 5;
+    await act(() => {
+      for (let i = 0; i < 9; i++) {
+        const start = {
+          pageX: x,
+          pageY: 300,
+          timestamp: 1000 + i * 200,
+          touches: [{}],
+        };
+        const end = { ...start, timestamp: start.timestamp + 100, touches: [] };
+        props.onTouchStart({ nativeEvent: start });
+        props.onTouchEnd({ nativeEvent: end, stopPropagation: jest.fn() });
+        // 若同一次触摸随后又触发 Text.onPress，也不能多翻一页。
+        const page = props.renderItem({ item: props.data[0], index: 0 });
+        page.props.children.props.onPress({
+          nativeEvent: end,
+          stopPropagation: jest.fn(),
+        });
+      }
+    });
+    await act(() =>
+      props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: props.getItemLayout(null, 10).offset },
+        },
+      }),
+    );
+    expect(store.get(readingHistoryAtom)['paging-test'].position).toBe(
+      props.data[10].startOffset,
+    );
+  });
+
+  it('defers a prefetched chapter heading measurement until its first page settles', async () => {
+    await mount();
+    await act(() => {
+      press(1000);
+      press(1000);
+      press(1000);
+    });
+    await act(() =>
+      list().props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: list().props.getItemLayout(null, 3).offset },
+        },
+      }),
+    );
+    const props = list().props;
+    const before: ReaderPageData[] = props.data;
+    const first = props.renderItem({ item: before[0], index: 0 });
+    await act(() =>
+      first.props.children.props.children[0].props.onLayout({
+        nativeEvent: { layout: { height: 260 } },
+      }),
+    );
+    expect(list().props.data).toBe(before);
+    expect(list().props.scrollEnabled).toBe(true);
+    await act(() => {
+      press(0);
+      press(0);
+      press(0);
+    });
+    expect(list().props.data).toBe(before);
+    await act(() =>
+      list().props.onMomentumScrollEnd({
+        nativeEvent: { contentOffset: { x: 0 } },
+      }),
+    );
+    expect(list().props.data[1].startOffset).toBeLessThan(
+      before[1].startOffset,
+    );
+    expect(list().props.initialScrollIndex).toBe(0);
+    expect(list().props.scrollEnabled).toBe(true);
+  });
+
+  it('does not remove a line when native reflow still fits in the body area', async () => {
+    await mount();
+    const props = list().props;
+    const before = props.data;
+    const page = props.renderItem({ item: before[1], index: 1 });
+    const panel = page.props.style[1];
+    const availableHeight =
+      Dimensions.get('window').height - panel.paddingTop - panel.paddingBottom;
+    await act(() =>
+      page.props.children.props.children[1].props.onLayout({
+        nativeEvent: { layout: { height: availableHeight - 2 } },
+      }),
+    );
+    expect(list().props.data).toBe(before);
   });
 
   it('ignores heading measurements from a previous chapter', async () => {
@@ -519,6 +941,13 @@ describe('ReaderScreen paging interactions', () => {
       for (let i = 0; i < 4; i++) press(1000);
     });
     const oldProps = list().props;
+    await act(() =>
+      list().props.onMomentumScrollEnd({
+        nativeEvent: {
+          contentOffset: { x: list().props.getItemLayout(null, 4).offset },
+        },
+      }),
+    );
     const position = store.get(readingHistoryAtom)['paging-test'].position;
     await act(() =>
       store.set(readerSettingsAtom, value => ({

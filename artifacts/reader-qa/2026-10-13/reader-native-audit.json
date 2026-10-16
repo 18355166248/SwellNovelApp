@@ -1,0 +1,194 @@
+{
+  "date": "2026-10-13",
+  "scope": "Only current test chapter exported by temporary app diagnostics. No library index or complete book cache was copied.",
+  "cache": {
+    "chapterId": "bqquge:2-catalog-697",
+    "paragraphs": 144,
+    "charactersWithoutParagraphSeparators": 5648,
+    "paragraphsMatchRawCache": true,
+    "allPageTextMatchesCache": true,
+    "pageStartsContinuous": true,
+    "normalizedTextSha256": "bd28273667e692aa132fd56010f341ea58e51d4134b99b9d35b03e93bcc3ae25",
+    "originalEstimatedPages": 52,
+    "finalEstimatedPages": 51,
+    "finalPaginationExactMatch": true,
+    "finalPageStartsContinuous": true
+  },
+  "nativeText": {
+    "matchingCurrentBlocks": 54,
+    "mismatches": [],
+    "unobservedOrChangedBlocks": 130,
+    "sampledPageBodyFits": [
+      {
+        "page": 39,
+        "bodyHeight": 705.3333129882812,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 40,
+        "bodyHeight": 690.3333129882812,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 41,
+        "bodyHeight": 733.6666870117188,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 42,
+        "bodyHeight": 734,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 43,
+        "bodyHeight": 791.3333129882812,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 44,
+        "bodyHeight": 791.3333129882812,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 45,
+        "bodyHeight": 733.6666870117188,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 46,
+        "bodyHeight": 835,
+        "budget": 791,
+        "fitsWithRoundingTolerance": false
+      },
+      {
+        "page": 47,
+        "bodyHeight": 777.3333129882812,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 48,
+        "bodyHeight": 849,
+        "budget": 791,
+        "fitsWithRoundingTolerance": false
+      },
+      {
+        "page": 49,
+        "bodyHeight": 762,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 50,
+        "bodyHeight": 791.3333129882812,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 51,
+        "bodyHeight": 791.3333129882812,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      },
+      {
+        "page": 52,
+        "bodyHeight": 316.3333435058594,
+        "budget": 791,
+        "fitsWithRoundingTolerance": true
+      }
+    ],
+    "coverage": "Final clean Release: visually inspected each of 51 settled pages from chapter start through end, including cross-page text continuity; no sustained overflow or backward text jump observed. Native event text equality samples remain the earlier 54 blocks.",
+    "samplePhase": "Earlier diagnostic build; overflow samples below are historical findings, corrected before final acceptance."
+  },
+  "fastTapEvidence": {
+    "beforeCompensation": {
+      "automatedTouches": 10,
+      "touchStartsReceived": 10,
+      "pressCallbacks": 4,
+      "acceptedPageRequests": 4
+    },
+    "afterCompensation": {
+      "touchStartsReceived": 10,
+      "pressCallbacks": 10,
+      "acceptedPageRequests": 10,
+      "fromPage": 42,
+      "toPage": 52
+    },
+    "laterMirroringObservations": [
+      "10 reverse taps: 52 to 42",
+      "10 forward/reverse pairs: stayed at 42 after settling",
+      "10 forward taps: 42 to 52"
+    ],
+    "rootCause": "RN ScrollView captures touches while animating before nested Pressable/Text receives onPress.",
+    "laterTraceRetrieved": {
+      "pressCallbacks": 40,
+      "acceptedRequests": 40,
+      "physicalPageChanges": 40,
+      "momentumEvents": 40,
+      "allRequestsReady": true
+    },
+    "finalCleanRelease": {
+      "longReverse": {
+        "from": 50,
+        "touches": 49,
+        "to": 1
+      },
+      "reverse": {
+        "from": 51,
+        "touches": 10,
+        "to": 41
+      },
+      "alternating": {
+        "pairs": 10,
+        "from": 41,
+        "to": 41,
+        "sameSettledText": true
+      },
+      "forward": {
+        "from": 41,
+        "touches": 10,
+        "to": 51
+      },
+      "chapterBoundary": "Reached next chapter first page normally"
+    }
+  },
+  "changes": [
+    "Recover only short unmoved single touches captured during programmatic iOS page animation; deduplicate each touch.",
+    "Displayed page and reading offset follow actual programmatic scroll position, independently of accumulated target.",
+    "Body and chapter heading measurements apply only on the relevant settled page; calibration does not remount FlatList.",
+    "Keep the same 1pt native rounding tolerance in height correction, so a 0.x pt error does not discard another complete line.",
+    "Keep prefetched measurements across unrelated corrections only when layout and body text match; reject old measurements for changed text.",
+    "Prefer actual native line bottoms and character boundaries, including when unchanged container size does not emit onLayout; keep a height fallback for unavailable text measurements.",
+    "Split an estimated line at the exact native page boundary without dropping or duplicating characters.",
+    "Avoid charging an entire estimated row for one or two trailing Chinese closing punctuation marks; native measurements still handle fonts that cannot fit them."
+  ],
+  "verification": {
+    "focusedTests": 68,
+    "allTestSuites": 80,
+    "allTests": 598,
+    "typecheck": "passed",
+    "lintErrors": 0,
+    "finalReleaseBuild": "passed",
+    "temporaryDiagnosticCodeInFinalBundle": false,
+    "finalReleaseInstalled": true,
+    "finalBundleSha256": "3864b3fed94eeb6568d871a5f4ad2957d5c10b4ba8502226d6fad4e6362b668b",
+    "finalSettledScreensInspected": 51,
+    "readingPositionRestored": "Opening-session paragraph in the following chapter restored; old 23/68 became 22/67 after punctuation pagination change."
+  },
+  "pending": [
+    "Real finger drag/cancel gestures were not exercised: mirroring horizontal scroll did not produce a page swipe.",
+    "Screenshot sampling cannot exclude an isolated sub-frame flash; no sustained flash or backward text jump was observed."
+  ],
+  "committed": false,
+  "cleanup": {
+    "temporaryAppChapterDiagnostics": "Both generated files replaced with a 48-byte cleared marker. Original chapter caches and library index untouched.",
+    "temporaryLocalChapterCopies": "Removed after producing this redacted report."
+  }
+}

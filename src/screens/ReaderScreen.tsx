@@ -1,3 +1,4 @@
+import { createReaderNativeTapTracker } from '../utils/readerNativeTap';
 import ReadingRecordsList from '../components/ReadingRecordsList';
 import ReaderExcerptSheet, { ExcerptDraft } from './reader/ReaderExcerptSheet';
 import { confirmAction } from '../utils/confirm';
@@ -100,6 +101,9 @@ import {
   breakLines,
   breakLinesCooperatively,
   buildPages,
+  calculatePageHeightCorrection,
+  getNativePageEndOffset,
+  type NativeReaderLine,
   findPageByOffset,
   ReaderLine,
   ReaderPageData,
@@ -210,7 +214,8 @@ function closestBackgroundIntensity(value: number): number {
  */
 const PAGE_HORIZONTAL_PADDING = 28;
 const PAGE_TOP_PADDING = 36;
-const PAGE_BOTTOM_PADDING = 48;
+const READER_PROGRESS_LINE_HEIGHT = 14;
+const READER_PROGRESS_GAP = 8;
 /** 阅读列最大宽度（含左右内边距）：宽屏下超出则居中留白，避免一行几十字难读。 */
 const READER_MAX_CONTENT = 680;
 /** 章节边界越界回弹翻章的位移阈值 */
@@ -410,6 +415,9 @@ export default function ReaderScreen() {
     Platform.OS === 'web' ? 22 : Math.max(insets.bottom, 8) + 14;
   const progressHintBottom =
     Platform.OS === 'web' ? 10 : Math.max(insets.bottom, 10);
+  // 正文止于进度文字上方 8pt，不再额外叠加固定底边距，避免安全区较小时多留空白。
+  const readerBottomPadding =
+    progressHintBottom + READER_PROGRESS_LINE_HEIGHT + READER_PROGRESS_GAP;
   const { bookId, openDrawer } = route.params;
   const readerFocused = useIsFocused();
   const taskSignal = useScreenTaskSignal(navigation, bookId, readerFocused);
@@ -699,14 +707,31 @@ export default function ReaderScreen() {
   // state 用于渲染页码，ref 用于连续手势的同步判定；惯性被下一次拖动打断时，
   // 不能等 React 提交后才知道用户实际已经在哪一页。
   const currentPageIndexRef = React.useRef(0);
+  const displayedPageIndexRef = React.useRef(pageIndex);
+  displayedPageIndexRef.current = pageIndex;
+  const nativeTapTrackerRef = React.useRef(createReaderNativeTapTracker());
+  const lastPageSettledAtRef = React.useRef(0);
   const programmaticPageTargetRef = React.useRef<number | null>(null);
   const activePageSessionRef = React.useRef<string | null>(null);
+  const applyCurrentPageMeasurementRef = React.useRef<
+    (fallback?: boolean) => void
+  >(() => {});
+  const measurementFrameRef = React.useRef<number | null>(null);
+  const nativePageLinesRef = React.useRef<{
+    mountKey: string;
+    blocks: Map<number, { text: string; lines: NativeReaderLine[] }>;
+  }>({ mountKey: '', blocks: new Map() });
+  const pageBodyMeasurementsRef = React.useRef<{
+    mountKey: string;
+    heights: Map<number, { page: ReaderPageData; height: number }>;
+  }>({ mountKey: '', heights: new Map() });
   const activeScrollSessionRef = React.useRef<string | null>(null);
   const cancelPageAnimationRef = React.useRef<(() => void) | null>(null);
   const chapterPageLoadInFlightRef = React.useRef(false);
   const suppressPagePressUntilRef = React.useRef(0);
   const pageRenderGateRef = React.useRef<{
     sessionKey: string;
+    mountKey: string;
     expectedItemKey: string;
   } | null>(null);
   const pageReadyFrameRef = React.useRef<number | undefined>(undefined);
@@ -1052,29 +1077,72 @@ export default function ReaderScreen() {
     headingLayout?.key === headingLayoutKey
       ? headingLayout.height
       : estimateHeadingHeight(chapter?.title || book?.title || '');
+  const pendingHeadingLayoutRef = React.useRef<{
+    key: string;
+    height: number;
+  } | null>(null);
   const handleHeadingLayout = React.useCallback(
     (event: { nativeEvent: { layout: { height: number } } }) => {
       const height = Math.ceil(event.nativeEvent.layout.height);
       // 标题换行后按真实高度重新分页；拒绝旧章迟到的布局回调，避免覆盖新章正文预算。
       if (headingLayoutKeyRef.current !== headingLayoutKey || height <= 0)
         return;
-      setHeadingLayout(previous =>
-        previous?.key === headingLayoutKey && previous.height === height
-          ? previous
-          : { key: headingLayoutKey, height },
-      );
+      // 标题也可能在章首尚未可见时被预挂载；先保存测量，等章首页停稳再校正，避免挪动中段页首。
+      pendingHeadingLayoutRef.current = { key: headingLayoutKey, height };
+      applyCurrentPageMeasurementRef.current();
     },
     [headingLayoutKey],
   );
+
+  // 原生 Text 默认跟随系统字号缩放，断行和页高必须使用同一实际字号。
+  const effectiveBodyFontSize = display.fontSize * winDims.fontScale;
+  const bodyLayoutKey = JSON.stringify([
+    chapter?.id,
+    chapterContentFingerprint,
+    bodyFont,
+    display.fontSize,
+    display.lineHeight,
+    display.paraGap,
+    winDims.fontScale,
+    viewportWidth,
+    viewportHeight,
+    readerTopPadding,
+    readerBottomPadding,
+    headingHeight,
+  ]);
+  const bodyLayoutKeyRef = React.useRef(bodyLayoutKey);
+  bodyLayoutKeyRef.current = bodyLayoutKey;
+  const [bodyLayoutCorrection, setBodyLayoutCorrection] = React.useState<{
+    key: string;
+    byOffset: Record<number, number>;
+    endsByOffset: Record<number, number>;
+  }>({ key: '', byOffset: {}, endsByOffset: {} });
+  const pageHeightCorrections = React.useMemo(
+    () =>
+      bodyLayoutCorrection.key === bodyLayoutKey
+        ? bodyLayoutCorrection.byOffset
+        : {},
+    [bodyLayoutCorrection, bodyLayoutKey],
+  );
+  const pageEndOffsets = React.useMemo(
+    () =>
+      bodyLayoutCorrection.key === bodyLayoutKey
+        ? bodyLayoutCorrection.endsByOffset
+        : {},
+    [bodyLayoutCorrection, bodyLayoutKey],
+  );
+  const pageCorrectionKey = Object.keys(pageEndOffsets).length
+    ? JSON.stringify({ heights: pageHeightCorrections, ends: pageEndOffsets })
+    : JSON.stringify(pageHeightCorrections);
 
   // 左右翻页先按真实字符宽度断行、组页，再交给 FlatList 虚拟渲染，避免大章节一次性挂载所有页面。
   const pageMetrics = React.useMemo(() => {
     const maxWidth = readerColumn.textWidth;
     const bodyHeight = Math.max(
       1,
-      viewportHeight - readerTopPadding - PAGE_BOTTOM_PADDING,
+      viewportHeight - readerTopPadding - readerBottomPadding,
     );
-    const lineHeight = display.fontSize * display.lineHeight;
+    const lineHeight = effectiveBodyFontSize * display.lineHeight;
     // 首页扣除标题区（章节名 + meta + 间距）真实占用的高度，消除首页尾部留白。
     const firstBodyHeight = Math.max(lineHeight, bodyHeight - headingHeight);
 
@@ -1086,10 +1154,11 @@ export default function ReaderScreen() {
       firstBodyHeight,
     };
   }, [
-    display.fontSize,
+    effectiveBodyFontSize,
     display.lineHeight,
     display.paraGap,
     headingHeight,
+    readerBottomPadding,
     readerTopPadding,
     viewportHeight,
     readerColumn.textWidth,
@@ -1103,7 +1172,7 @@ export default function ReaderScreen() {
       textLength: chapterTextLength,
       contentFingerprint: chapterContentFingerprint,
       maxWidth: pageMetrics.maxWidth,
-      fontSize: display.fontSize,
+      fontSize: effectiveBodyFontSize,
       lineHeight: display.lineHeight,
       fontFamily: bodyFont,
     });
@@ -1115,9 +1184,9 @@ export default function ReaderScreen() {
       firstBodyHeight: pageMetrics.firstBodyHeight,
     });
     const cachedPages = readerPagesCache.get(pagesCacheKey);
-    if (cachedPages) return cachedPages;
+    if (cachedPages && pageCorrectionKey === '{}') return cachedPages;
     const prepareStartedAt = Date.now();
-    const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
+    const measure = getCharWidthMeasurer(bodyFont, effectiveBodyFontSize);
     let lines = estimatedLinesCache.get(lineCacheKey);
     const cacheHit = !!lines;
     if (!lines) {
@@ -1131,8 +1200,11 @@ export default function ReaderScreen() {
       paraGap: pageMetrics.paraGap,
       bodyHeight: pageMetrics.bodyHeight,
       firstBodyHeight: pageMetrics.firstBodyHeight,
+      heightCorrections: pageHeightCorrections,
+      pageEndOffsets,
     });
-    cacheReaderPages(pagesCacheKey, builtPages);
+    // 实测校正只属于当前章当前排版，不能写回供相邻章预分页复用的估算缓存。
+    if (pageCorrectionKey === '{}') cacheReaderPages(pagesCacheKey, builtPages);
     devInfo('[ReaderPerf] foreground pagination', {
       chapterId,
       textLength: chapterTextLength,
@@ -1146,13 +1218,16 @@ export default function ReaderScreen() {
     chapter?.id,
     chapterContentFingerprint,
     chapterTextLength,
-    display.fontSize,
+    effectiveBodyFontSize,
     display.lineHeight,
     pageMetrics.bodyHeight,
     pageMetrics.firstBodyHeight,
     pageMetrics.lineHeight,
     pageMetrics.maxWidth,
     pageMetrics.paraGap,
+    pageHeightCorrections,
+    pageEndOffsets,
+    pageCorrectionKey,
     paragraphs,
     bodyFont,
   ]);
@@ -1197,13 +1272,17 @@ export default function ReaderScreen() {
   const pageRenderTargetIndex = chapterChangedForPageLayout
     ? initialChapterPageIndex
     : findPageByOffset(pages, currentOffsetRef.current);
-  const pageSessionKey = `${bookId}|${
+  // 布局身份与测量版本分开：页高校正只更新数据，不能重挂 FlatList 关掉点击门禁。
+  // 章节/正文/字号/视口变化仍需重建；测量版本继续隔离旧回调，防止迟到事件写回。
+  const pageMountKey = `${bookId}|${
     chapter?.id || 'chapter'
-  }|${chapterContentFingerprint}|${chapterTextLength}|${
-    pages.length
-  }|${viewportWidth}|${viewportHeight}|${bodyFont}|${display.fontSize}|${
-    pageMetrics.lineHeight
-  }|${pageMetrics.paraGap}|${pageMetrics.firstBodyHeight}|${settings.pageMode}`;
+  }|${chapterContentFingerprint}|${chapterTextLength}|${viewportWidth}|${viewportHeight}|${bodyFont}|${
+    display.fontSize
+  }|${pageMetrics.lineHeight}|${pageMetrics.paraGap}|${
+    pageMetrics.bodyHeight
+  }|${headingLayoutKey}|${settings.pageMode}`;
+  const pageSessionKey = `${pageMountKey}|${pageMetrics.firstBodyHeight}|${pageCorrectionKey}`;
+  const previousPageMountKeyRef = React.useRef<string | null>(null);
   activePageSessionRef.current =
     status === 'ready' && chapterContentReady ? pageSessionKey : null;
   const expectedRenderedPageKey = pages[pageRenderTargetIndex]?.key;
@@ -1211,15 +1290,19 @@ export default function ReaderScreen() {
     status === 'ready' &&
     settings.pageMode === 'page' &&
     expectedRenderedPageKey &&
-    readyPageSessionKey !== pageSessionKey
-      ? { sessionKey: pageSessionKey, expectedItemKey: expectedRenderedPageKey }
+    readyPageSessionKey !== pageMountKey
+      ? {
+          sessionKey: pageSessionKey,
+          mountKey: pageMountKey,
+          expectedItemKey: expectedRenderedPageKey,
+        }
       : null;
   const pageInteractionReady =
     status === 'ready' &&
     chapterContentReady &&
     (settings.pageMode !== 'page' ||
       pages.length === 0 ||
-      readyPageSessionKey === pageSessionKey);
+      readyPageSessionKey === pageMountKey);
 
   const onPageViewableItemsChanged = React.useMemo(
     () =>
@@ -1249,7 +1332,7 @@ export default function ReaderScreen() {
           )
             return;
           pageReadyFrameRef.current = undefined;
-          setReadyPageSessionKey(gate.sessionKey);
+          setReadyPageSessionKey(gate.mountKey);
         });
       },
     [pageSessionKey],
@@ -1262,12 +1345,14 @@ export default function ReaderScreen() {
     return () => {
       cancelPageAnimationRef.current?.();
     };
-  }, [pageSessionKey, status]);
+  }, [pageMountKey, status]);
 
   React.useEffect(() => {
     // 在线章的空占位页不能消费返回末页或续读的意图。
     if (!chapterContentReady || status !== 'ready') return;
     const chapterChanged = prevChapterIdRef.current !== chapter?.id;
+    const mountChanged = previousPageMountKeyRef.current !== pageMountKey;
+    previousPageMountKeyRef.current = pageMountKey;
     prevChapterIdRef.current = chapter?.id;
 
     if (chapterChanged) {
@@ -1325,6 +1410,14 @@ export default function ReaderScreen() {
       return;
     }
 
+    // 同布局的当前页校正不会移动页首；既不用二次定位，也不取消正在接续的点击。
+    if (
+      settings.pageMode === 'page' &&
+      !mountChanged &&
+      findPageByOffset(pages, currentOffsetRef.current) ===
+        currentPageIndexRef.current
+    )
+      return;
     // 同章重新分页时，用逻辑字符偏移映射回原段落附近，避免字号/行距调整后跳回首页。
     invalidateWebScrollSync();
     if (settings.pageMode === 'scroll') {
@@ -1344,6 +1437,7 @@ export default function ReaderScreen() {
     chapterContentReady,
     chapterTextLength,
     invalidateWebScrollSync,
+    pageMountKey,
     pages,
     settings.pageMode,
     status,
@@ -1587,7 +1681,7 @@ export default function ReaderScreen() {
     const startTimer = setTimeout(() => {
       if (shouldCancel()) return;
       task = InteractionManager.runAfterInteractions(() => {
-        const measure = getCharWidthMeasurer(bodyFont, display.fontSize);
+        const measure = getCharWidthMeasurer(bodyFont, effectiveBodyFontSize);
         (async () => {
           for (const target of targets) {
             if (shouldCancel()) return;
@@ -1603,7 +1697,7 @@ export default function ReaderScreen() {
                 targetParsed.content,
               ),
               maxWidth: pageMetrics.maxWidth,
-              fontSize: display.fontSize,
+              fontSize: effectiveBodyFontSize,
               lineHeight: display.lineHeight,
               fontFamily: bodyFont,
             });
@@ -1678,7 +1772,7 @@ export default function ReaderScreen() {
     book?.source?.name,
     chapterIndex,
     chapters,
-    display.fontSize,
+    effectiveBodyFontSize,
     display.lineHeight,
     pageMetrics.bodyHeight,
     estimateHeadingHeight,
@@ -1891,6 +1985,9 @@ export default function ReaderScreen() {
             update: writeOffset,
             complete: () => {
               cancelPageAnimationRef.current = null;
+              programmaticPageTargetRef.current = null;
+              setPageIndex(index);
+              applyCurrentPageMeasurementRef.current();
               markWebProgrammaticScroll(80);
               setSnapEnabled(true);
             },
@@ -1929,9 +2026,8 @@ export default function ReaderScreen() {
         return;
       }
       programmaticPageTargetRef.current = target;
-      currentOffsetRef.current = pages[target]?.startOffset ?? 0;
       currentPageIndexRef.current = target;
-      setPageIndex(target);
+      // 请求目标独立累加，正文位置/页码按原生实际 offset 更新，不能把未来目标先写成已读。
       scrollToPage(target, true);
     },
     [
@@ -2332,6 +2428,8 @@ export default function ReaderScreen() {
       // 同时停止冒泡，避免 Text 与外层 Pressable 各切换一次，最终看起来像工具栏没有响应。
       event?.stopPropagation?.();
       const nativeEvent = event?.nativeEvent ?? {};
+      if (!nativeTapTrackerRef.current.consume(nativeEvent, pageSessionKey))
+        return;
       const pageX = nativeEvent.pageX;
       const windowGutter = Math.max(0, (winDims.width - viewportWidth) / 2);
       const x =
@@ -2349,7 +2447,7 @@ export default function ReaderScreen() {
         toggleToolbar();
       }
     },
-    [goToPage, toggleToolbar, viewportWidth, winDims.width],
+    [goToPage, toggleToolbar, viewportWidth, winDims.width, pageSessionKey],
   );
 
   const handleScrollReaderTextPress = React.useCallback(
@@ -2359,6 +2457,196 @@ export default function ReaderScreen() {
       toggleToolbar();
     },
     [toggleToolbar],
+  );
+
+  const applyCurrentPageMeasurement = React.useCallback(
+    (allowHeightFallback = false) => {
+      const item = pages[currentPageIndexRef.current];
+      const measurements = pageBodyMeasurementsRef.current;
+      // 预挂载前后页的 onLayout 只缓存测量；校正必须针对当前页，并等拖动/惯性/
+      // 点击动画落定后执行，否则旧页重分页会把正在阅读的页首向前挪并打断翻页。
+      if (
+        !item ||
+        bodyLayoutKeyRef.current !== bodyLayoutKey ||
+        activePageSessionRef.current !== pageSessionKey ||
+        chapterTurnGestureRef.current.dragging ||
+        pageMomentumReleasedAtRef.current != null ||
+        programmaticPageTargetRef.current != null
+      )
+        return;
+      const pendingHeading = pendingHeadingLayoutRef.current;
+      if (item.showHeader && pendingHeading?.key === headingLayoutKey) {
+        pendingHeadingLayoutRef.current = null;
+        if (
+          headingLayout?.key !== headingLayoutKey ||
+          headingLayout.height !== pendingHeading.height
+        ) {
+          setHeadingLayout(pendingHeading);
+          return;
+        }
+      }
+      const availableHeight = item.showHeader
+        ? pageMetrics.firstBodyHeight
+        : pageMetrics.bodyHeight;
+      const nativeMeasurements = nativePageLinesRef.current;
+      const nativeBlocks = item.blocks.map(block => ({
+        block,
+        measured: nativeMeasurements.blocks.get(block.startOffset),
+      }));
+      const nativeEnd =
+        nativeMeasurements.mountKey === pageMountKey &&
+        nativeBlocks.every(
+          ({ block, measured: native }) => native?.text === block.text,
+        )
+          ? getNativePageEndOffset({
+              blocks: nativeBlocks.map(({ block, measured: native }) => ({
+                block,
+                lines: native!.lines,
+              })),
+              availableHeight,
+              paraGap: pageMetrics.paraGap,
+            })
+          : null;
+      if (nativeEnd != null && nativeEnd > item.startOffset) {
+        const lastBlock = item.blocks[item.blocks.length - 1];
+        const currentEnd =
+          lastBlock.startOffset +
+          Array.from(lastBlock.text.replace(/\n/g, '').replace(/^　　/, ''))
+            .length;
+        // 正文换了但容器高度未变时，iOS 不重发 onLayout；原生行自身即可决定页尾。
+        if (
+          nativeEnd >= currentEnd ||
+          pageEndOffsets[item.startOffset] === nativeEnd
+        )
+          return;
+        setBodyLayoutCorrection(previous => ({
+          key: bodyLayoutKey,
+          byOffset: previous.key === bodyLayoutKey ? previous.byOffset : {},
+          endsByOffset: {
+            ...(previous.key === bodyLayoutKey ? previous.endsByOffset : {}),
+            [item.startOffset]: nativeEnd,
+          },
+        }));
+        return;
+      }
+      if (measurements.mountKey !== pageMountKey) return;
+      const measured = measurements.heights.get(item.startOffset);
+      // 别页校正不会让尺寸未变的原生 View 重发 onLayout。保留相同排版、相同正文的
+      // 预挂载测量；正文已被拆短时必须等新测量，不能反复套用旧页高继续删行。
+      if (
+        !measured ||
+        measured.page.blocks.length !== item.blocks.length ||
+        !measured.page.blocks.every(
+          (block, index) =>
+            block.startOffset === item.blocks[index].startOffset &&
+            block.text === item.blocks[index].text,
+        )
+      )
+        return;
+      const height = measured.height;
+      if (Math.ceil(height - availableHeight) <= 1) return;
+      // onLayout 与 onTextLayout 的到达顺序不固定，留一帧收齐原生行，优先精确截在行尾。
+      // 不支持文字测量的平台仍用原有高度兜底，不阻塞阅读。
+      if (!allowHeightFallback) {
+        if (measurementFrameRef.current == null)
+          measurementFrameRef.current = requestAnimationFrame(() => {
+            measurementFrameRef.current = null;
+            applyCurrentPageMeasurementRef.current(true);
+          });
+        return;
+      }
+      const estimatedHeight = item.blocks.reduce(
+        (sum, block, index) =>
+          sum +
+          block.text.split('\n').length * pageMetrics.lineHeight +
+          (index === 0 ? 0 : pageMetrics.paraGap),
+        0,
+      );
+      const previousCorrection = pageHeightCorrections[item.startOffset] ?? 0;
+      const correction = calculatePageHeightCorrection({
+        actualHeight: height,
+        estimatedHeight,
+        availableHeight,
+        previousCorrection,
+      });
+      if (correction <= previousCorrection) return;
+      setBodyLayoutCorrection(previous => ({
+        key: bodyLayoutKey,
+        endsByOffset:
+          previous.key === bodyLayoutKey ? previous.endsByOffset : {},
+        byOffset: {
+          ...(previous.key === bodyLayoutKey ? previous.byOffset : {}),
+          [item.startOffset]: correction,
+        },
+      }));
+    },
+    [
+      bodyLayoutKey,
+      pageSessionKey,
+      pageMountKey,
+      pages,
+      pageHeightCorrections,
+      pageEndOffsets,
+      pageMetrics.firstBodyHeight,
+      pageMetrics.bodyHeight,
+      pageMetrics.lineHeight,
+      pageMetrics.paraGap,
+      headingLayout,
+      headingLayoutKey,
+    ],
+  );
+  applyCurrentPageMeasurementRef.current = applyCurrentPageMeasurement;
+
+  React.useEffect(
+    () => () => {
+      if (measurementFrameRef.current != null)
+        cancelAnimationFrame(measurementFrameRef.current);
+    },
+    [],
+  );
+
+  const handlePageTextLayout = React.useCallback(
+    (
+      startOffset: number,
+      text: string,
+      sessionKey: string,
+      lines: NativeReaderLine[],
+    ) => {
+      if (activePageSessionRef.current !== sessionKey) return;
+      if (nativePageLinesRef.current.mountKey !== pageMountKey)
+        nativePageLinesRef.current = {
+          mountKey: pageMountKey,
+          blocks: new Map(),
+        };
+      const blocks = nativePageLinesRef.current.blocks;
+      blocks.set(startOffset, { text, lines });
+      if (blocks.size > 80) blocks.delete(blocks.keys().next().value!);
+      applyCurrentPageMeasurementRef.current();
+    },
+    [pageMountKey],
+  );
+
+  const handlePageBodyLayout = React.useCallback(
+    (item: ReaderPageData, sessionKey: string, height: number) => {
+      if (
+        bodyLayoutKeyRef.current !== bodyLayoutKey ||
+        activePageSessionRef.current !== sessionKey ||
+        height <= 0
+      )
+        return;
+      if (pageBodyMeasurementsRef.current.mountKey !== pageMountKey) {
+        pageBodyMeasurementsRef.current = {
+          mountKey: pageMountKey,
+          heights: new Map(),
+        };
+      }
+      const heights = pageBodyMeasurementsRef.current.heights;
+      heights.set(item.startOffset, { page: item, height });
+      // 仅保留当前虚拟窗口附近的测量，避免长章节累计所有页面记录。
+      if (heights.size > 12) heights.delete(heights.keys().next().value!);
+      applyCurrentPageMeasurement();
+    },
+    [bodyLayoutKey, pageMountKey, applyCurrentPageMeasurement],
   );
 
   const renderPage = React.useCallback(
@@ -2380,7 +2668,7 @@ export default function ReaderScreen() {
             {
               width: viewportWidth,
               paddingTop: readerTopPadding,
-              paddingBottom: PAGE_BOTTOM_PADDING,
+              paddingBottom: readerBottomPadding,
               paddingHorizontal: readerColumn.paddingH,
             },
             WEB_SNAP_ITEM,
@@ -2433,43 +2721,63 @@ export default function ReaderScreen() {
                 本章暂无内容
               </Text>
             ) : (
-              // 每段独立成块，块间用 marginTop 留段间距（首块不留），页首续段块也不留。
-              item.blocks.map((block, i) => (
-                <Text
-                  key={block.startOffset}
-                  testID="reader-page-text"
-                  // 正文长按用于摘抄，但普通轻触仍应只交给页级点击区处理；
-                  // 关闭 iOS 的文字按压高亮，避免轻触正文时误以为已触发划线/摘抄。
-                  suppressHighlighting
-                  onPress={handlePagedReaderPress}
-                  onLongPress={event => {
-                    event.stopPropagation();
-                    openExcerptDraft(block.text, block.startOffset);
-                  }}
-                  style={{
-                    fontFamily: bodyFont,
-                    fontSize: display.fontSize,
-                    lineHeight: display.fontSize * display.lineHeight,
-                    color: display.theme.text,
-                    textAlign: 'justify',
-                    marginTop: i === 0 ? 0 : display.paraGap,
-                    backgroundColor: isExcerptRange(
-                      block.startOffset,
-                      block.startOffset +
-                        Array.from(block.text.replace(/\n/g, '')).length,
-                    )
-                      ? 'rgba(202,154,70,.18)'
-                      : 'transparent',
-                  }}
-                >
-                  {
-                    // 分页器保存的换行只用于计算页高，不能作为正文硬换行渲染。
-                    // iOS 会把每个硬换行都视为段落末行，导致两端对齐失效，
-                    // 尤其在 31 等字号下表现为右侧残留一块明显空白。
-                    block.text.replace(/\n/g, '')
-                  }
-                </Text>
-              ))
+              <View
+                testID="reader-page-body"
+                style={styles.pageBody}
+                onLayout={event =>
+                  handlePageBodyLayout(
+                    item,
+                    pageSessionKey,
+                    event.nativeEvent.layout.height,
+                  )
+                }
+              >
+                {/* 每段独立成块，块间留段间距；页首续段不留间距。 */}
+                {item.blocks.map((block, i) => (
+                  <Text
+                    key={block.startOffset}
+                    testID="reader-page-text"
+                    onTextLayout={event =>
+                      handlePageTextLayout(
+                        block.startOffset,
+                        block.text,
+                        pageSessionKey,
+                        event.nativeEvent.lines,
+                      )
+                    }
+                    // 正文长按用于摘抄，但普通轻触仍应只交给页级点击区处理；
+                    // 关闭 iOS 的文字按压高亮，避免轻触正文时误以为已触发划线/摘抄。
+                    suppressHighlighting
+                    onPress={handlePagedReaderPress}
+                    onLongPress={event => {
+                      event.stopPropagation();
+                      openExcerptDraft(block.text, block.startOffset);
+                    }}
+                    style={{
+                      fontFamily: bodyFont,
+                      fontSize: display.fontSize,
+                      lineHeight: display.fontSize * display.lineHeight,
+                      color: display.theme.text,
+                      textAlign: 'justify',
+                      marginTop: i === 0 ? 0 : display.paraGap,
+                      backgroundColor: isExcerptRange(
+                        block.startOffset,
+                        block.startOffset +
+                          Array.from(block.text.replace(/\n/g, '')).length,
+                      )
+                        ? 'rgba(202,154,70,.18)'
+                        : 'transparent',
+                    }}
+                  >
+                    {
+                      // 分页器保存的换行只用于计算页高，不能作为正文硬换行渲染。
+                      // iOS 会把每个硬换行都视为段落末行，导致两端对齐失效，
+                      // 尤其在 31 等字号下表现为右侧残留一块明显空白。
+                      block.text.replace(/\n/g, '')
+                    }
+                  </Text>
+                ))}
+              </View>
             )}
             {isLastPage && (
               <Text style={[styles.pageEndText, { color: display.theme.sub }]}>
@@ -2496,11 +2804,15 @@ export default function ReaderScreen() {
       display.titleSize,
       chapterTitleLineHeight,
       handleHeadingLayout,
+      handlePageTextLayout,
+      handlePageBodyLayout,
+      pageSessionKey,
       handlePagedReaderPress,
       isExcerptRange,
       pages.length,
       openExcerptDraft,
       readerColumn.paddingH,
+      readerBottomPadding,
       readerTopPadding,
       viewportWidth,
     ],
@@ -2539,12 +2851,30 @@ export default function ReaderScreen() {
       )
         return;
       programmaticPageTargetRef.current = null;
+      lastPageSettledAtRef.current = Date.now();
+      displayedPageIndexRef.current = next;
       currentOffsetRef.current = pages[next]?.startOffset ?? 0;
-      if (currentPageIndexRef.current === next) return;
       currentPageIndexRef.current = next;
       setPageIndex(next);
+      applyCurrentPageMeasurementRef.current();
     },
     [chapter?.id, pageInteractionReady, pageSessionKey, pages, viewportWidth],
+  );
+
+  const syncDisplayedPageByScrollOffset = React.useCallback(
+    (offsetX: number) => {
+      if (activePageSessionRef.current !== pageSessionKey) return;
+      const next = Math.max(
+        0,
+        Math.min(pages.length - 1, Math.round(offsetX / viewportWidth)),
+      );
+      if (displayedPageIndexRef.current === next) return;
+      displayedPageIndexRef.current = next;
+      currentOffsetRef.current = pages[next]?.startOffset ?? 0;
+      // 只提交当前实际显示的页，不覆盖尚在累加的点击目标，避免快点时退回旧目标。
+      setPageIndex(next);
+    },
+    [pageSessionKey, pages, viewportWidth],
   );
 
   const syncPageByScrollOffset = React.useCallback(
@@ -2660,13 +2990,15 @@ export default function ReaderScreen() {
         return;
       }
 
-      // 原生端页码只在 paging 吸附完成后由 onMomentumScrollEnd 提交。若在
-      // 半页临界点实时更新，手指回弹会让底部数字在相邻页之间抖动。
+      // 程序快翻时页码跟随真实 offset，不能一直显示连点前的旧页；手动拖动仍待吸附落定，避免回弹抖号。
+      if (programmaticPageTargetRef.current != null)
+        syncDisplayedPageByScrollOffset(x);
       tryTurnChapterFromGesture(x);
     },
     [
       pageSessionKey,
       syncPageByScrollOffset,
+      syncDisplayedPageByScrollOffset,
       tryTurnChapterFromGesture,
       webProgrammaticScrollRef,
       webScrollEpochRef,
@@ -2788,10 +3120,8 @@ export default function ReaderScreen() {
         (settings.pageMode === 'page' ? (
           <>
             <FlatList
-              // 尺寸变化后分页数据的 ordinal key 可能不变，FlatList 会误复用旧 cell，
-              // 同时不再触发可见回调。按分页会话重建列表，确保横竖屏都以新宽度
-              // 布局，并让首屏绘制门禁能可靠收到目标页可见事件。
-              key={pageSessionKey}
+              // 真正的排版变化才重建列表；页高校正保留当前原生滚动层，避免闪动与短暂吞点击。
+              key={pageMountKey}
               ref={flatListRef}
               testID="reader-page-list"
               data={pages}
@@ -2821,12 +3151,50 @@ export default function ReaderScreen() {
               initialScrollIndex={pageRenderTargetIndex}
               viewabilityConfig={pageViewabilityConfigRef.current}
               onViewableItemsChanged={onPageViewableItemsChanged}
+              // iOS ScrollView 在动画期间会捕获后续触摸，导致子 Text/Pressable 不触发 onPress。
+              // 仅补偿未移动的短点击；拖动、长按、多指和旧排版事件均不参与补偿。
+              onTouchStart={
+                Platform.OS === 'ios'
+                  ? event =>
+                      nativeTapTrackerRef.current.start(
+                        event.nativeEvent,
+                        programmaticPageTargetRef.current != null ||
+                          Date.now() - lastPageSettledAtRef.current < 32,
+                        pageSessionKey,
+                      )
+                  : undefined
+              }
+              onTouchMove={
+                Platform.OS === 'ios'
+                  ? event => nativeTapTrackerRef.current.move(event.nativeEvent)
+                  : undefined
+              }
+              onTouchCancel={
+                Platform.OS === 'ios'
+                  ? () => nativeTapTrackerRef.current.cancel()
+                  : undefined
+              }
+              onTouchEnd={
+                Platform.OS === 'ios'
+                  ? event => {
+                      if (
+                        nativeTapTrackerRef.current.shouldRecover(
+                          event.nativeEvent,
+                          pageSessionKey,
+                        )
+                      ) {
+                        handlePagedReaderPress(event);
+                      }
+                    }
+                  : undefined
+              }
               onScrollBeginDrag={event => {
                 if (
                   activePageSessionRef.current !== pageSessionKey ||
                   !pageInteractionReady
                 )
                   return;
+                nativeTapTrackerRef.current.cancel();
                 cancelPageAnimationRef.current?.();
                 cancelPageAnimationRef.current = null;
                 programmaticPageTargetRef.current = null;
@@ -2892,7 +3260,7 @@ export default function ReaderScreen() {
             // 滚动正文必须限制在常驻章节栏与进度栏之间，避免文字滚进灵动岛或叠在页脚上。
             style={[
               StyleSheet.absoluteFill,
-              { top: readerTopPadding, bottom: PAGE_BOTTOM_PADDING },
+              { top: readerTopPadding, bottom: readerBottomPadding },
             ]}
             contentContainerStyle={{
               paddingHorizontal: readerColumn.paddingH,
@@ -3113,7 +3481,14 @@ export default function ReaderScreen() {
         style={[styles.progressHint, { bottom: progressHintBottom }]}
         pointerEvents="none"
       >
-        <Text style={{ color: display.theme.sub, fontSize: 10.5 }}>
+        <Text
+          allowFontScaling={false}
+          style={{
+            color: display.theme.sub,
+            fontSize: 10.5,
+            lineHeight: READER_PROGRESS_LINE_HEIGHT,
+          }}
+        >
           {progressLabel}
         </Text>
       </View>
@@ -4785,6 +5160,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: PAGE_HORIZONTAL_PADDING,
   },
   pagePressTarget: { flex: 1 },
+  pageBody: { flexShrink: 0 },
   pageEndText: {
     marginTop: 18,
     fontSize: 12,

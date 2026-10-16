@@ -17,6 +17,19 @@ export interface ReaderLine {
 
 export const INDENT = '　　';
 
+function appendParagraphTail(lines: ReaderLine[], tail: ReaderLine) {
+  // 中文段末句号/闭引号常被原生排版收在上一行。估算器若独占一行，多段累加会
+  // 虚耗整行预算；这里只合并最多两个尾标点，字体确实放不下时由原生行尾测量校正。
+  if (
+    !tail.isParagraphStart &&
+    /^[，。！？；：、’”）】》」』]{1,2}$/.test(tail.text)
+  ) {
+    lines[lines.length - 1].text += tail.text;
+  } else {
+    lines.push(tail);
+  }
+}
+
 export function breakLines(
   paragraphs: string[],
   maxWidth: number,
@@ -57,7 +70,11 @@ export function breakLines(
       offset += 1;
     }
     if (lineText.length > 0) {
-      pushLine();
+      appendParagraphTail(lines, {
+        text: lineText,
+        charOffset: lineStart,
+        isParagraphStart: isFirst,
+      });
     }
   });
 
@@ -126,7 +143,12 @@ export async function breakLinesCooperatively({
         charactersSinceYield = 0;
       }
     }
-    if (lineText.length > 0) pushLine();
+    if (lineText.length > 0)
+      appendParagraphTail(lines, {
+        text: lineText,
+        charOffset: lineStart,
+        isParagraphStart: isFirst,
+      });
     if ((index + 1) % safeChunkSize === 0 || index === paragraphs.length - 1) {
       await yieldControl();
       if (shouldCancel()) return null;
@@ -166,6 +188,8 @@ export function buildPages({
   paraGap,
   bodyHeight,
   firstBodyHeight,
+  heightCorrections = {},
+  pageEndOffsets = {},
 }: {
   chapterId: string;
   lines: ReaderLine[];
@@ -177,12 +201,20 @@ export function buildPages({
   bodyHeight: number;
   /** 首页可用像素高（已扣除标题区） */
   firstBodyHeight: number;
+  /** 原生实测溢出只扣对应页首的预算，不牺牲其他页的行数。 */
+  heightCorrections?: Readonly<Record<number, number>>;
+  /** 实测可容纳的最后一个字符边界；优先于估算行高，避免一次挪走两行原生正文。 */
+  pageEndOffsets?: Readonly<Record<number, number>>;
 }): ReaderPageData[] {
   const pages: ReaderPageData[] = [];
   const safeLineHeight = Math.max(1, lineHeight);
   const safeGap = Math.max(0, paraGap);
-  const budgetFor = (pageNo: number) =>
-    Math.max(safeLineHeight, pageNo === 0 ? firstBodyHeight : bodyHeight);
+  const budgetFor = (pageNo: number, startOffset: number) =>
+    Math.max(
+      safeLineHeight,
+      (pageNo === 0 ? firstBodyHeight : bodyHeight) -
+        Math.max(0, heightCorrections[startOffset] ?? 0),
+    );
 
   let blocks: ReaderPageBlock[] = [];
   let blockLines: string[] = [];
@@ -211,16 +243,23 @@ export function buildPages({
     pageHasContent = false;
   };
 
-  lines.forEach(line => {
+  const appendLine = (line: ReaderLine) => {
+    let end = pageEndOffsets[pageHasContent ? pageStart : line.charOffset];
+    if (pageHasContent && end > pageStart && line.charOffset >= end) {
+      pushPage();
+      end = pageEndOffsets[line.charOffset];
+    }
     const startsParagraph = line.isParagraphStart;
     // 新段落且本页已有内容时，段落前要占用一段段间距。
     const gap = startsParagraph && pageHasContent ? safeGap : 0;
 
     if (
       pageHasContent &&
-      pageHeight + gap + safeLineHeight > budgetFor(pages.length)
+      !(end > pageStart) &&
+      pageHeight + gap + safeLineHeight > budgetFor(pages.length, pageStart)
     ) {
       pushPage();
+      end = pageEndOffsets[line.charOffset];
     }
 
     // 段落边界：结束上一块，另起一块（页首的续段块 blockLines 为空，同样在此起块）。
@@ -237,8 +276,23 @@ export function buildPages({
       pageHeight += (startsParagraph ? safeGap : 0) + safeLineHeight;
     }
 
-    blockLines.push(line.text);
-  });
+    // iOS 的断行边界可能位于估算行中间，只拆当前页尾；余下字符完整交给下一页。
+    const chars = Array.from(line.text);
+    const indent = startsParagraph && line.text.startsWith(INDENT) ? 2 : 0;
+    const split = end - line.charOffset + indent;
+    if (end > line.charOffset && split < chars.length) {
+      blockLines.push(chars.slice(0, split).join(''));
+      pushPage();
+      appendLine({
+        text: chars.slice(split).join(''),
+        charOffset: end,
+        isParagraphStart: false,
+      });
+    } else {
+      blockLines.push(line.text);
+    }
+  };
+  lines.forEach(appendLine);
 
   flushBlock();
   if (blocks.length > 0 || pages.length === 0) {
@@ -246,6 +300,60 @@ export function buildPages({
   }
 
   return pages;
+}
+
+export interface NativeReaderLine {
+  text: string;
+  y: number;
+  height: number;
+}
+
+/** 按原生行的真实底边选页尾；文本未完整对齐时返回 null，继续使用高度兜底。 */
+export function getNativePageEndOffset({
+  blocks,
+  availableHeight,
+  paraGap,
+}: {
+  blocks: Array<{ block: ReaderPageBlock; lines: NativeReaderLine[] }>;
+  availableHeight: number;
+  paraGap: number;
+}): number | null {
+  let top = 0;
+  let end: number | null = null;
+  for (const { block, lines: nativeLines } of blocks) {
+    const text = block.text.replace(/\n/g, '');
+    if (
+      !nativeLines.length ||
+      nativeLines.map(line => line.text).join('') !== text
+    )
+      return null;
+    let count = 0;
+    const indent = text.startsWith(INDENT) ? 2 : 0;
+    for (const line of nativeLines) {
+      if (top + line.y + line.height > availableHeight + 1) return end;
+      count += Array.from(line.text).length;
+      end = block.startOffset + Math.max(0, count - indent);
+    }
+    const last = nativeLines[nativeLines.length - 1];
+    top += last.y + last.height + paraGap;
+  }
+  return end;
+}
+
+/** 原生行高会按屏幕像素舍入；保留 1pt 容差，避免 0.x pt 误差迫使本来放得下的一整行换页。 */
+export function calculatePageHeightCorrection({
+  actualHeight,
+  estimatedHeight,
+  availableHeight,
+  previousCorrection = 0,
+}: {
+  actualHeight: number;
+  estimatedHeight: number;
+  availableHeight: number;
+  previousCorrection?: number;
+}): number {
+  if (actualHeight <= availableHeight + 1) return previousCorrection;
+  return Math.max(previousCorrection, actualHeight - estimatedHeight - 1, 0);
 }
 
 /** 逻辑偏移量 → 页码（返回 startOffset <= offset 的最后一页） */

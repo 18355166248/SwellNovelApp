@@ -3,6 +3,8 @@ import {
   breakLines,
   breakLinesCooperatively,
   buildPages,
+  calculatePageHeightCorrection,
+  getNativePageEndOffset,
   findPageByOffset,
   linesFromTextLayout,
   MeasureChar,
@@ -10,6 +12,101 @@ import {
 } from '../src/utils/paginate';
 
 const INDENT = '　　';
+
+describe('native page boundaries', () => {
+  it('does not spend a separate estimated row on trailing Chinese punctuation', async () => {
+    const paragraphs = ['甲乙丙丁。', '戊己庚辛。”', '壬癸子丑'];
+    const lines = breakLines(paragraphs, 60, () => 10);
+    expect(lines.map(line => line.text)).toEqual([
+      '　　甲乙丙丁。',
+      '　　戊己庚辛。”',
+      '　　壬癸子丑',
+    ]);
+    expect(lines.map(line => line.charOffset)).toEqual([0, 5, 11]);
+    expect(
+      await breakLinesCooperatively({
+        paragraphs,
+        maxWidth: 60,
+        measure: () => 10,
+        shouldCancel: () => false,
+        yieldControl: async () => {},
+      }),
+    ).toEqual(lines);
+  });
+  it('keeps every native line that fits instead of removing an estimated two-line fragment', () => {
+    const text = '甲乙丙丁戊己庚辛壬癸子丑';
+    const end = getNativePageEndOffset({
+      blocks: [
+        {
+          block: { startOffset: 0, text },
+          lines: Array.from(text).map((char, index) => ({
+            text: char,
+            y: index * 10,
+            height: 10,
+          })),
+        },
+      ],
+      availableHeight: 111,
+      paraGap: 0,
+    });
+    expect(end).toBe(11);
+    const pages = buildPages({
+      chapterId: 'native',
+      lines: breakLines([text], 40, () => 10),
+      lineHeight: 10,
+      paraGap: 0,
+      bodyHeight: 111,
+      firstBodyHeight: 111,
+      pageEndOffsets: { 0: end! },
+    });
+    expect(pages[1].startOffset).toBe(11);
+    expect(pages[0].blocks[0].text.replace(/[\n　]/g, '')).toBe(
+      text.slice(0, 11),
+    );
+    expect(
+      pages
+        .flatMap(p => p.blocks.map(b => b.text.replace(/[\n　]/g, '')))
+        .join(''),
+    ).toBe(text);
+  });
+
+  it('counts native paragraph gaps and inserted indent without shifting the logical offset', () => {
+    expect(
+      getNativePageEndOffset({
+        blocks: [
+          {
+            block: { startOffset: 100, text: '　　甲乙' },
+            lines: [{ text: '　　甲乙', y: 0, height: 57.6 }],
+          },
+          {
+            block: { startOffset: 102, text: '　　丙丁戊己' },
+            lines: [
+              { text: '　　丙丁', y: 0, height: 57.6 },
+              { text: '戊己', y: 57.6, height: 57.6 },
+            ],
+          },
+        ],
+        availableHeight: 130,
+        paraGap: 14,
+      }),
+    ).toBe(104);
+  });
+
+  it('rejects stale or incomplete native text', () => {
+    expect(
+      getNativePageEndOffset({
+        blocks: [
+          {
+            block: { startOffset: 0, text: '甲乙丙' },
+            lines: [{ text: '甲乙', y: 0, height: 10 }],
+          },
+        ],
+        availableHeight: 10,
+        paraGap: 0,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe('charWidthEm', () => {
   it('汉字与全角标点占 1em', () => {
@@ -208,6 +305,63 @@ describe('buildPages', () => {
     expect(pages[0].blocks.map(b => b.text)).toEqual(['　　甲甲甲\n甲甲']);
     expect(pages[1].blocks.map(b => b.text)).toEqual(['甲甲甲']);
     expect(pages[1].startOffset).toBe(5);
+  });
+
+  it('只校正发生溢出的页，后续普通页仍使用完整预算', () => {
+    const sample = Array.from({ length: 12 }, (_, index) =>
+      makeLine(String(index), index),
+    );
+    const pages = buildPages({
+      chapterId: 'local-correction',
+      lines: sample,
+      lineHeight: 10,
+      paraGap: 0,
+      bodyHeight: 30,
+      firstBodyHeight: 30,
+      heightCorrections: { 3: 5 },
+    });
+    expect(pages.map(page => page.startOffset)).toEqual([0, 3, 5, 8, 11]);
+    expect(pages.map(page => page.blocks[0].text.split('\n').length)).toEqual([
+      3, 2, 3, 3, 1,
+    ]);
+    expect(pages.flatMap(page => page.blocks[0].text.split('\n'))).toEqual(
+      sample.map(line => line.text),
+    );
+  });
+
+  it('真机 0.6pt 行高舍入误差不能额外挤掉第二行', () => {
+    // 当前章第 48 页实测 849pt，估算 790.8pt；少一行后 791.x pt 可在 1pt 容差内显示。
+    const correction = calculatePageHeightCorrection({
+      actualHeight: 849,
+      estimatedHeight: 790.8,
+      availableHeight: 791,
+    });
+    const sample = Array.from({ length: 26 }, (_, index) =>
+      makeLine(String(index), index, [0, 3, 7, 10].includes(index % 13)),
+    );
+    const pages = buildPages({
+      chapterId: 'native-rounding',
+      lines: sample,
+      lineHeight: 57.6,
+      paraGap: 14,
+      bodyHeight: 791,
+      firstBodyHeight: 791,
+      heightCorrections: { 0: correction },
+    });
+    expect(
+      pages[0].blocks.reduce(
+        (sum, block) => sum + block.text.split('\n').length,
+        0,
+      ),
+    ).toBe(12);
+    expect(
+      calculatePageHeightCorrection({
+        actualHeight: 791.4,
+        estimatedHeight: 733.2,
+        availableHeight: 791,
+        previousCorrection: correction,
+      }),
+    ).toBe(correction);
   });
 
   it('空章节至少产出 1 页', () => {
